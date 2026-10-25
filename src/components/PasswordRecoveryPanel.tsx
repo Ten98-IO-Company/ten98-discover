@@ -1,7 +1,5 @@
 import { PasswordRecoveryFlow } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
-import { authStory } from './AuthLayout'
-import { AppBrand } from '@ten98/ui/app'
 import { api, ApiError } from '../lib/api'
 
 const incompleteLink = 'This reset link is invalid or incomplete. Reopen the original email or request a new link. Reloading this page clears the link from memory.'
@@ -50,7 +48,7 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
 
   const request = value.kind === 'request'
   const common = {
-    brand: <AppBrand product='Discover' />, aside: authStory, eyebrow: 'Your Discover workspace', title: request ? 'Reset your password' : 'Choose a new password',
+    eyebrow: 'Your Discover workspace', title: request ? 'Reset your password' : 'Choose a new password',
     busy, busyLabel: request ? 'Requesting link…' : 'Changing password…', error, unconfirmed,
     backToSignIn: { onClick: () => onSignIn() },
     passwordPolicy: { minLength: 12, maxLength: 128 },
