@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type pg from 'pg';
-import { migrationLockKey } from '../src/server/db.ts';
 import { migrateDatabase, migrateOnStart, StartupError, startWhenDatabaseReady, waitForCurrentSchema, type MigrationOptions } from '../src/server/startup-migrate.ts';
 
 const quiet = () => {};
@@ -45,78 +44,51 @@ test('a failed migration, schema wait or invalid opt-out never starts the role',
   assert.deepEqual(invalid.calls, []);
 });
 
-test('the opt-out schema wait resolves once current and fails at its deadline', async () => {
-  let polls = 0;
-  const becomesCurrent = { assertCurrent: async () => { if (++polls < 3) throw Object.assign(new Error('pending'), { code: 'SCHEMA_MISMATCH' }); }, migrate: async () => [] };
-  await waitForCurrentSchema({ pool: {} as pg.Pool, ledger: becomesCurrent, timeoutMs: 5_000, intervalMs: 1, log: quiet });
-  assert.equal(polls, 3);
-  const never = { assertCurrent: async () => { throw new Error('relation "schema_version" does not exist'); }, migrate: async () => [] };
-  const logs: string[] = [];
-  await assert.rejects(waitForCurrentSchema({ pool: {} as pg.Pool, ledger: never, timeoutMs: 30, intervalMs: 5, log: message => logs.push(message) }),
-    (error: Error) => error instanceof StartupError && !error.message.includes('schema_version'));
-  assert.ok(logs.length >= 1, 'The wait logs its progress.');
-});
-
-/** A fake pool whose clients record SQL; `locked` decides pg_try_advisory_lock. */
-function fakePool({ locked = true, connectFails = false } = {}) {
-  const sql: string[] = [];
-  const releases: (Error | boolean | undefined)[] = [];
-  const pool = {
-    connect: async () => {
-      if (connectFails) throw Object.assign(new Error('connect ECONNREFUSED postgres://user:secret@db'), { code: 'ECONNREFUSED' });
-      return {
-        query: async (text: string, params?: unknown[]) => {
-          sql.push(text);
-          if (text.includes('advisory')) assert.deepEqual(params, [...migrationLockKey]);
-          return { rows: text.includes('pg_try_advisory_lock') ? [{ locked }] : [] };
-        },
-        release: (error?: Error | boolean) => { releases.push(error); },
-      };
-    },
-  } as unknown as pg.Pool;
-  return { pool, sql, releases };
-}
 type Ledger = NonNullable<MigrationOptions['ledger']>;
-const ledger = (migrate: Ledger['migrate']): Ledger => ({ migrate, assertCurrent: async () => {} });
+type RunnerOptions = Parameters<Ledger['migrateWithDeadline']>[1];
+const pool = {} as pg.Pool;
+const runnerError = (code: string, message: string) => Object.assign(new Error(message), { code });
+/** A ledger whose shared runner is scripted; the runner's own lock, deadline and timeout lift are tested in @ten98/runtime and tests/startup-migrate-integration.ts. */
+function ledger(run: (options: RunnerOptions) => Promise<readonly string[]>, wait: Ledger['waitForCurrent'] = async () => {}) {
+  const seen: { pool?: unknown; options?: RunnerOptions; waitPool?: unknown; waitOptions?: Parameters<Ledger['waitForCurrent']>[1] } = {};
+  const fake: Ledger = {
+    migrateWithDeadline: async (target, options) => { seen.pool = target; seen.options = options; return run(options); },
+    waitForCurrent: async (target, options) => { seen.waitPool = target; seen.waitOptions = options; return wait(target, options); },
+  };
+  return { fake, seen };
+}
 
-test('migration holds the well-known session lock and releases it after success or failure', async () => {
-  const ok = fakePool();
-  assert.deepEqual(await migrateDatabase({ pool: ok.pool, ledger: ledger(async () => ['0072']), timeoutMs: 1_000, log: quiet }), ['0072']);
-  // The pool statement_timeout is lifted only around the migration and restored before the connection returns (#467).
-  assert.deepEqual(ok.sql, ['SELECT pg_try_advisory_lock($1, $2) AS locked', 'SET statement_timeout = 0', 'RESET statement_timeout', 'SELECT pg_advisory_unlock($1, $2)']);
-  assert.deepEqual(ok.releases, [undefined]);
-
-  const failed = fakePool();
-  const sqlError = Object.assign(new Error('syntax error at "secret-value"'), { code: '42601' });
-  await assert.rejects(migrateDatabase({ pool: failed.pool, ledger: ledger(async () => { throw sqlError; }), timeoutMs: 1_000, log: quiet }),
-    (error: Error) => error instanceof StartupError && error.message.includes('42601') && error.message.includes('rolled back') && !error.message.includes('secret'));
-  assert.deepEqual(failed.sql.slice(-2), ['RESET statement_timeout', 'SELECT pg_advisory_unlock($1, $2)']);
-  assert.equal(failed.releases.length, 1);
-
-  const mismatch = fakePool();
-  const schemaError = Object.assign(new Error('incompatible'), { code: 'SCHEMA_MISMATCH' });
-  await assert.rejects(migrateDatabase({ pool: mismatch.pool, ledger: ledger(async () => { throw schemaError; }), timeoutMs: 1_000, log: quiet }), schemaError);
+test('migration delegates to the shared deadline runner with the five-minute default', async () => {
+  const ok = ledger(async () => ['0072']);
+  assert.deepEqual(await migrateDatabase({ pool, ledger: ok.fake, log: quiet }), ['0072']);
+  assert.equal(ok.seen.pool, pool);
+  assert.equal(ok.seen.options?.timeoutMs, 5 * 60_000);
+  assert.equal(ok.seen.options?.log, quiet);
+  assert.equal(typeof ok.seen.options?.afterApply, 'function', 'Provider account identity capture runs inside the migration transaction.');
+  const quick = ledger(async () => []);
+  await migrateDatabase({ pool, ledger: quick.fake, timeoutMs: 1_000, log: quiet });
+  assert.equal(quick.seen.options?.timeoutMs, 1_000);
+  // afterApply only touches the database when 0022 or 0023 was applied.
+  await ok.seen.options!.afterApply!({ query: async () => { throw new Error('unexpected query'); } }, ['0072']);
 });
 
-test('a held lock or unavailable database fails at the deadline with a redacted error', async () => {
-  const held = fakePool({ locked: false });
-  const logs: string[] = [];
-  let migrated = false;
-  await assert.rejects(migrateDatabase({ pool: held.pool, ledger: ledger(async () => { migrated = true; return []; }), timeoutMs: 20, log: message => logs.push(message) }),
-    (error: Error) => error instanceof StartupError && error.message.includes('another process'));
-  assert.equal(migrated, false);
-  assert.match(logs[0], /another process/);
-  const down = fakePool({ connectFails: true });
-  await assert.rejects(migrateDatabase({ pool: down.pool, ledger: ledger(async () => []), timeoutMs: 20, log: quiet }),
-    (error: Error) => error instanceof StartupError && !error.message.includes('secret') && !error.message.includes('postgres://'));
-});
-
-test('a migration that outlives the deadline is abandoned and fails', async () => {
-  const slow = fakePool();
-  await assert.rejects(migrateDatabase({ pool: slow.pool, ledger: ledger(() => new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Connection terminated')), 60))), timeoutMs: 20, log: quiet }),
+test('runner failures become redacted startup errors and a schema mismatch passes through', async () => {
+  await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw runnerError('MIGRATION_FAILED', 'Database migration failed (PostgreSQL error 42601) and was rolled back; nothing was applied.'); }).fake, log: quiet }),
+    (error: Error) => error instanceof StartupError && error.message.includes('42601') && error.message.includes('rolled back') && error.message.includes('migrate command'));
+  await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw runnerError('MIGRATION_TIMEOUT', 'Database migrations did not finish within 1 seconds; the migration transaction was abandoned and rolls back.'); }).fake, log: quiet }),
     (error: Error) => error instanceof StartupError && error.message.includes('did not finish'));
-  assert.equal(slow.releases.length, 1);
-  assert.ok(slow.releases[0] instanceof Error, 'The timed-out connection is discarded, never returned to the pool.');
+  const schemaError = runnerError('SCHEMA_MISMATCH', 'incompatible');
+  await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw schemaError; }).fake, log: quiet }), schemaError);
+});
+
+test('the opt-out schema wait delegates to the shared poller and fails as a startup error', async () => {
+  const current = ledger(async () => []);
+  await waitForCurrentSchema({ pool, ledger: current.fake, timeoutMs: 5_000, intervalMs: 7, log: quiet });
+  assert.equal(current.seen.waitPool, pool);
+  assert.deepEqual(current.seen.waitOptions, { timeoutMs: 5_000, intervalMs: 7, log: quiet });
+  const late = ledger(async () => [], async () => { throw runnerError('MIGRATION_TIMEOUT', 'The database schema was not current within 1 seconds.'); });
+  await assert.rejects(waitForCurrentSchema({ pool, ledger: late.fake, timeoutMs: 30, intervalMs: 5, log: quiet }),
+    (error: Error) => error instanceof StartupError && !error.message.includes('schema_version'));
 });
 
 test('the image starts web through start-web and the CLI wires the opt-out before any database access', async () => {
