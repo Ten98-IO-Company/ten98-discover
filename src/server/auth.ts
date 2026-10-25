@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { betterAuth } from 'better-auth'
+import { createTen98Auth, type ResetPasswordMessage } from '@ten98/runtime/auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { hashPassword } from 'better-auth/crypto'
-import { twoFactor } from 'better-auth/plugins/two-factor'
-import { APIError, createAuthEndpoint, isAPIError } from 'better-auth/api'
-import { setSessionCookie } from 'better-auth/cookies'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
@@ -12,74 +9,23 @@ import { getConfig } from './config.ts'
 import { getDatabase } from './db.ts'
 import * as schema from './schema.ts'
 
-export type ResetPasswordMessage = { userId: string; email: string; token: string }
+export type { ResetPasswordMessage }
 
+// The shared Ten98 identity preset (passwords, sessions, two-factor, reset cleanup, OIDC session endpoints, error
+// redaction, telemetry off). Discover keeps its routes, transactions, replay ledger and rate limiters.
 function createAuth(client?: PoolClient, captureReset?: (message: ResetPasswordMessage) => void) {
   const config = getConfig()
-  const factors = twoFactor({
-    issuer: 'ten98 Discover',
+  return createTen98Auth({
+    database: drizzleAdapter(client ? drizzle(client, { schema }) : getDatabase().db, { provider: 'pg', schema }),
+    appUrl: config.appUrl,
+    secret: config.authSecret,
+    appName: 'ten98 Discover',
+    // Capture only; the security boundary sends after the outer transaction commits.
+    ...(captureReset ? { sendResetPassword: captureReset } : {}),
+    // Existing installations' cookies are named better-auth.*, so current sessions stay signed in.
+    cookiePrefix: 'better-auth',
     // Browser routes still require either a local password or a one-use, fresh OIDC proof.
     allowPasswordless: true,
-    backupCodeOptions: { amount: 10, length: 20 },
-    accountLockout: { enabled: true, maxFailedAttempts: 10, durationSeconds: 900 },
-  })
-  // Reuse the plugin's complete challenge lifecycle for verified OIDC logins.
-  // The extra endpoint is server-only, so no browser can submit an arbitrary user ID.
-  for (const hook of factors.hooks.after) {
-    const original = hook.matcher
-    hook.matcher = (context) => original(context) || (context.path === undefined && typeof context.body?.oidcUserId === 'string')
-  }
-  const oidcSessions = {
-    id: 'ten98-oidc-session',
-    endpoints: {
-      rotateVerifiedSession: createAuthEndpoint.serverOnly({ method: 'POST', body: z.object({ verifiedUserId: z.uuid() }).strict() }, async (context) => {
-        const user = await context.context.internalAdapter.findUserById(context.body.verifiedUserId)
-        if (!user) throw APIError.fromStatus('UNAUTHORIZED')
-        const session = await context.context.internalAdapter.createSession(user.id, false)
-        if (!session) throw APIError.fromStatus('INTERNAL_SERVER_ERROR')
-        await setSessionCookie(context, { user, session })
-        return context.json({ ok: true })
-      }),
-      completeOidcSession: createAuthEndpoint.serverOnly({ method: 'POST', body: z.object({ oidcUserId: z.uuid() }).strict() }, async (context) => {
-        const user = await context.context.internalAdapter.findUserById(context.body.oidcUserId)
-        if (!user) throw APIError.fromStatus('UNAUTHORIZED')
-        const session = await context.context.internalAdapter.createSession(user.id, false)
-        if (!session) throw APIError.fromStatus('INTERNAL_SERVER_ERROR')
-        await setSessionCookie(context, { user, session })
-        return context.json({ ok: true })
-      }),
-    },
-  }
-  return betterAuth({
-    database: drizzleAdapter(client ? drizzle(client, { schema }) : getDatabase().db, { provider: 'pg', schema }),
-    baseURL: config.appUrl,
-    secret: config.authSecret,
-    // Self-hosted installs send no data to Ten98 or third parties; getConfig also refuses BETTER_AUTH_TELEMETRY.
-    telemetry: { enabled: false },
-    trustedOrigins: [config.appUrl],
-    appName: 'ten98 Discover',
-    // Database adapter failures can contain query parameters. Report safe errors at our API boundary.
-    logger: { disabled: true },
-    // better-call logs non-API exceptions even when the Better Auth logger is off.
-    // Convert them before its fallback logger can expose SQL, hashes or session tokens.
-    onAPIError: { onError(error) {
-      if (isAPIError(error)) throw error
-      throw APIError.fromStatus('INTERNAL_SERVER_ERROR')
-    } },
-    session: { cookieCache: { enabled: false } },
-    plugins: [factors, oidcSessions],
-    emailAndPassword: {
-      enabled: true,
-      disableSignUp: true,
-      minPasswordLength: 12,
-      maxPasswordLength: 128,
-      resetPasswordTokenExpiresIn: 3600,
-      revokeSessionsOnPasswordReset: true,
-      // Capture only; the security boundary sends after the outer transaction commits.
-      sendResetPassword: captureReset ? async ({ user, token }) => { captureReset({ userId: user.id, email: user.email, token }) } : undefined,
-    },
-    // api.ts enforces shared and per-email database limits. No proxy IP is trusted yet.
-    rateLimit: { enabled: false },
   })
 }
 
