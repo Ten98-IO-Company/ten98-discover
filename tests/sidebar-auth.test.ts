@@ -4,18 +4,20 @@ import { readFile } from 'node:fs/promises'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { transformWithOxc } from 'vite'
-import { AuthLayout as SharedAuthLayout, AuthStory } from '@ten98/ui'
+import { AuthFrameProvider, AuthLayout as SharedAuthLayout, AuthStory } from '@ten98/ui'
 import { AppBrand } from '@ten98/ui/app'
 
+// Discover supplies its brand and side panel once through the root AuthFrameProvider; each screen renders the shared layout.
 async function loadAuthLayout() {
  const source=await readFile(new URL('../src/components/AuthLayout.tsx',import.meta.url),'utf8')
  const {code}=await transformWithOxc(source.replace(/^import[^\n]*\n/gm,'').replace(/export (const|function)/g,'$1'),'AuthLayout.tsx',{jsx:{runtime:'classic'}})
- return new Function('React','SharedAuthLayout','AuthStory','AppBrand',code+';return AuthLayout;')(React,SharedAuthLayout,AuthStory,AppBrand)
+ const authStory=new Function('React','AuthStory',code+';return authStory;')(React,AuthStory)
+ return (props:Record<string,unknown>)=>React.createElement(AuthFrameProvider,{brand:React.createElement(AppBrand,{product:'Discover'}),aside:authStory,children:React.createElement(SharedAuthLayout,props as never)})
 }
 
 test('Discover shares auth presentation while preserving app-owned headings and native forms', async () => {
  const AuthLayout=await loadAuthLayout()
- const html=renderToStaticMarkup(React.createElement(AuthLayout,null,React.createElement('form',{className:'card auth',action:'/native-recovery',method:'post'},React.createElement('h1',null,'Recover account'),React.createElement('input',{name:'email',type:'email',required:true}),React.createElement('button',{type:'submit'},'Continue'))))
+ const html=renderToStaticMarkup(React.createElement(AuthLayout,{label:'Recover account'},React.createElement('form',{className:'card auth',action:'/native-recovery',method:'post'},React.createElement('h1',null,'Recover account'),React.createElement('input',{name:'email',type:'email',required:true}),React.createElement('button',{type:'submit'},'Continue'))))
  assert.match(html,/t98-auth-layout/)
  assert.equal([...html.matchAll(/<main\b/g)].length,1)
  assert.equal([...html.matchAll(/<h1\b/g)].length,1)

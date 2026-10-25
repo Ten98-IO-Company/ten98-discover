@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, AuthFrameProvider, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions } from '@ten98/ui'
 import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -79,7 +79,7 @@ function RouteEntry(){
   const location=useLocation(),raw=new URLSearchParams(location.searchStr)
   // Router normalizes duplicate/JSON view values; public-share intent must never boot private APIs.
   const shared=raw.getAll('view').some(value=>value.includes('tracked-share'))
-  return <AuthErrorBoundary fallback={{ brand: <AppBrand product='Discover' /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
+  return <AuthFrameProvider brand={<AppBrand product='Discover' />} aside={authStory}><AuthErrorBoundary>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary></AuthFrameProvider>
 }
 
 type Status = { setupRequired: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null; oidcEnabled?: boolean }
@@ -627,11 +627,11 @@ function App() {
   }
 
   if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
-    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <AppStateScreen state='loading' brand={<AppBrand product='Discover' />} message='Loading…' />
+    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <AppStateScreen state='loading' message='Loading…' />
 
-  if (phase === 'loading') return <AppStateScreen state='loading' brand={<AppBrand product='Discover' />} message='Loading…' />
+  if (phase === 'loading') return <AppStateScreen state='loading' message='Loading…' />
 
-  if (phase === 'error') return <AppStateScreen state='error' brand={<AppBrand product='Discover' />} title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
+  if (phase === 'error') return <AppStateScreen state='error' title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
@@ -934,7 +934,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
     } finally { setBusy(false) }
   }
 
-  return <FirstUserSetupFlow key={form.generation} brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Create owner account'
+  return <FirstUserSetupFlow key={form.generation} title='Create owner account'
     description='The first account becomes the owner of this installation and its workspace. You can rename the workspace later.'
     setupToken={false} workspaceName workspaceNameRequired={false} passwordPolicy={{ minLength: 12, maxLength: 128 }}
     defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
@@ -953,7 +953,7 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice, ssoErr
     finally { setBusy(false) }
   }
 
-  return <SignInFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title={title} description={description} defaultValues={{ email: initialEmail }}
+  return <SignInFlow title={title} description={description} defaultValues={{ email: initialEmail }}
     busy={busy} error={outcome.error || ssoError || undefined} unconfirmed={outcome.unconfirmed || undefined}
     notice={notice ? { tone: authNoticeTone(notice.kind), text: notice.message } : undefined}
     forgotPassword={{ onClick: email => onForgot(email.trim()) }} cancel={onCancel ? { label: 'Back to invitation', onClick: onCancel } : undefined}
@@ -970,7 +970,7 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     catch (e) { setOutcome(failureOutcome(e)) }
     finally { setBusy(false) }
   }
-  return <TwoFactorChallengeFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Verify your sign-in' mode={mode}
+  return <TwoFactorChallengeFlow title='Verify your sign-in' mode={mode}
     onModeChange={next => { setMode(next); setOutcome(noOutcome) }} busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     messages={{ authenticatorLabel: 'Authenticator code', authenticatorDescription: 'Enter the six-digit code from your authenticator app.', recoveryDescription: 'Enter one unused recovery code. Each code can only be used once.', useAuthenticator: 'Use authenticator' }}
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
@@ -1034,6 +1034,6 @@ function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, on
   const [signOutError, setSignOutError] = useState('')
   const { submit, clear, ...state } = useWorkspaceNameSubmit(name => { setSignOutError(''); return onCreate(name) })
   const signOut = async () => { clear(); setSignOutError(''); const failure = await onSignOut(); if (failure) setSignOutError(failure) }
-  return <WorkspaceOnboarding brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' email={email} help='Keep each team’s projects and access separate.'
+  return <WorkspaceOnboarding email={email} help='Keep each team’s projects and access separate.'
     {...state} error={signOutError || state.error} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: () => void signOut() }} account={{ label: 'Account settings', onClick: onAccount }} />
 }

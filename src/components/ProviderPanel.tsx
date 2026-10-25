@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConfirmDialog } from '@ten98/ui'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
+import { providerUsd } from '../lib/provider-money'
 
 type ProviderName = 'openrouter' | 'dataforseo'
 type CheckStatus = 'untested' | 'ok' | 'error'
@@ -498,15 +499,15 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
             <div className="row provider-spending-totals" style={{ gap: 32, alignItems: 'baseline' }}>
               <div style={{ minWidth: 0 }}>
                 <span className="dim">Spent</span>
-                <div className="big-num">${data.budget.spentUsd}</div>
+                <div className="big-num">{providerUsd(data.budget.spentUsd)}</div>
               </div>
               <div style={{ minWidth: 0 }}>
                 <span className="dim">Reserved</span>
-                <div className="big-num">${data.budget.reservedUsd}</div>
+                <div className="big-num">{providerUsd(data.budget.reservedUsd)}</div>
               </div>
               <div style={{ minWidth: 0 }}>
                 <span className="dim">Uncertain</span>
-                <div className="big-num">${data.budget.uncertainUsd}</div>
+                <div className="big-num">{providerUsd(data.budget.uncertainUsd)}</div>
               </div>
             </div>
             <form onSubmit={submitBudget}>
@@ -550,8 +551,8 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
                         <td style={{ minWidth: '10rem', maxWidth: '18rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{connName(l.connectionId)}</td>
                         <td style={{ minWidth: '10rem', maxWidth: '20rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{l.operation}</td>
                         <td><span className="pill">{l.status}</span></td>
-                        <td className="mono">${l.estimateUsd}</td>
-                        <td className="mono">{l.actualUsd === null ? 'Pending' : `$${l.actualUsd}`}</td>
+                        <td className="mono">{providerUsd(l.estimateUsd)}</td>
+                        <td className="mono">{l.actualUsd === null ? 'Pending' : providerUsd(l.actualUsd)}</td>
                       </tr>
                     ))}
                   </tbody>
