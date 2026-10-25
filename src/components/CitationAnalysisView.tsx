@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Card, DataTable, EvidenceDetail, Pager, Sparkline, Stack, Tabs } from '@ten98/ui';
+import { Alert, Card, DataTable, EvidenceDetail, Pager, Sparkline, Stack, Tabs,Disclosure} from '@ten98/ui';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 export type CitationPeriod = 'current' | 'previous';
@@ -372,10 +372,9 @@ function ChangesTable({ screen, props, steady }: { screen: CitationReportScreen;
               <td><CountsTextCell counts={row.previous} /></td>
               <td>
                 <span style={blockStyle}>{row.availability}</span>
-                <details>
-                  <summary>Provenance</summary>
+                <Disclosure summary="Provenance" variant="plain">
                   {row.provenance}
-                </details>
+                </Disclosure>
               </td>
               <td>
                 <div style={actionColumnStyle}>
@@ -437,8 +436,7 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
           <input style={controlStyle} value={draft.query} maxLength={200} disabled={!ready} onChange={(event) => { if (ready) props.onFiltersChange({ ...draft, query: event.currentTarget.value }); }} />
           <span className="hint">Search retained URLs, hosts and titles.</span>
         </label>
-        <details>
-          <summary>More source filters</summary>
+        <Disclosure summary="More source filters" variant="plain">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 'var(--space-3)' }}>
             <label className="field" style={{ margin: 0 }}>
               <span>Ownership</span>
@@ -481,7 +479,7 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
               </select>
             </label>
           </div>
-        </details>
+        </Disclosure>
         <button type="submit" className="btn" style={buttonStyle} disabled={!applyAllowed}>Apply source filters</button>
         </form>
       </details>
@@ -554,10 +552,9 @@ function EvidenceSection({ screen, props, ready, writer }: { screen: CitationEvi
                     <span style={blockStyle}><RetainedTitleText title={row.retainedTitle} /></span>
                     <span style={blockStyle}>Retained annotation order: {row.retainedOrder}</span>
                     <span style={blockStyle}>{row.groupedUrl}</span>
-                    <details>
-                      <summary>Provenance</summary>
+                    <Disclosure summary="Provenance" variant="plain">
                       {row.provenance}
-                    </details>
+                    </Disclosure>
                   </td>
                   <td>
                     <span style={blockStyle}>{row.publisherLabel}</span>

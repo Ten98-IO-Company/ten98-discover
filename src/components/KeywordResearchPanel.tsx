@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {RunCostSummary, useConfirmDialog} from '@ten98/ui';
+import {RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
@@ -90,7 +90,7 @@ export function KeywordResearchPanel({workspaceId,projectId,userId,onUnauthorize
 function KeywordWorkspace(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void}){
   const [tab,setTab]=useState<'research'|'saved'>('research'),[researchLocked,setResearchLocked]=useState(false),[savedLocked,setSavedLocked]=useState(false),[seed,setSeed]=useState<ResearchSaveSeed|null>(null);
   const locked=researchLocked||savedLocked;
-  return <div className="keyword-workspace"><div className="row keyword-tabs" aria-label="Keyword sections"><button className={'btn '+(tab==='research'?'primary':'ghost')} aria-pressed={tab==='research'} disabled={locked&&tab!=='research'} onClick={()=>{setSeed(null);setTab('research');}}>Research</button><button className={'btn '+(tab==='saved'?'primary':'ghost')} aria-pressed={tab==='saved'} disabled={locked&&tab!=='saved'} onClick={()=>setTab('saved')}>Saved keywords</button></div>{locked&&<p className="hint">Finish or cancel the current changes before switching keyword sections.</p>}{tab==='research'?<Panel {...props} active onLockChange={setResearchLocked} onSaveRows={(run,indexes)=>{setSeed({key:crypto.randomUUID(),runId:run.id,rowIndexes:indexes,keywords:indexes.map(i=>run.result!.rows[i].keyword),locationCode:run.locationCode,languageCode:run.languageCode});setTab('saved');}}/>:<SavedKeywordsPanel {...props} active seed={seed} onLockChange={setSavedLocked}/>}</div>;
+  return <div className="keyword-workspace"><SegmentedControl label="Keyword sections" value={tab} onValueChange={value=>{if(value==='research'){setSeed(null);setTab('research');}else setTab('saved');}} options={[{value:'research',label:'Research',disabled:locked&&tab!=='research'},{value:'saved',label:'Saved keywords',disabled:locked&&tab!=='saved'}]}/>{locked&&<p className="hint">Finish or cancel the current changes before switching keyword sections.</p>}{tab==='research'?<Panel {...props} active onLockChange={setResearchLocked} onSaveRows={(run,indexes)=>{setSeed({key:crypto.randomUUID(),runId:run.id,rowIndexes:indexes,keywords:indexes.map(i=>run.result!.rows[i].keyword),locationCode:run.locationCode,languageCode:run.languageCode});setTab('saved');}}/>:<SavedKeywordsPanel {...props} active seed={seed} onLockChange={setSavedLocked}/>}</div>;
 }
 function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveRows}:{workspaceId:string;projectId:string;onUnauthorized:()=>void;active:boolean;onLockChange:(locked:boolean)=>void;onSaveRows:(run:Run,indexes:number[])=>void}){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/keyword-research';
@@ -364,8 +364,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           <textarea id={uid+'-kw'} rows={mode==='overview'?6:2} style={{width:'100%',minHeight:96}} value={kwText} onChange={e=>edit(()=>setKwText(e.target.value))} required/>
           <p className="hint">{parsed.length} unique {parsed.length===1?'keyword':'keywords'} after trimming, lowercasing and deduplicating. Max 80 characters and 10 words each; the server stays authoritative.</p>
         </div>
-        <details open>
-          <summary>Market and result limit</summary>
+        <Disclosure defaultOpen summary="Market and result limit" variant="plain">
           <div className="stack">
             <div>
               <label htmlFor={uid+'-market'}>Country or territory and language</label>
@@ -387,7 +386,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
               <button type="button" className="btn" onClick={refreshCatalog} disabled={writing||!connId}>Refresh markets</button>
             </div>
           </div>
-        </details>
+        </Disclosure>
         <div className="row">
           <button type="submit" className="btn primary" disabled={writing}>Prepare quote</button>
         </div>
@@ -400,7 +399,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       <p>{quote.request.mode==='overview'
         ?quote.request.keywords.length+' keywords'
         :'Seed "'+(quote.request.keywords[0]??'')+'"'} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName} · up to {quote.upperItems} billed items</p>
-      <details><summary>Exact quoted keywords</summary><ol>{quote.request.keywords.map(keyword=><li key={keyword} style={{overflowWrap:'anywhere'}}>{keyword}</li>)}</ol></details>
+      <Disclosure summary="Exact quoted keywords" variant="plain"><ol>{quote.request.keywords.map(keyword=><li key={keyword} style={{overflowWrap:'anywhere'}}>{keyword}</li>)}</ol></Disclosure>
       <RunCostSummary title="Quote cost" state={lostStart?'uncertain':quoteExpired?'expired':st.spendingPaused||!st.vaultConfigured?'blocked':'quoted'}
         scope={<span>{quote.request.mode} · {quote.request.keywords.join(', ')} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName}</span>}
         units={<span>Up to {quote.upperItems} billed items · per task ${quote.perTaskUsd} · per item ${quote.perItemUsd}</span>}
@@ -440,8 +439,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       {(selected.status==='queued'||selected.status==='running')&&<p role="status" className="dim">{pollDead?'Automatic status checks stopped.':selected.status==='queued'?'Waiting in queue; checking status every 2 seconds.':'Running; checking status every 2 seconds.'}</p>}
       <div className="row"><button type="button" className="btn" onClick={()=>void selectRun(selected.id)} disabled={writing}>Check status</button></div>
       {canResearch&&selected.canCancel&&<div className="row"><button type="button" className="btn" onClick={cancelRun} disabled={writing}>Cancel run</button></div>}
-      {isOwner&&selected.status==='uncertain'&&selected.chargeStatus==='uncertain'&&<details>
-        <summary>Check provider charge (owner)</summary>
+      {isOwner&&selected.status==='uncertain'&&selected.chargeStatus==='uncertain'&&<Disclosure summary="Check provider charge (owner)" variant="plain">
         <div className="stack">
           <p className="hint">Runs a free metadata check against the provider account; the server validates that the connection matches. This does not rerun research and cannot recover a missing live result.</p>
           <div>
@@ -453,7 +451,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           <div className="row"><button type="button" className="btn" onClick={reconcile} disabled={writing||!reconConn}>Check provider charge</button></div>
           {reconMsg&&<p role="status">{reconMsg}</p>}
         </div>
-      </details>}
+      </Disclosure>}
       {selected.result&&!selected.resultExpired?
         <ResultView key={selected.id} run={selected} result={selected.result} canSave={canResearch&&selected.status==='completed'} disabled={writing||lostStart} onSave={indexes=>onSaveRows(selected,indexes)} marketName={selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.request.locationCode+', language '+selected.request.languageCode}/>
       :selected.resultExpired?
@@ -504,8 +502,7 @@ function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;res
         {result.rows.map((r,index)=><tr key={index}>
           {canSave&&<td><input type="checkbox" aria-label={'Select research keyword '+r.keyword} disabled={disabled} checked={selected.includes(index)} onChange={e=>setSelected(ids=>e.target.checked?[...ids,index]:ids.filter(i=>i!==index))}/></td>}
           <td style={{minWidth:200,overflowWrap:'anywhere'}}>{r.keyword}
-            {(r.monthlySearches.length>0||r.intentUpdatedAt)&&<details>
-              <summary>Monthly history</summary>
+            {(r.monthlySearches.length>0||r.intentUpdatedAt)&&<Disclosure summary="Monthly history" variant="plain">
               {r.monthlySearches.length>0?
                 <div className="table-wrap" role="region" aria-label={`Monthly searches for ${r.keyword}`} tabIndex={0}><table>
                   <thead><tr><th>Month</th><th>Volume</th></tr></thead>
@@ -513,7 +510,7 @@ function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;res
                 </table></div>
               :<p className="hint">No monthly history available.</p>}
               <p className="hint">Intent updated: {dt(r.intentUpdatedAt)}</p>
-            </details>}
+            </Disclosure>}
           </td>
           <td>{num(r.searchVolume)}</td>
           <td>{usd(r.cpcUsd)}</td>
