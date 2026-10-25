@@ -7,7 +7,7 @@ import { getConfig } from '../src/server/config.ts';
 import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { runRetentionBatch } from '../src/server/retention.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Optional real-browser acceptance. Use a separately supplied browser module,
@@ -117,10 +117,10 @@ try {
   const undersized=await page.getByRole('button').evaluateAll((buttons:HTMLButtonElement[])=>buttons.filter(button=>button.textContent?.includes('retention')||button.textContent?.includes('preview')).filter(button=>button.getBoundingClientRect().height<44).map(button=>button.textContent));
   assert.deepEqual(undersized,[],'Retention controls should provide 44px touch targets.');
   if(artifacts)await page.screenshot({path:join(artifacts,'retention-settings-mobile.png'),fullPage:true});
-  await page.setViewportSize({width:1360,height:900});
+  await setViewport(page,{width:1360,height:900});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Desktop retention must not overflow.');
   if(artifacts)await page.screenshot({path:join(artifacts,'retention-settings-desktop.png'),fullPage:true});
-  await page.setViewportSize({width:360,height:800});
+  await setViewport(page,{width:360,height:800});
   const replacement=randomUUID();
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)',[replacement,'Remaining owner',`${replacement}@retention-browser.integration.test`]);
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace.id,replacement]);

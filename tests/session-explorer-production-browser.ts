@@ -12,7 +12,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import type {SessionList,SessionDetail} from '../src/server/session-explorer-input.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Root supplies a built app and a new migrated database. This runner never builds,
 // starts a service, migrates, substitutes an API response, or contacts a provider.
@@ -213,7 +213,7 @@ try{
 
   stage='mobile, RTL and keyboard detail return';await uiRead<SessionList>(()=>page.goto(link()));await list().waitFor();
   for(const width of [320,360,768,1440])for(const dir of ['ltr','rtl']){
-    await page.setViewportSize({width,height:1000});await page.evaluate((value:string)=>document.documentElement.dir=value,dir);await shot(`sessions-${width}-${dir}.png`);
+    await setViewport(page,{width,height:1000});await page.evaluate((value:string)=>document.documentElement.dir=value,dir);await shot(`sessions-${width}-${dir}.png`);
     const firstLink=list().getByRole('link',{name:/^View activity in selected dates for /}).first(),name=await firstLink.getAttribute('aria-label');assert.ok(name);
     await firstLink.focus();await uiRead<SessionDetail>(()=>page.keyboard.press('Enter'),true);await activity().waitFor();await shot(`activity-${width}-${dir}.png`);
     await uiRead<SessionList>(()=>page.getByRole('link',{name:'Back to sessions',exact:true}).click());assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),name);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_AI_COMPARISON_VIEW_BROWSER,'1');
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/ai-comparison-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI comparison presentation acceptance</title><div id="root"></div><script type="module" src="/tests/ai-comparison-view-browser-fixture.tsx"></script></html>');});
@@ -101,7 +101,7 @@ try{
  console.log('PASS explicit empty selection and no invented report/evidence/pagination/export when report is null.');
 
  await reset();await mkdir(evidence,{recursive:true});
- for(const width of [1440,768,360,320])for(const view of ['cells','current']){await patch({role:'viewer'});await report({view});await page.setViewportSize({width,height:1000});await page.evaluate(()=>window.scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ for(const width of [1440,768,360,320])for(const view of ['cells','current']){await patch({role:'viewer'});await report({view});await setViewport(page,{width,height:1000});await page.evaluate(()=>window.scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   const tables=await main.locator('table').all(),labels=[];assert.equal(tables.length,2);for(const t of tables){const r=t.locator('xpath=ancestor::*[@role="region"][1]');assert.equal(await r.count(),1);assert.equal(await r.getAttribute('tabindex'),'0');const label=await r.getAttribute('aria-label');assert.ok(label);labels.push(label);assert.equal(await page.getByRole('region',{name:label,exact:true}).count(),1);assert.ok((await t.locator('caption').innerText()).trim());assert.equal(await t.locator('thead th:not([scope="col"])').count(),0);assert.ok((await t.boundingBox()).width>=(await t.getByRole('columnheader',{name:'Current coverage',exact:true}).count()?1100:760));assert.ok((await r.boundingBox()).width<=width);
    const hint=await r.getAttribute('aria-describedby');assert.ok(hint);for(const id of hint.split(/\s+/)){assert.equal(await page.locator('[id="'+id+'"]').count(),1);assert.equal(await page.locator('[id="'+id+'"]').innerText(),'Scroll horizontally to see every column.');}
    await r.evaluate(el=>el.scrollLeft=0);await r.focus();assert.equal(await r.evaluate(el=>el===document.activeElement),true);if(width===360){assert.ok(await r.evaluate(el=>el.scrollWidth>el.clientWidth));await page.keyboard.press('ArrowRight');await until(()=>r.evaluate(el=>el.scrollLeft>0));}

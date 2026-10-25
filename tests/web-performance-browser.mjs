@@ -32,7 +32,7 @@ const reply=(route,body,status=200)=>route.fulfill({status,contentType:'applicat
 function normal({mode='normal',role='owner',negative,code}={}){return async(route,call)=>{let body=report(call.project,new URLSearchParams(call.query),mode,role);if(negative)negative(body);return reply(route,code?{error:'Synthetic negative response, no server diagnostic.'}:body,code??200);};}
 async function fresh({query=initial,enabled=true,mode='normal',role='owner',negative,width=1440,dir='ltr',zoom=1,custom}={}){
   if(context)await context.close();scope={projectId:first,userId:user,query,readOwner:'initial-entry',readEnabled:enabled};handler=custom??normal({mode,role,negative});held=[];
-  context=await browser.newContext({viewport:{width,height:1000},hasTouch:width<768,locale:'en-US',serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(8000);
+  context=await browser.newContext({viewport:{width,height:1000},hasTouch:width<=760,locale:'en-US',serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(8000);
   await context.addInitScript(({scope,dir,zoom})=>{window.webPerformanceScope=scope;addEventListener('DOMContentLoaded',()=>{document.documentElement.dir=dir;document.body.style.zoom=String(zoom);});},{scope,dir,zoom});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);save();return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();
     const match=url.pathname.match(/^\/api\/projects\/([a-f0-9-]{36})\/performance$/);if(request.method()!=='GET'||!match){evidence.unexpected.push({method:request.method(),path:url.pathname});save();return route.abort();}

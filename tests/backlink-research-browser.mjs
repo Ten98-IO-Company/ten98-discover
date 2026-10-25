@@ -5,7 +5,7 @@ import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_BACKLINK_RESEARCH_BROWSER,'1');
 const output=resolve('private/backlink-research-ui/browser/run-'+randomUUID().replaceAll('-','').slice(0,12));
@@ -135,7 +135,7 @@ try{
 
  {
   const {page,context,model,view}=await open();await view();assert.equal(await page.getByRole('cell').filter({hasText:'<script>synthetic anchor</script>'}).count(),1);assert.equal(await page.locator('script').filter({hasText:'synthetic anchor'}).count(),0);
-  for(const width of [320,1440])for(const direction of ['ltr','rtl']){await page.setViewportSize({width,height:1000});await page.evaluate(dir=>{document.documentElement.dir=dir;document.body.style.zoom='2';},direction);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);if(width===320)assert.ok(await page.getByRole('region',{name:'Backlink profile table'}).evaluate(el=>el.scrollWidth>el.clientWidth));await page.screenshot({path:output+'/'+width+'-'+direction+'-body-css-zoom2.png',fullPage:true});}
+  for(const width of [320,1440])for(const direction of ['ltr','rtl']){await setViewport(page,{width,height:1000});await page.evaluate(dir=>{document.documentElement.dir=dir;document.body.style.zoom='2';},direction);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);if(width===320)assert.ok(await page.getByRole('region',{name:'Backlink profile table'}).evaluate(el=>el.scrollWidth>el.clientWidth));await page.screenshot({path:output+'/'+width+'-'+direction+'-body-css-zoom2.png',fullPage:true});}
   await page.evaluate(()=>{document.body.style.zoom='';document.documentElement.dir='ltr';});await openDraft(page);await select(page,'Research report').focus();await page.keyboard.press('Tab');assert.equal(await page.getByLabel('Domain or URL',{exact:true}).evaluate(el=>el===document.activeElement),true);const table=page.getByRole('region',{name:'Backlink profile table'});await table.focus();await page.keyboard.press('Tab');assert.equal(await table.locator('a').first().evaluate(el=>el===document.activeElement),true);assert.equal(model.posts.length,0);await context.close();
  }
  done('320 and 1440 LTR RTL body CSS zoom2 with contained readable table real keyboard and escaped anchor',1);
@@ -162,7 +162,7 @@ try{
 
  for(const report of ['backlinks_referring_domains_v1','backlinks_anchors_v1']){
   const {page,context,model,view}=await open({r:groupRequest(report)});await view();const table=page.getByRole('region',{name:report==='backlinks_referring_domains_v1'?'Referring domain table':'Anchor text table',exact:true});if(report==='backlinks_anchors_v1'){await table.getByRole('rowheader',{name:'Empty anchor',exact:true}).waitFor();assert.equal(await table.getByRole('rowheader',{name:'<script>synthetic grouped anchor</script>',exact:true}).count(),1);assert.equal(await page.locator('script').filter({hasText:'synthetic grouped anchor'}).count(),0);}
-  for(const width of [320,1440])for(const direction of ['ltr','rtl']){await page.setViewportSize({width,height:1000});await page.evaluate(dir=>{document.documentElement.dir=dir;document.body.style.zoom='2';},direction);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);if(width===320)assert.ok(await table.evaluate(el=>el.scrollWidth>el.clientWidth));await page.screenshot({path:output+'/'+report+'-'+width+'-'+direction+'-body-css-zoom2.png',fullPage:true});}
+  for(const width of [320,1440])for(const direction of ['ltr','rtl']){await setViewport(page,{width,height:1000});await page.evaluate(dir=>{document.documentElement.dir=dir;document.body.style.zoom='2';},direction);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);if(width===320)assert.ok(await table.evaluate(el=>el.scrollWidth>el.clientWidth));await page.screenshot({path:output+'/'+report+'-'+width+'-'+direction+'-body-css-zoom2.png',fullPage:true});}
   await page.evaluate(()=>{document.body.style.zoom='';document.documentElement.dir='ltr';});await table.focus();await page.keyboard.press('Tab');assert.equal(await table.locator('summary').first().evaluate(el=>el===document.activeElement),true);assert.equal(model.posts.length,0);model.run.resultExpired=true;await button(page,'Reload result').click();await idle(page);assert.equal(await table.count(),0);assert.equal(await button(page,'Download report CSV').count(),0);model.run.resultExpired=false;await button(page,'Reload result').click();await idle(page);assert.equal(await table.count(),0);await context.close();
  }
  done('both grouped tables retain 320/1440 LTR/RTL zoom2, native keyboard, escaped/empty anchors and irreversible observed expiry',2);

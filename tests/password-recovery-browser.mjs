@@ -33,7 +33,7 @@ const count = path => evidence.requests.filter(call => call.context === evidence
 async function fresh(fragment = '', responder = async () => false, options = {}) {
   for (const route of held) await route.abort().catch(() => {}); held = []; await context?.close();
   override = responder; state = { configured: true, ...options }; evidence.contexts++;
-  context = await browser.newContext({ viewport: { width: options.width ?? 1440, height: 1000 }, hasTouch: (options.width ?? 1440) < 768, serviceWorkers: 'block', colorScheme: 'light' }); context.setDefaultTimeout(10000);
+  context = await browser.newContext({ viewport: { width: options.width ?? 1440, height: 1000 }, hasTouch: (options.width ?? 1440) <= 760, serviceWorkers: 'block', colorScheme: 'light' }); context.setDefaultTimeout(10000);
   await context.addInitScript(({ direction, zoom }) => addEventListener('DOMContentLoaded', () => { document.documentElement.dir = direction; document.body.style.zoom = String(zoom); }), { direction: options.dir ?? 'ltr', zoom: options.zoom ?? 1 });
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());

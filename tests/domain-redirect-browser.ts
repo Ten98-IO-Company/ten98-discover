@@ -9,7 +9,7 @@ import {addDomain,issueDomainChallenge,verifyDomain} from '../src/server/domains
 import {executeDomainRedirectCheck} from '../src/server/domain-redirects.ts';
 import {stopJobs} from '../src/server/jobs.ts';
 import type {RedirectTransport} from '../src/server/domain-redirect-network.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Production UI/API with a synthetic DNS/HTTP worker transport, never a public request.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -66,11 +66,11 @@ try{
 
   stage='desktop and mobile layout';await mkdir('private/redirect-screenshots',{recursive:true});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:'private/redirect-screenshots/desktop.png',fullPage:true});
-  await page.setViewportSize({width:360,height:860});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await setViewport(page,{width:360,height:860});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await details.getByRole('button',{name:'Refresh checks',exact:true}).scrollIntoViewIfNeeded();
   assert.ok(await details.getByRole('button',{name:'Refresh checks',exact:true}).isVisible());
   await page.screenshot({path:'private/redirect-screenshots/mobile.png',fullPage:true});
-  await page.setViewportSize({width:1440,height:1000});console.log('PASS desktop and 360px document bounds');
+  await setViewport(page,{width:1440,height:1000});console.log('PASS desktop and 360px document bounds');
 
   stage='expired receipt and revoked proof';await pool.query('UPDATE domain_redirect_check SET observation=NULL,observation_expired_at=clock_timestamp() WHERE id=$1',[initial.id]);
   await details.getByRole('button',{name:'Refresh checks',exact:true}).click();await details.getByText('Observation expired under workspace retention. Only this check receipt remains.',{exact:true}).waitFor();assert.ok(!(await details.innerText()).includes('HTTP 301'));

@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import {fixtureGuard,evidenceDir,appUrl} from './guard.mjs';
 import {readFixture} from './fixture.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
-import {launchChromium} from '../helpers/playwright.mjs';
+import {launchChromium,setViewport} from '../helpers/playwright.mjs';
 
 fixtureGuard();const fixture=await readFixture(),pool=getDatabase().pool;
 const browser=await launchChromium();
@@ -78,7 +78,7 @@ async function heldGet(path,{status}={}){
 async function layout(label){
   await mkdir(resolve(evidenceDir,'screenshots'),{recursive:true});
   for(const width of [1440,360]){
-    await page.setViewportSize({width,height:width===360?860:1000});
+    await setViewport(page,{width,height:width===360?860:1000});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No page-wide horizontal overflow.');
     for(const region of await panel.getByRole('region').all())if(await region.locator('table').count()){
       if(await region.evaluate(el=>el.scrollWidth>el.clientWidth+1)){
@@ -88,7 +88,7 @@ async function layout(label){
     }
     await page.screenshot({path:resolve(evidenceDir,'screenshots',label+'-'+width+'.png'),fullPage:true});
   }
-  await page.setViewportSize({width:1440,height:1000});
+  await setViewport(page,{width:1440,height:1000});
 }
 async function workspace(id){
   const menu=page.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();

@@ -6,7 +6,7 @@ import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_RANK_PANEL_BROWSER,'1');
 // Use installed Playwright, or an explicitly supplied module path; never install/download here.
@@ -217,7 +217,7 @@ try{
  assert.equal(calls.slice(viewerCalls).some(c=>c.path.endsWith('/catalog')||c.path.endsWith('/locations')),false);
  console.log('PASS read-only viewer sees authored rows without vault and has no catalog or mutation actions.');
  await mkdir(resolve('private/rank-panel-evidence'),{recursive:true});
- for(const width of [1440,360]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:resolve('private/rank-panel-evidence/rank-detail-'+width+'.png'),fullPage:true});}
+ for(const width of [1440,360]){await setViewport(page,{width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:resolve('private/rank-panel-evidence/rank-detail-'+width+'.png'),fullPage:true});}
  role='owner';vault=true;await page.reload();await page.getByRole('button',{name:/Synthetic main tracker/}).waitFor();
  await page.screenshot({path:resolve('private/rank-panel-evidence/rank-list-360.png'),fullPage:true});
  await page.getByRole('button',{name:'New tracker',exact:true}).click();
@@ -226,7 +226,7 @@ try{
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:resolve('private/rank-panel-evidence/rank-create-360.png'),fullPage:true});
  const primary=await page.getByRole('button',{name:'Create tracker',exact:true}).boundingBox();assert.ok(primary.height>=44);
- for(const width of [320,360,768,1440])await check('creation root '+width,async()=>{await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
+ for(const width of [320,360,768,1440])await check('creation root '+width,async()=>{await setViewport(page,{width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Cancel',exact:true}).focus();await page.keyboard.press('Enter');
  await page.getByRole('button',{name:'New tracker',exact:true}).waitFor();
  nextGet='hold';await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForTimeout(50);assert.ok(held);
@@ -249,22 +249,22 @@ try{
  // Further UI checks use this same contained controller and existing synthetic route handler.
  const longName='T'.repeat(120),longKeyword='K'.repeat(195)+' C++%';Object.assign(trackers.find(t=>t.id===tid),{name:longName,domain:'a'.repeat(241)+'.example.com',locationName:'L'.repeat(512)});keywords.get(tid)[0].keyword=longKeyword;
  await page.reload();await page.getByRole('button',{name:longName,exact:true}).waitFor();
- for(const width of [320,360,768,1440])await check('list root '+width,async()=>{await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
+ for(const width of [320,360,768,1440])await check('list root '+width,async()=>{await setViewport(page,{width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
  nextGet='hold';await page.getByRole('button',{name:longName,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.rank-tracking')?.textContent.includes('Loading tracker access'));await page.waitForTimeout(50);assert.ok(held);await check('loading root targets',targets);await fulfill(held.route,held.reply);held=null;await page.getByRole('heading',{name:longName,exact:true}).waitFor();
  const region=page.getByRole('region',{name:'Keywords',exact:true});for(const direction of ['ltr','rtl'])for(const width of [320,360,768,1440])await check('detail '+direction+' '+width,async()=>{
-  await page.evaluate(value=>{document.documentElement.dir=value;},direction);await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();assert.equal(await page.getByText(longKeyword,{exact:true}).isVisible(),true);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);
+  await page.evaluate(value=>{document.documentElement.dir=value;},direction);await setViewport(page,{width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();assert.equal(await page.getByText(longKeyword,{exact:true}).isVisible(),true);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);
   for(const checkbox of await region.getByRole('checkbox').all()){const label=checkbox.locator('..');assert.equal(await label.evaluate(node=>node.tagName),'LABEL');const box=await label.boundingBox();assert.ok(box&&box.width>=44&&box.height>=44,'Native keyword labels provide44px targets');}
   if(width<=360){await region.evaluate(node=>{node.scrollLeft=0;});await region.focus();await page.keyboard.press(direction==='rtl'?'ArrowLeft':'ArrowRight');await page.waitForFunction(()=>Math.abs(document.querySelector('[role=region][aria-label=Keywords]').scrollLeft)>0);}
   await page.screenshot({path:resolve('private/rank-panel-evidence/r01-detail-'+width+'-'+direction+'.png'),fullPage:true});
  });
- await page.evaluate(()=>{document.documentElement.dir='ltr';document.documentElement.style.zoom='2';});await page.setViewportSize({width:1440,height:1000});await check('200% CSS layout zoom',async()=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await region.isVisible(),true);await page.screenshot({path:resolve('private/rank-panel-evidence/r01-layout-zoom.png'),fullPage:true});});await page.evaluate(()=>{document.documentElement.style.zoom='';});
+ await page.evaluate(()=>{document.documentElement.dir='ltr';document.documentElement.style.zoom='2';});await setViewport(page,{width:1440,height:1000});await check('200% CSS layout zoom',async()=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await region.isVisible(),true);await page.screenshot({path:resolve('private/rank-panel-evidence/r01-layout-zoom.png'),fullPage:true});});await page.evaluate(()=>{document.documentElement.style.zoom='';});
  await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});await settings().focus();await check('forced colors and native focus',async()=>{assert.notEqual(await settings().evaluate(node=>getComputedStyle(node).outlineStyle),'none');assert.equal(await settings().evaluate(node=>getComputedStyle(node).display),'list-item');await page.screenshot({path:resolve('private/rank-panel-evidence/r01-forced-colors.png'),fullPage:true});});await page.emulateMedia({forcedColors:'none'});
  await page.getByRole('button',{name:'Add keywords',exact:true}).click();await page.getByLabel('Keywords, one per line',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.activeElement?.id.endsWith('add-heading')),true);await targets();await page.getByLabel('Keywords, one per line',{exact:true}).fill('  C++ %20\n\nMiXeD\nMiXeD');await page.getByLabel('Preserve keyword case',{exact:true}).check();
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await page.getByLabel('Keywords, one per line',{exact:true}).inputValue(),'  C++ %20\n\nMiXeD\nMiXeD');await page.screenshot({path:resolve('private/rank-panel-evidence/r01-add-draft.png'),fullPage:true});
  const added=mutations.length;await page.getByRole('button',{name:'Add keywords',exact:true}).click();await page.getByText('C++ %20',{exact:true}).waitFor();assert.equal(mutations.length,added+1);assert.deepEqual(mutations.at(-1).body.keywords,['  C++ %20','MiXeD','MiXeD']);assert.equal(mutations.at(-1).body.matchCase,true);assert.equal(await page.getByText('MiXeD',{exact:true}).count(),1);assert.equal(await region.locator('tbody tr').count(),4);
  await page.getByLabel('Select all keywords',{exact:true}).check();assert.equal(await page.getByText('4 selected',{exact:true}).isVisible(),true);await page.getByRole('button',{name:'Unpin selected',exact:true}).click();await page.getByText('0 selected',{exact:true}).waitFor();assert.equal(mutations.at(-1).body.pinned,false);assert.equal(mutations.at(-1).body.keywordIds.length,4);
  await page.getByLabel('Select all keywords',{exact:true}).check();await page.getByRole('button',{name:'Remove selected',exact:true}).click();await page.getByRole('dialog',{name:/^Remove \d+ selected keyword\(s\)\?$/}).getByRole('button',{name:'Remove keywords',exact:true}).click();await page.getByText('No keywords yet',{exact:true}).waitFor();assert.equal(await region.count(),0);assert.equal(await page.getByRole('button',{name:'Prepare a rank check',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Check selected keywords',exact:true}).isDisabled(),true);
- nextGet=403;await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await page.setViewportSize({width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);});
+ nextGet=403;await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await setViewport(page,{width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);});
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);assert.deepEqual(findings,[],'Every R01 hierarchy, draft and target requirement must pass');console.log('PASS native settings/order/draft retention, all-mode44px targets, long-text LTR/RTL/zoom/forced colors and explicit case-preserving add/unpin/remove without paid work.');
 
  // Compatibility checks are additive; every earlier controller assertion stays intact.
@@ -275,7 +275,7 @@ try{
    assert.equal(await page.getByLabel('Search targeting',{exact:true}).inputValue(),'national');
    if(localTarget){await page.getByLabel('Search targeting',{exact:true}).selectOption('local');await page.getByRole('button',{name:'Search locations',exact:true}).click();await page.getByRole('option',{name:'Bermuda local region',exact:true}).waitFor({state:'attached'});await page.getByLabel('City or region',{exact:true}).selectOption('300');}
    assert.equal(await page.getByText(/2 locations cannot be selected: BY/).isVisible(),true);assert.equal(await page.getByText(/Some parent-location details are unavailable/).isVisible(),true);
-   await page.setViewportSize({width:360,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await setViewport(page,{width:360,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    const name=localTarget?'Bermuda local':'Bermuda whole';await page.getByLabel('Tracker name',{exact:true}).fill(name);await page.getByRole('button',{name:'Create tracker',exact:true}).click();await page.getByRole('heading',{name,exact:true}).waitFor();
    assert.equal(mutations.at(-1).body.countryCode,2060);assert.equal(mutations.at(-1).body.locationCode,localTarget?300:2060);assert.equal(mutations.at(-1).body.languageCode,localTarget?'sr-Latn':'es-419');assert.equal(trackers.find(t=>t.name===name).locationType,'Region');
   }

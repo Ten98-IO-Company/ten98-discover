@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CAMPAIGN_UI_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve('private/campaign-ui-evidence'),unexpected=[],errors=[],requests=[],passed=[];
@@ -62,7 +62,7 @@ async function fresh({mode='signin',view='project',theme='light',operator=false,
  const query=mode==='app'?new URLSearchParams({...withProject?{workspace,project}:{},view}).toString():'';
  await page.goto(origin+'/?'+query+fragment);return page;
 }
-async function viewport(width,dir='ltr'){await page.setViewportSize({width,height:1000});await page.evaluate(dir=>document.documentElement.dir=dir,dir);}
+async function viewport(width,dir='ltr'){await setViewport(page,{width,height:1000});await page.evaluate(dir=>document.documentElement.dir=dir,dir);}
 async function containment(label){assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,label+' viewport containment');}
 async function targets(locator,label){for(const target of await locator.evaluateAll(es=>es.map(e=>({height:e.getBoundingClientRect().height,name:e.id||e.textContent?.trim()||e.tagName})).filter(e=>e.height)))assert.ok(target.height>=44,label+' 44px target '+target.name+' (actual '+target.height+'px)');}
 async function authGeometry(label){

@@ -3,7 +3,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fixtureGuard,evidenceDir,appUrl} from './guard.mjs';
 import {readFixture} from './fixture.mjs';
-import {launchChromium} from '../helpers/playwright.mjs';
+import {launchChromium,setViewport} from '../helpers/playwright.mjs';
 
 fixtureGuard();const fixture=await readFixture();
 const browser=await launchChromium();
@@ -61,7 +61,7 @@ try{
   await enter(first.getByRole('button',{name:'Add property filter',exact:true}));await enter(first.getByRole('button',{name:'Remove property filter 2',exact:true}));assert.equal(await first.getByLabel('Property key',{exact:true}).inputValue(),'plan');
   stage='editor responsive labels and screenshots';await mkdir(resolve(evidenceDir,'screenshots'),{recursive:true});
   for(const width of [1440,360]){
-    await page.setViewportSize({width,height:width===360?860:1000});
+    await setViewport(page,{width,height:width===360?860:1000});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Editor must not create page-wide overflow.');
     const missing=await panel.locator('input,select,textarea').evaluateAll(items=>items.filter(el=>el.offsetParent!==null&&!el.labels?.length&&!el.getAttribute('aria-label')&&!el.getAttribute('aria-labelledby')).map(el=>el.tagName));assert.deepEqual(missing,[],'Visible native editor inputs need labels.');
     await first.getByLabel('JSON value',{exact:true}).focus();assert.equal(await first.getByLabel('JSON value',{exact:true}).inputValue(),'"pro"');
