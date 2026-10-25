@@ -54,11 +54,10 @@ td { padding-block:16px; border-block-end:1px solid var(--color-border); vertica
 dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
 /* @ten98/ui auth.css places the orbit with physical `right` and has no phone grid rows; both belong in the library. */
 [dir='rtl'] .auth-orbit { right:auto; inset-inline-end:-240px; }
+/* @ten98/ui gives pointer: coarse its 44px floor for .btn/.button/.icon-button, fields and .t98-button; native nav items and disclosures still need it. */
+@media (pointer: coarse) { :is(.nav-item,summary) { min-block-size:44px; } }
 @media(max-width:760px) {
- /* @ten98/ui has no phone touch-target floor for .t98-button/.t98-input, and native controls still need it. */
- :root { --control-md:var(--control-touch); }
  .card { padding:18px; }
- :is(.btn,.button,.t98-button,.nav-item,summary,.icon-button),input:not([type='checkbox']):not([type='radio']),select { min-block-size:44px; }
  .auth-shell { grid-template-rows:auto 1fr; }
  [dir='rtl'] .auth-orbit { inset-inline-end:-130px; }
  .connection-callout { flex-wrap:wrap; }

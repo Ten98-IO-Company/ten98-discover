@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_PROMPT_RECEIPT_BROWSER,'1');
 const id=n=>`${n}0000000-0000-4000-8000-000000000001`,pid=id(3),cid=id(4),prompt=id(5),version=id(6),run=id(7),quote=id(8),connection=id(9),at='2026-10-13T12:00:00.000Z';
 const input={connectionId:connection,promptId:prompt,versionId:version,systemText:'Private copied system',models:['openai/gpt-4o-mini'],maxCompletionTokens:1024,fundedCredits:true};
@@ -73,7 +73,7 @@ try{
 
  await fresh();await ready();await page.evaluate(()=>window.receiptFixture.entry({kind:'history'}));await page.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();assert.equal(await answer().count(),0);await page.evaluate(({prompt,version})=>window.receiptFixture.entry({kind:'configure',promptId:prompt,versionId:version,authoredText:'Configured authored prompt'}),{prompt,version});await page.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();assert.equal(calls.filter(c=>c.method==='POST').length,0);
  await fresh({as:'owner'});await ready();await page.evaluate(({prompt,version})=>window.receiptFixture.entry({kind:'configure',promptId:prompt,versionId:version,authoredText:'Configured authored prompt'}),{prompt,version});await page.getByRole('heading',{name:'Review a prompt run',exact:true}).waitFor();await page.getByText('Configured authored prompt',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.method==='POST').length,0);
- await page.setViewportSize({width:360,height:850});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(outbound,[]);assert.deepEqual(errors,[]);
+ await setViewport(page,{width:360,height:850});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(outbound,[]);assert.deepEqual(errors,[]);
  console.log('PASS existing history/configure role behavior remains intact, mobile fits and every provider/unexpected route stays blocked.');
  }else{
  const cost=()=>page.locator('.t98-cost-root');
@@ -98,7 +98,7 @@ try{
  console.log('PASS unused quotes expire without enabling Start or creating a request.');
  await mkdir('private/swarm/prompt-cost-captures',{recursive:true});
  for(const width of [320,1440])for(const theme of ['light','dark']){
-  await fresh();await ready();await state('settled');await page.setViewportSize({width,height:1000});await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+  await fresh();await ready();await state('settled');await setViewport(page,{width,height:1000});await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
   const visual=await page.evaluate(async()=>{
    const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const elements=[...document.querySelectorAll('.research-panel, .research-panel *')].filter(e=>e instanceof HTMLElement&&visible(e));
    const rgb=s=>(s.match(/[\d.]+/g)||[]).map(Number);const luminance=c=>c.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);

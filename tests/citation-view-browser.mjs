@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CITATION_VIEW_BROWSER,'1');
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/citation-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/citation-view-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Citation presentation acceptance</title><div id="root"></div><script type="module" src="/tests/citation-view-browser-fixture.tsx"></script></html>');});
@@ -115,7 +115,7 @@ try{
  await check(async()=>{
 
  await mkdir(evidenceDir,{recursive:true});
- for(const width of [1440,768,360,320])for(const mode of ['urls','daily','changes','evidence','task']){await reset();await show(mode);if(mode==='task')await screen({draft:{...fixture.task.draft,kind:'category'}});await page.setViewportSize({width,height:1000});await page.evaluate(()=>window.scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'No document overflow '+mode+' '+width);
+ for(const width of [1440,768,360,320])for(const mode of ['urls','daily','changes','evidence','task']){await reset();await show(mode);if(mode==='task')await screen({draft:{...fixture.task.draft,kind:'category'}});await setViewport(page,{width,height:1000});await page.evaluate(()=>window.scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'No document overflow '+mode+' '+width);
   for(const control of await main.locator('button,input,select,summary').all()){const box=await control.boundingBox();if(box)assert.ok(box.height>=44,'44px '+await control.innerText());}
   const tables=await main.locator('table').all();assert.equal(tables.length,mode==='task'?0:1);for(const table of tables){const region=table.locator('xpath=ancestor::*[@role="region"][1]');assert.equal(await region.count(),1);assert.equal(await region.getAttribute('tabindex'),'0');assert.ok(await region.getAttribute('aria-label'));assert.ok((await table.locator('caption').innerText()).trim());assert.ok(await table.getByRole('columnheader').count()>0);assert.ok((await region.boundingBox()).width<=width);const headers=table.getByRole('columnheader');if(['urls','evidence'].includes(mode)){assert.ok((await headers.nth(mode==='evidence'?1:0).boundingBox()).width>=250,'Readable retained source column');assert.ok((await headers.last().boundingBox()).width>=180,'Reachable action column');}if(mode==='daily')assert.ok((await headers.nth(1).boundingBox()).width>=110,'Readable daily date');await region.evaluate(el=>el.scrollLeft=0);await region.focus();assert.equal(await region.evaluate(el=>el===document.activeElement),true);if(width===360){assert.ok(await region.evaluate(el=>el.scrollWidth>el.clientWidth));await page.keyboard.press('ArrowRight');await until(()=>region.evaluate(el=>el.scrollLeft>0));await page.waitForTimeout(200);}await region.evaluate(el=>el.scrollTo({left:0,behavior:'instant'}));assert.equal(await region.evaluate(el=>el.scrollLeft),0);}
   const ids=await main.locator('[id]').evaluateAll(nodes=>nodes.map(node=>node.id));assert.equal(new Set(ids).size,ids.length);await page.locator('#citation-view-heading').focus();await page.screenshot({path:resolve(evidenceDir,`citations-${mode}-${width}.png`),fullPage:true});
@@ -124,7 +124,7 @@ try{
  console.log('PASS 1440/768/360/320 readable horizontal regions, keyboard scroll,44px controls, inert text, no overflow, page errors or outbound I/O.');
  });
  await check(async()=>{
- await show('task');await reset();await page.setViewportSize({width:1440,height:900});
+ await show('task');await reset();await setViewport(page,{width:1440,height:900});
  const summary=main.locator('summary').filter({hasText:/^Source filters$/}),disclosure=summary.locator('..');
  assert.equal(await disclosure.evaluate(element=>element.open),false);assert.equal(await field('Source query').isVisible(),false);
  const header=page.getByRole('heading',{name:'Citations',exact:true,level:2}).locator('..');
@@ -164,7 +164,7 @@ try{
  await check(async()=>{
  const themeBackgrounds=[],themeStats=[];
  for(const theme of ['light','dark'])for(const width of [320,1440]){
-  await page.evaluate(()=>{for(const [node,value,priority]of window.citationFontStyles??[])node.style.setProperty('font-size',value,priority);});await reset();await show('evidence');await page.setViewportSize({width,height:1000});await page.emulateMedia({colorScheme:theme});
+  await page.evaluate(()=>{for(const [node,value,priority]of window.citationFontStyles??[])node.style.setProperty('font-size',value,priority);});await reset();await show('evidence');await setViewport(page,{width,height:1000});await page.emulateMedia({colorScheme:theme});
   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.colorScheme=theme;const nodes=Array.from(document.querySelectorAll('html,html *')).filter(node=>node instanceof HTMLElement),sizes=nodes.map(node=>parseFloat(getComputedStyle(node).fontSize));window.citationFontStyles=nodes.map(node=>[node,node.style.getPropertyValue('font-size'),node.style.getPropertyPriority('font-size')]);nodes.forEach((node,index)=>node.style.fontSize=(sizes[index]*2)+'px');},theme);
   await page.waitForTimeout(200);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,theme+' '+width+' all HTML fonts doubled without document overflow');
   const detail=main.locator('.t98-evidence-detail-root');assert.equal(await detail.locator('tbody tr').count(),fixture.evidence.rows.length);const region=page.getByRole('region',{name:'Citation evidence rows',exact:true});await region.focus();assert.equal(await region.evaluate(node=>node===document.activeElement),true);await region.evaluate(node=>node.scrollLeft=0);await page.keyboard.press('ArrowRight');await until(()=>region.evaluate(node=>node.scrollLeft>0));await region.evaluate(node=>node.scrollLeft=0);

@@ -10,7 +10,7 @@ import {assertSchema, closeDatabase, getDatabase} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {getDestinations, saveDestinationsDraft, publishDestinations} from '../src/server/destinations.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Optional real-browser acceptance; no browser dependency belongs in production.
@@ -120,13 +120,13 @@ try {
   await page.evaluate(() => (window as any).ten98.track('stale_dialog_event'));
   assert.equal(events.length, 3); assert.equal(await count(), 2); assert.equal(outbound.length, 0);
 
-  const mobile = await context.newPage(); await mobile.setViewportSize({width: 360, height: 740});
+  const mobile = await context.newPage(); await setViewport(mobile,{width: 360, height: 740});
   await mobile.goto(`${fixtureOrigin}/mobile`, {waitUntil: 'networkidle'});
   await mobile.getByRole('button', {name: `Tracking preferences for ${config.appUrl}`, exact: true}).click();
   const mobileDialog = mobile.getByRole('dialog', {name: 'Tracking preferences', exact: true});
   await mobileDialog.waitFor();
   for (const width of [360,320]) {
-    await mobile.setViewportSize({width,height:740});
+    await setViewport(mobile,{width,height:740});
     const size = await mobile.evaluate(() => { const dialog = document.querySelector('dialog')!; const box = dialog.getBoundingClientRect(); return {width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth, left: box.left, right: box.right, top: box.top, bottom: box.bottom, overflow: getComputedStyle(dialog).overflowY, targets: [...dialog.querySelectorAll('label,button')].map(node => node.getBoundingClientRect().height)}; });
     assert.ok(size.scroll <= size.width && size.left >= 0 && size.right <= size.width && size.top >= 0 && size.bottom <= size.height, `The embedded dialog must fit a ${width}px viewport.`);
     assert.equal(size.overflow, 'auto'); assert.ok(size.targets.every((height: number) => height >= 44));
@@ -158,25 +158,25 @@ try {
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
   await metric('Estimated visitors').filter({hasText: /^1$/}).waitFor();
   assert.equal(await metric('Recorded pageviews').textContent(), '2'); assert.equal(await metric('Visits').textContent(), '1');
-  await dashboard.setViewportSize({width: 360, height: 740});
+  await setViewport(dashboard,{width: 360, height: 740});
   async function capture(name: string) {
     assert.equal(await dashboard.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'The dashboard must not overflow horizontally on mobile.');
     const boxes = await dashboard.locator('.analytics-stat').evaluateAll((nodes: HTMLElement[]) => nodes.map(node => { const box = node.getBoundingClientRect(); return {left: box.left, right: box.right, width: innerWidth}; }));
     assert.ok(boxes.every((box: any) => box.left >= 0 && box.right <= box.width));
     if (process.env.BROWSER_ARTIFACT_DIR) await dashboard.screenshot({path: join(process.env.BROWSER_ARTIFACT_DIR, name), fullPage: true});
   }
-  await dashboard.setViewportSize({width:1440,height:900});await capture('native-metrics-known-desktop.png');
-  await dashboard.setViewportSize({width:360,height:740});
+  await setViewport(dashboard,{width:1440,height:900});await capture('native-metrics-known-desktop.png');
+  await setViewport(dashboard,{width:360,height:740});
   await capture('native-metrics-known-mobile.png');
-  await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-known-320.png');
-  await dashboard.setViewportSize({width:360,height:740});
+  await setViewport(dashboard,{width:320,height:740});await capture('native-metrics-known-320.png');
+  await setViewport(dashboard,{width:360,height:740});
   await selectProject(dashboard,'Unmeasured native sandbox');
   await metric('Estimated visitors').filter({hasText: /^Unavailable$/}).waitFor();
   for (const name of ['Visits', 'Bounce rate', 'Average observed visit']) assert.equal(await metric(name).textContent(), 'Unavailable');
   assert.equal(await metric('Recorded pageviews').textContent(), '1');
   await capture('native-metrics-unavailable-mobile.png');
-  await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-unavailable-320.png');
-  await dashboard.setViewportSize({width:360,height:740});
+  await setViewport(dashboard,{width:320,height:740});await capture('native-metrics-unavailable-320.png');
+  await setViewport(dashboard,{width:360,height:740});
   await selectProject(dashboard,'Native consent sandbox');
   await section(dashboard,'Privacy');
   const settingsPanel = dashboard.locator('section.card').filter({has: dashboard.getByRole('heading', {name: 'Collection and privacy', exact: true})});
@@ -205,8 +205,8 @@ try {
   await paths.fill('invalid'); assert.equal(await save.isDisabled(), true, 'Confirmation must revalidate fields edited while it is visible.');
   await settingsPanel.getByRole('button', {name: 'Keep editing', exact: true}).click(); await settingsPanel.getByRole('button', {name: 'Cancel changes', exact: true}).click();
   await capture('native-settings-mobile.png');
-  await dashboard.setViewportSize({width:320,height:740});await capture('native-settings-320.png');
-  await dashboard.setViewportSize({width:360,height:740});
+  await setViewport(dashboard,{width:320,height:740});await capture('native-settings-320.png');
+  await setViewport(dashboard,{width:360,height:740});
 
   const viewerId = randomUUID(), viewerEmail = `${randomUUID()}@native-viewer.integration.test`, viewerPassword = randomBytes(24).toString('base64url');
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [viewerId, 'Native browser viewer', viewerEmail]);
@@ -227,7 +227,7 @@ try {
   const basicProjectId = randomUUID(); fixtureSiteKey = randomUUID();
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [basicProjectId, basicWorkspace.id, 'Cookieless browser sandbox', fixtureOrigin, fixtureSiteKey]);
   await saveAnalyticsSettings(basicProjectId, userId, {revision: 1, settings: {enabled: true, collectionMode: 'cookieless', consentMode: 'builtin', captureReferrer: false, captureCampaigns: false, captureScreen: false, excludeBots: false, excludedPaths: []}});
-  const basicContext = await browser.newContext({viewport: {width: 320, height: 740}, serviceWorkers: 'block'}); await basicContext.route('**/*', blockExternal);
+  const basicContext = await browser.newContext({viewport: {width: 320, height: 740}, hasTouch: true, serviceWorkers: 'block'}); await basicContext.route('**/*', blockExternal);
   const basicPage = await basicContext.newPage(), basicEvents: any[] = [];
   basicPage.on('request', (request: any) => {if (request.url() === `${config.appUrl}/api/collect`) basicEvents.push(request.postDataJSON());});
   const firstBasic = basicPage.waitForResponse((res: any) => res.url() === `${config.appUrl}/api/collect` && res.request().method() === 'POST');

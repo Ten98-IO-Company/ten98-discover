@@ -14,7 +14,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Root supplies one built app and a fresh owned fixture. This runner never starts
 // a service, migrates, mocks an API result, or contacts another origin.
@@ -148,7 +148,7 @@ try{
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM analytics_session_property WHERE project_id=$1',[project])).rows[0].n,countBefore,'Expiry is evaluated before any physical cleanup.');
   await page.getByRole('region',{name:'Report session properties',exact:true}).getByText(/Retention removed property evidence/).waitFor();assert.equal(await page.locator('.metric-value').first().innerText(),'Unavailable');assert.equal(await page.getByText(/No retained events match these filters/).count(),0);
   assert.ok(result.csv.includes('missing_evidence_lost'));assert.ok(result.csv.includes('Unavailable'));
-  for(const width of [1440,320,360]){await page.setViewportSize({width,height:1000});await reveal(advanced());assert.deepEqual(await (await editExplore(page)).locator('details.advanced-controls').first().locator('input,select,button,summary').evaluateAll((nodes:HTMLElement[])=>nodes.filter(n=>n.getClientRects().length&&n.getBoundingClientRect().height<44).map(n=>n.id)),[]);await shot('session-unavailable-'+width+'.png');}
+  for(const width of [1440,320,360]){await setViewport(page,{width,height:1000});await reveal(advanced());assert.deepEqual(await (await editExplore(page)).locator('details.advanced-controls').first().locator('input,select,button,summary').evaluateAll((nodes:HTMLElement[])=>nodes.filter(n=>n.getClientRects().length&&n.getBoundingClientRect().height<44).map(n=>n.id)),[]);await shot('session-unavailable-'+width+'.png');}
   mark('Real unidentified activity and physically retained expired evidence produce unavailable JSON/CSV and matching desktop/mobile UI, never false empty results.');
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert.equal(completed.length,4);
   const finalHashes=Object.fromEntries(await Promise.all(sources.map(async path=>[path,await digest(path)])));assert.deepEqual(finalHashes,initialHashes);

@@ -1,5 +1,6 @@
 // Opt-in production acceptance. Reuses the contained Research fixture boundary;
 // no live provider, background worker, database discovery or fixture reset.
+import {setViewport} from '../helpers/playwright.mjs';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
@@ -124,7 +125,7 @@ try{
       assert.ok(text.includes('unavailable')&&text.includes('available'));assert.ok(!text.includes('synthetic-never-live'));
     }
     assert.deepEqual(await providerCounts(),beforeSave);await assertLayout(page,'saved-keywords-core');
-    await page.setViewportSize({width:360,height:860});await table(page).evaluate(el=>{el.scrollLeft=0;});await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'instant'}));
+    await setViewport(page,{width:360,height:860});await table(page).evaluate(el=>{el.scrollLeft=0;});await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'instant'}));
     await page.screenshot({path:resolve(evidenceDir,'research-evidence','saved-keywords-core-360-first-columns.png'),fullPage:true});
     console.log('PASS saved research provenance, manual identities, literal/nullable filters, tag editing, safe CSV/TSV and keyboard/mobile layout.');
   }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fixtureGuard,appUrl,evidenceDir} from './guard.mjs';
-import {launchChromium} from '../helpers/playwright.mjs';
+import {launchChromium,setViewport} from '../helpers/playwright.mjs';
 
 export function deferred(){let done;const promise=new Promise(resolve=>done=resolve);return {promise,resolve:done};}
 export async function bounded(promise,ms=30_000){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Synthetic browser coordination timed out.')),ms);})]);}finally{clearTimeout(timer);}}
@@ -52,7 +52,7 @@ export async function openKeywordForm(panel){
 export async function assertLayout(page,name){
   await mkdir(resolve(evidenceDir,'research-evidence'),{recursive:true});
   for(const width of [1440,360]){
-    await page.setViewportSize({width,height:width===360?860:1000});
+    await setViewport(page,{width,height:width===360?860:1000});
     await page.waitForTimeout(100);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No page-wide horizontal overflow.');
     for(const region of await page.getByRole('region').all()){
@@ -65,7 +65,7 @@ export async function assertLayout(page,name){
     await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'instant'}));
     await page.screenshot({path:resolve(evidenceDir,'research-evidence',name+'-'+width+'.png'),fullPage:true});
   }
-  await page.setViewportSize({width:1440,height:1000});
+  await setViewport(page,{width:1440,height:1000});
 }
 // Executes the real POST once, then loses only its acknowledgement. Every later
 // explicit retry is forwarded unchanged and checked against the immutable body.
