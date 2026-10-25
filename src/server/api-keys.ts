@@ -112,11 +112,17 @@ export async function revokeApiKey(workspaceId: string, userId: string, keyId: s
 // A request may authenticate more than once, so one write per key is in flight per process; others are dropped, not queued.
 // A read that began before the previous write finished may still see the old time, so it is dropped too: that write
 // committed no earlier than the read began and already records this use. Reads run in READ COMMITTED statements.
+// Finished entries older than the one-minute throttle are pruned on each claim, so the map holds only recent keys.
+export function claimApiKeyUseWrite(writes: Map<string, number>, id: string, readStartedAt: number, now: number): boolean {
+  for (const [key, finished] of writes) if (finished < now - 60_000) writes.delete(key);
+  const written = writes.get(id);
+  if (written !== undefined && written >= readStartedAt) return false;
+  writes.set(id, Infinity);
+  return true;
+}
 const recordingUse = new Map<string, number>();
 function recordApiKeyUse(id: string, readStartedAt: number): void {
-  const written = recordingUse.get(id);
-  if (written !== undefined && written >= readStartedAt) return;
-  recordingUse.set(id, Infinity);
+  if (!claimApiKeyUseWrite(recordingUse, id, readStartedAt, performance.now())) return;
   void getDatabase().pool.query(
     `UPDATE api_key SET last_used_at=clock_timestamp() WHERE id=(SELECT id FROM api_key WHERE id=$1
        AND (last_used_at IS NULL OR last_used_at<clock_timestamp()-interval '1 minute') FOR NO KEY UPDATE SKIP LOCKED)`, [id],
