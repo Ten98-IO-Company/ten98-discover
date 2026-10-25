@@ -133,7 +133,7 @@ try {
   }
   await resetMode(); // The invalid-link case above spent its own context's reset POST.
   assert.equal(await page.getByLabel('New password', { exact: true }).getAttribute('maxlength'), '128'); assert.equal(await page.getByLabel('New password', { exact: true }).getAttribute('autocomplete'), 'new-password');
-  await fillReset(password, password + ' differs'); await button('Change password').click(); await page.getByRole('alert').filter({ hasText: 'enter the same password twice' }).waitFor(); assert.equal(count('/api/auth/reset-password'), 0);
+  await fillReset(password, password + ' differs'); await button('Change password').click(); await page.getByRole('alert').filter({ hasText: 'The passwords do not match.' }).waitFor(); assert.equal(count('/api/auth/reset-password'), 0);
   let manual = 0; override = async (route, call) => {
     if (call.path === '/api/auth/reset-password') { assert.equal(call.method, 'POST'); assert.deepEqual(call.body, { token: tokenA, newPassword: password }); await reply(route, { ok: true }); return true; }
     if (call.path === '/api/auth/sign-in/email') { manual++; assert.deepEqual(call.body, { email, password }); await reply(route, { twoFactorRedirect: true }); return true; } return false;

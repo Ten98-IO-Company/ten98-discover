@@ -5,6 +5,7 @@ import { hashPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
+import { OidcReturnError } from './oidc-return.ts';
 
 type Workspace = { id: string; name: string };
 type Invitation = { id: string; email: string; role: Exclude<Role, 'owner'>; expiresAt: Date };
@@ -272,8 +273,10 @@ export async function removeMember(workspaceId: string, userId: string, targetUs
 
 export async function inspectInvitation(input: unknown) {
   const { token } = parse(z.object({ token: tokenInput }).strict(), input);
-  const result = await getDatabase().pool.query<{ workspaceId: string; workspaceName: string; email: string; role: Invitation['role']; expiresAt: Date }>(
-    `SELECT w.id AS "workspaceId",w.name AS "workspaceName",i.email,i.role,i.expires_at AS "expiresAt"
+  // accountExists is shown only to the token holder, whom the token already tells the invited email; it lets sign-in come first.
+  const result = await getDatabase().pool.query<{ workspaceId: string; workspaceName: string; email: string; role: Invitation['role']; expiresAt: Date; accountExists: boolean }>(
+    `SELECT w.id AS "workspaceId",w.name AS "workspaceName",i.email,i.role,i.expires_at AS "expiresAt",
+       EXISTS(SELECT 1 FROM "user" u WHERE lower(u.email)=i.email) AS "accountExists"
      FROM workspace_invitation i JOIN workspace w ON w.id=i.workspace_id
      JOIN membership m ON m.workspace_id=i.workspace_id AND m.user_id=i.inviter_id
      WHERE i.token_hash=$1 AND i.expires_at>clock_timestamp()
@@ -281,7 +284,7 @@ export async function inspectInvitation(input: unknown) {
   );
   const invitation = result.rows[0];
   if (!invitation) unavailable();
-  return { workspace: { id: invitation.workspaceId, name: invitation.workspaceName }, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt };
+  return { workspace: { id: invitation.workspaceId, name: invitation.workspaceName }, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt, accountExists: invitation.accountExists };
 }
 
 async function lockInvitation(client: PoolClient, digest: string) {
@@ -344,9 +347,9 @@ export async function acceptInvitation(input: unknown, signedInUser?: { id: stri
 export async function acceptVerifiedOidcInvitation(client: PoolClient, token: unknown, identity: { email: string; name: string }, passwordHash?: string) {
   const checked = parse(z.object({ email: emailInput, name: z.string().trim().min(1).max(120) }).strict(), identity);
   const { workspaceId, invitation } = await lockInvitation(client, tokenDigest(parse(tokenInput, token)));
-  if (invitation.email !== checked.email) throw new FoundationError(403, 'The verified provider email does not match the invitation recipient.');
+  if (invitation.email !== checked.email) throw new OidcReturnError(403, 'The verified provider email does not match the invitation recipient.', 'OIDC_INVITE_EMAIL_MISMATCH');
   const existing = await client.query('SELECT id FROM "user" WHERE lower(email)=$1', [checked.email]);
-  if (existing.rowCount) throw new FoundationError(409, 'Sign in with the existing account before accepting this invitation. Link the provider explicitly in account settings.');
+  if (existing.rowCount) throw new OidcReturnError(409, 'Sign in with the existing account before accepting this invitation. Link the provider explicitly in account settings.', 'OIDC_ACCOUNT_EXISTS');
   const userId = randomUUID();
   await client.query('INSERT INTO "user"(id,name,email,"emailVerified") VALUES($1,$2,$3,true)', [userId, checked.name, checked.email]);
   if (passwordHash) await client.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)', [randomUUID(), userId, passwordHash]);

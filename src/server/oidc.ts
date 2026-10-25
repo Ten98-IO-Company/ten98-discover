@@ -20,6 +20,7 @@ import { applyOidcAccountSecurity, localIdentityProofInput, oidcSecurityActionIn
 import { requireInstanceOperator } from './instance-operators.ts';
 import { authorizationRedirect } from '../lib/oidc-authorization.ts';
 import { acceptVerifiedOidcInvitation, inspectInvitation } from './teams.ts';
+import { OidcReturnError, oidcReturnCode } from './oidc-return.ts';
 import { readJson } from './validation.ts';
 
 const origins = z.array(z.string().max(2048)).max(8).default([]);
@@ -381,12 +382,15 @@ async function callback(request: Request): Promise<Response> {
         // An invitation is never silently added to an existing identity or account.
         // Existing users first finish sign-in (including MFA), then accept normally.
         if (userId) throw new FoundationError(409, 'Sign in first, then accept the invitation.');
-        if (!provider.active?.trustVerifiedEmail || !claims.emailVerified || !claims.email || !prepared.payload.invitation) throw new FoundationError(403, 'This provider cannot verify the invitation recipient.');
+        if (!prepared.payload.invitation) throw new FoundationError(403, 'This provider cannot verify the invitation recipient.');
+        // An installation that does not trust provider-verified emails is a configuration choice, not a provider fault.
+        if (!provider.active?.trustVerifiedEmail) throw new OidcReturnError(403, 'This provider cannot verify the invitation recipient.', 'OIDC_SIGN_IN_FAILED');
+        if (!claims.emailVerified || !claims.email) throw new OidcReturnError(403, 'This provider cannot verify the invitation recipient.', 'OIDC_EMAIL_UNVERIFIED');
         const created = await acceptVerifiedOidcInvitation(client, prepared.payload.invitation.token, { email: claims.email, name: prepared.payload.invitation.name ?? claims.name }, prepared.payload.invitation.passwordHash);
         userId = created.userId;
         await client.query('INSERT INTO oidc_identity(id,provider_id,user_id,issuer,subject) VALUES($1,$2,$3,$4,$5)', [randomUUID(), provider.id, userId, claims.issuer, claims.subject]);
       }
-      if (!userId) throw new FoundationError(403, 'This provider identity has no linked account. Use local sign-in to link it, or start from an invitation.');
+      if (!userId) throw new OidcReturnError(403, 'This provider identity has no linked account. Use local sign-in to link it, or start from an invitation.', 'OIDC_NOT_PROVISIONED');
       await client.query('SELECT id FROM "user" WHERE id=$1 FOR UPDATE', [userId]);
       // Recheck after the account lock: removal can invalidate the link while a callback waits.
       if (!(await client.query('SELECT 1 FROM oidc_identity WHERE user_id=$1 AND provider_id=$2 AND issuer=$3 AND subject=$4', [userId, provider.id, claims.issuer, claims.subject])).rowCount) throw new FoundationError(403, 'The linked identity is unavailable.');
@@ -407,10 +411,10 @@ async function callback(request: Request): Promise<Response> {
       await client.query('DELETE FROM oidc_transaction WHERE id=$1', [flow.id]);
       return redirect(data.twoFactorRedirect === true ? 'oidc-factor=1' : 'oidc-complete=1', [...cookies, ...returnedCookies]);
     });
-  } catch {
-    // Never put authorization codes, claims, state or upstream errors in redirects/logs.
+  } catch (error) {
+    // Never put authorization codes, claims, state or upstream errors in redirects/logs: only a fixed reason code returns.
     if (flowId && ownsExchange) await getDatabase().pool.query('DELETE FROM oidc_transaction WHERE id=$1', [flowId]).catch(() => undefined);
-    return redirect('oidc-error=1', flowId ? [bindingCookie(flowId, '', 0)] : []);
+    return redirect(`oidc-error=${oidcReturnCode(error)}`, flowId ? [bindingCookie(flowId, '', 0)] : []);
   }
 }
 

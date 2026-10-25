@@ -22,7 +22,7 @@ export async function runClientRateLimitChecks() {
     const state = randomBytes(32).toString('base64url');
     const callback = await handleApi(new Request(`${config.appUrl}/api/auth/oidc/callback?state=${state}&code=synthetic`));
     assert.equal(callback.status, 303);
-    assert.match(callback.headers.get('location') ?? '', /#oidc-error=1$/);
+    assert.match(callback.headers.get('location') ?? '', /#oidc-error=OIDC_SIGN_IN_FAILED$/);
     assert.equal(await total('oidc:callback:client:unresolved'), 1);
     assert.equal(await total('oidc:callback'), 0, 'A callback without a matching flow counted toward the shared callback ceiling.');
     const inspect = await handleApi(new Request(`${config.appUrl}/api/invitations/inspect`, { method: 'POST', headers: { origin: config.appUrl, 'content-type': 'application/json' }, body: JSON.stringify({ token: randomBytes(32).toString('base64url') }) }));

@@ -53,7 +53,7 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
     brand: <AppBrand product='Discover' />, aside: authStory, eyebrow: 'Your Discover workspace', title: request ? 'Reset your password' : 'Choose a new password',
     busy, busyLabel: request ? 'Requesting link…' : 'Changing password…', error, unconfirmed,
     backToSignIn: { onClick: () => onSignIn() },
-    passwordPolicy: { minLength: 12, maxLength: 128, hint: '12–128 characters.' },
+    passwordPolicy: { minLength: 12, maxLength: 128 },
     messages: {
       loading: 'Checking email recovery…',
       disabled: 'Email recovery is not configured for this installation. Contact the installation operator, or return to sign-in and use your linked identity provider.',
@@ -61,7 +61,6 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
       sent: 'If a local password account matches this email, a reset link has been requested. Check your inbox and spam folder. Delivery is not confirmed here. The link expires after one hour.',
       invalid: invalidText ?? incompleteLink,
       resetIntro: 'The link works once. After a successful reset, existing sessions are signed out. Existing two-factor authentication and recovery codes are unchanged. The reset link is kept only in this open page. If you reload or close it, reopen the email.',
-      mismatch: 'Use 12–128 characters and enter the same password twice.',
     },
   }
   return request
