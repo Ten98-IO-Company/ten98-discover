@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { PoolClient } from 'pg';
+import { readCapability, signCapability } from '@ten98/runtime';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
@@ -35,18 +35,16 @@ async function requireOwner(client: PoolClient, workspaceId: string, userId: str
   if (!rows[0]) throw new FoundationError(404, 'Workspace not found or unavailable.');
   if (rows[0].role !== 'owner') throw new FoundationError(403, 'Only a workspace owner can change retention.');
 }
-function signature(body: string) { return createHmac('sha256', getConfig().authSecret).update(`ten98.retention.preview.v1:${body}`).digest('hex'); }
+// Hex signatures keep preview tokens issued before the shared helper valid; the framing is unchanged.
+const previewPurpose = 'ten98.retention.preview.v1';
 function makeToken(payload: z.infer<typeof tokenInput>) {
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${body}.${signature(body)}`;
+  return signCapability(previewPurpose, payload, getConfig().authSecret, { encoding: 'hex' });
 }
-function readToken(value: unknown) {
+export function readToken(value: unknown) {
   const { previewToken } = parse(z.object({ previewToken: z.string().min(1).max(4096) }).strict(), value);
-  if (!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(previewToken)) throw new FoundationError(400, 'Preview these settings again before saving.');
-  const [body, signed] = previewToken.split('.');
-  if (!timingSafeEqual(Buffer.from(signed, 'hex'), Buffer.from(signature(body), 'hex'))) throw new FoundationError(400, 'Preview these settings again before saving.');
-  try { return parse(tokenInput, JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))); }
-  catch { throw new FoundationError(400, 'Preview these settings again before saving.'); }
+  const parsed = tokenInput.safeParse(readCapability(previewPurpose, previewToken, getConfig().authSecret, { encoding: 'hex' }));
+  if (!parsed.success) throw new FoundationError(400, 'Preview these settings again before saving.');
+  return parsed.data;
 }
 
 export async function getRetention(workspaceId: string, userId: string) {
