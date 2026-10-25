@@ -59,8 +59,9 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   const apiToken = new URLSearchParams(inviteUrl.hash.slice(1)).get('invite');
   assert.ok(apiToken && apiToken.length === 43, 'Invitation URL must carry the capability in its fragment.');
   const apiPreview = await http('/api/invitations/inspect', 200, { token: apiToken });
-  assert.deepEqual(Object.keys(apiPreview.body).sort(), ['email', 'expiresAt', 'role', 'workspaceName']);
+  assert.deepEqual(Object.keys(apiPreview.body).sort(), ['accountExists', 'email', 'expiresAt', 'role', 'workspaceName']);
   assert.equal(apiPreview.body.email, apiEmail);
+  assert.equal(apiPreview.body.accountExists, false, 'A new recipient is offered account creation.');
   await http('/api/invitations/accept', 403, { token: apiToken, name: 'HTTP member', password: apiPassword }, undefined, 'https://untrusted.integration.test');
   const joined = await http('/api/invitations/accept', 200, { token: apiToken, name: 'HTTP member', password: apiPassword });
   assert.equal(joined.body.created, true);
@@ -72,6 +73,8 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   await http(`/api/workspaces/${apiWorkspaceId}/team`, 404, undefined, joined.cookie);
   const repeatInvite = await http(`/api/workspaces/${apiWorkspaceId}/invitations`, 201, { email: apiEmail, role: 'editor' }, options.ownerCookie);
   const repeatToken = new URLSearchParams(new URL(repeatInvite.body.inviteUrl).hash.slice(1)).get('invite');
+  const repeatPreview = await http('/api/invitations/inspect', 200, { token: repeatToken });
+  assert.equal(repeatPreview.body.accountExists, true, 'The token holder learns that the invited email already has an account, so sign-in is offered up front.');
   await http('/api/invitations/accept', 409, { token: repeatToken, name: 'Must not overwrite', password: password() });
   await http('/api/invitations/accept', 403, { token: repeatToken }, options.ownerCookie);
   const rejoined = await http('/api/invitations/accept', 200, { token: repeatToken }, joined.cookie);
@@ -139,7 +142,7 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   const team = await getTeam(workspaceId, options.ownerId);
   assert.ok(!JSON.stringify(team).includes(adminInvite.token) && !JSON.stringify(team).includes('token_hash'), 'Team reads must not reveal token material.');
   const preview = await inspectInvitation({ token: adminInvite.token });
-  assert.deepEqual(Object.keys(preview).sort(), ['email', 'expiresAt', 'role', 'workspace']);
+  assert.deepEqual(Object.keys(preview).sort(), ['accountExists', 'email', 'expiresAt', 'role', 'workspace']);
   assert.equal(preview.role, 'admin');
   await rejects(acceptInvitation({ token: adminInvite.token, name: 'Role injection', password: adminPassword, role: 'owner' }), 400, 'Acceptance must not accept a client-selected role.');
   await rejects(acceptInvitation({ token: adminInvite.token }), 400, 'New identities need a name and password.');

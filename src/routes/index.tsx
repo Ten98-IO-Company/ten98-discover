@@ -48,6 +48,7 @@ import { RetentionPanel } from '../components/RetentionPanel'
 import { DestinationsPanel } from '../components/DestinationsPanel'
 import { OidcPanel } from '../components/OidcPanel'
 import { OidcSignIn } from '../components/OidcSignIn'
+import { authNoticeTone, oidcReturnMessage, sessionEndedNotice, type AuthNotice } from '../lib/auth-messages'
 import { OidcRecoveryPanel } from '../components/OidcRecoveryPanel'
 import { GoogleReportsPanel } from '../components/GoogleReportsPanel'
 import { GoogleAppPanel } from '../components/GoogleAppPanel'
@@ -81,7 +82,7 @@ function RouteEntry(){
   return <AuthErrorBoundary fallback={{ brand: <AppBrand product='Discover' /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
-type Status = { setupRequired: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null }
+type Status = { setupRequired: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null; oidcEnabled?: boolean }
 type Workspace = { id: string; name: string; role: string; twoFactorLocked?: boolean }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
@@ -155,7 +156,9 @@ function App() {
   const [toolSearch, setToolSearch] = useState('')
   useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
   const [oidcProofId, setOidcProofId] = useState<string>()
-  const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null)
+  // A failed single sign-on return; the sign-in screen shows it as its error, the signed-in shell as an alert.
+  const [ssoError, setSsoError] = useState('')
   const oidcProof = useRef<string | undefined>(undefined)
   const oidcFactor = useRef(false)
   const [inviteToken, setInviteToken] = useState('')
@@ -223,12 +226,13 @@ function App() {
       const generation = intent.current.generation
       callback.current = { value, generation }
       oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
-      setInviteToken(''); setInviteSigningIn(false)
+      setInviteToken(''); setInviteSigningIn(false); setSsoError('')
       if (value.kind === 'proof') { oidcProof.current = value.proof; setOidcProofId(value.proof) }
       else if (value.kind === 'factor') oidcFactor.current = true
       else if (value.kind === 'invite') setInviteToken(value.token)
       else if (value.kind === 'google') setAuthNotice({ kind: 'info', message: 'Google authorization returned. Review your connection and choose a property to import reports.' })
       else if (value.kind === 'google-error') setAuthNotice({ kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.' })
+      else if (value.kind === 'oidc-error') setSsoError(oidcReturnMessage(value.code))
       else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
       // Capabilities live only in memory. Let the router own its history entry.
       await navigate({ search: intent.current.search, hash: '', replace: true, ignoreBlocker: true })
@@ -394,7 +398,10 @@ function App() {
     if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) { rememberIntent(resolved); go(resolved, true) }
   }
 
-  function resetSession() {
+  // 'expired' marks a session the server no longer accepts, as opposed to an explicit sign-out or account switch.
+  function resetSession(reason?: 'expired') {
+    if (reason === 'expired') setAuthNotice(sessionEndedNotice)
+    setSsoError('')
     setMenuOpen(false); setToolSearch('')
     sessionGeneration.current += 1; bootGeneration.current += 1
     recoveryGeneration.current += 1; recoveryRef.current = null; setRecovery(null)
@@ -415,11 +422,11 @@ function App() {
     resetSession()
     recoveryRef.current = value; setRecovery({ value, generation: recoveryGeneration.current })
     if (email !== undefined) setSignInEmail(email)
-    setAuthNotice(null); setPhase('recovery')
+    setAuthNotice(null); setSsoError(''); setPhase('recovery')
   }
 
   function guardAuth(e: unknown): boolean {
-    if (e instanceof ApiError && e.status === 401) { resetSession(); return true }
+    if (e instanceof ApiError && e.status === 401) { resetSession('expired'); return true }
     return false
   }
 
@@ -518,7 +525,7 @@ function App() {
 
   async function handleSignIn(email: string, password: string) {
     const session = ++sessionGeneration.current
-    setAuthNotice(null)
+    setAuthNotice(null); setSsoError('')
     const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
     if (sessionGeneration.current !== session) return
     if (response.twoFactorRedirect) { setSignInEmail(email); setPhase('factor'); return }
@@ -565,13 +572,13 @@ function App() {
     }
   }
 
-  async function invitationSignIn() {
+  async function invitationSignIn(email: string) {
     try {
       if (me) {
         try { await api('/api/auth/sign-out', { method: 'POST', body: {} }) }
         catch (e) { if (!(e instanceof ApiError && e.status === 401)) throw e }
       }
-      resetSession(); setInviteSigningIn(true)
+      resetSession(); setSignInEmail(email); setInviteSigningIn(true)
     } catch (e) { setPageError(errMsg(e)); setPhase('error') }
   }
 
@@ -608,7 +615,7 @@ function App() {
   }
 
   const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
-  const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
+  const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession('expired') }
   // A verified or removed factor changes workspace two-factor locks; re-read memberships so the shell banner and projects follow.
   const factorChanged = () => { if (sessionGeneration.current === renderedSession) refreshMemberships().catch(e => setAppError(errMsg(e))) }
   // The server already ended every session of the closed account; only local state and the neutral notice remain.
@@ -629,9 +636,10 @@ function App() {
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
   if (inviteToken && !inviteSigningIn) return <InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
-    providers={me ? undefined : <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}
-    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
-  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
+    providers={me || status?.oidcEnabled !== true ? undefined : <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}
+    onAccepted={invitationAccepted} onSignIn={email => void invitationSignIn(email)} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
+  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice} ssoError={ssoError} oidcEnabled={status?.oidcEnabled === true}
+    {...(inviteToken && inviteSigningIn && signInEmail ? { title: 'Sign in to join', description: `Sign in as ${signInEmail} to accept your workspace invitation.` } : {})}
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
@@ -706,23 +714,22 @@ function App() {
   return (
     <AccountPresentationContext.Provider value={presentation}><NavRoutesContext.Provider value={navRoutes}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
       sidebar={<>
-        <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
-        <div className='side-body sidebar-nav'><Stack gap={5}>
+        <Link to='/' search={target('project')} aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Add website',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.',project:'Website',noProjects:'No websites yet',choose:'Choose a website',loading:'Loading websites…'}} />
         {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
-        </Stack></div>
         <SidebarFooter version={appVersion}>
           {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Visit history unavailable':lastReceived?'Receiving visits':'Waiting for the first visit'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target(project?'installation':'preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
-      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitle}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile</Link><Link to='/' search={target('security')}>Security</Link><Link to='/' search={target('identity')}>Sign-in methods</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
-        <div className='page-content content'><Stack gap={6}>
+      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitle}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email}><Link to='/' search={target('preferences')}>Profile</Link><Link to='/' search={target('security')}>Security</Link><Link to='/' search={target('identity')}>Sign-in methods</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
+        <Stack gap={6}>
 
         {!projectView&&!settingsView&&!workspaceTool&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>Selected project</Banner>}
         {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open security settings',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Security settings to open its websites and reports.</Banner>}
-        {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
+        {authNotice && <Alert tone={authNoticeTone(authNotice.kind)} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
+        {ssoError !== '' && <Alert tone='danger' onDismiss={() => setSsoError('')}>{ssoError}</Alert>}
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
@@ -889,7 +896,7 @@ function App() {
         )}
         </>}
 
-        </Stack></div>
+        </Stack>
     </AppShell></NavRoutesContext.Provider></AccountPresentationContext.Provider>
   )
 }
@@ -929,13 +936,13 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
 
   return <FirstUserSetupFlow key={form.generation} brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Create owner account'
     description='The first account becomes the owner of this installation and its workspace. You can rename the workspace later.'
-    setupToken={false} workspaceName passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
+    setupToken={false} workspaceName workspaceNameRequired={false} passwordPolicy={{ minLength: 12, maxLength: 128 }}
     defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
     busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     signInInstead={ownerExists ? { onClick: email => onSignInInstead(email.trim()) } : undefined} onSubmit={submit} />
 }
 
-function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onForgot: (email: string) => void; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
+function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice, ssoError, oidcEnabled, title = 'Sign in', description }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onForgot: (email: string) => void; onCancel?: () => void; notice?: AuthNotice | null; ssoError?: string; oidcEnabled: boolean; title?: string; description?: string }) {
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState(noOutcome)
 
@@ -946,11 +953,11 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
     finally { setBusy(false) }
   }
 
-  return <SignInFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Sign in' defaultValues={{ email: initialEmail }}
-    busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
-    notice={notice ? { tone: notice.kind === 'error' ? 'danger' : 'info', text: notice.message } : undefined}
+  return <SignInFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title={title} description={description} defaultValues={{ email: initialEmail }}
+    busy={busy} error={outcome.error || ssoError || undefined} unconfirmed={outcome.unconfirmed || undefined}
+    notice={notice ? { tone: authNoticeTone(notice.kind), text: notice.message } : undefined}
     forgotPassword={{ onClick: email => onForgot(email.trim()) }} cancel={onCancel ? { label: 'Back to invitation', onClick: onCancel } : undefined}
-    providers={<OidcSignIn />} onSubmit={submit} />
+    providers={oidcEnabled ? <OidcSignIn /> : undefined} onSubmit={submit} />
 }
 
 function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery: boolean) => Promise<void>; onCancel: () => void }) {

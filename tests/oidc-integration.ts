@@ -140,6 +140,9 @@ export async function runOidcChecks(options: Options): Promise<void> {
     assert.equal(saved.provider.enabled, false);
     assert.ok(!JSON.stringify(saved).includes(fixtureSecret), 'Saved-provider DTO must not contain client credentials.');
     assert.equal((await call('/api/auth/oidc/providers', new Map())).providers.some((provider: { id: string }) => provider.id === providerId), false);
+    // The signed-out boot read says whether any provider is enabled, so sign-in shows the SSO section only then.
+    const ssoOffered = async () => (await call('/api/session', new Map())).oidcEnabled === (await call('/api/auth/oidc/providers', new Map())).providers.length > 0;
+    assert.equal((await call('/api/session', new Map())).oidcEnabled, false, 'A draft provider is not offered at sign-in.'); assert.ok(await ssoOffered());
     await call(`/api/identity/oidc/providers/${providerId}/test`, actor, { proof: { password: 'wrong password' } }, 400);
     await call(`/api/identity/oidc/providers/${providerId}/test`, actor, { proof: { password } }, 403, 'https://other.example.test');
     const started = await call(`/api/identity/oidc/providers/${providerId}/test`, actor, { proof: { password } });
@@ -154,9 +157,10 @@ export async function runOidcChecks(options: Options): Promise<void> {
     await call(`/api/identity/oidc/providers/${providerId}/enable`, actor, { proofId });
     await call(`/api/identity/oidc/providers/${providerId}/enable`, actor, { proofId }, 410);
     assert.equal((await call('/api/auth/oidc/providers', new Map())).providers.some((provider: { id: string }) => provider.id === providerId), true);
-    await finish(await call('/api/auth/oidc/start', new Map(), { providerId }), new Map(), '#oidc-error=1'); // Missing binding is denied.
+    assert.equal((await call('/api/session', new Map())).oidcEnabled, true, 'An enabled provider is offered at sign-in.'); assert.ok(await ssoOffered());
+    await finish(await call('/api/auth/oidc/start', new Map(), { providerId }), new Map(), '#oidc-error=OIDC_SIGN_IN_FAILED'); // Missing binding is denied.
     const unknown: Browser = new Map();
-    await finish(await call('/api/auth/oidc/start', unknown, { providerId }), unknown, '#oidc-error=1');
+    await finish(await call('/api/auth/oidc/start', unknown, { providerId }), unknown, '#oidc-error=OIDC_NOT_PROVISIONED');
     assert.equal((await pool.query('SELECT 1 FROM oidc_identity WHERE provider_id=$1', [providerId])).rowCount, 0, 'Matching verified email must never auto-link accounts.');
     await resetActorLimit();
     const link = await finish(await call('/api/account/oidc/link/start', actor, { providerId, proof: { password } }), actor, '#oidc-proof=');
@@ -193,6 +197,7 @@ export async function runOidcChecks(options: Options): Promise<void> {
     assert.equal((await call('/api/me', login)).user.id, userId, 'Signing out one provider session must leave the others alone.');
     await call(`/api/identity/oidc/providers/${providerId}/disable`, actor, {});
     await call('/api/me', login, undefined, 401);
+    assert.equal((await call('/api/session', new Map())).oidcEnabled, false, 'A disabled provider is no longer offered at sign-in.'); assert.ok(await ssoOffered());
     assert.equal((await call('/api/me', actor)).user.id, userId, 'Disabling OIDC must retain local recovery sign-in.');
 
     await resetActorLimit();
@@ -221,7 +226,7 @@ export async function runOidcChecks(options: Options): Promise<void> {
     // Authentik 2025.10 sends email_verified false unless the operator maps verification, which refuses the invitation.
     nextClaims = { sub: subjectOf(newEmail), ...profile(newEmail, false, 'New invited OIDC member') };
     const unverified: Browser = new Map();
-    await finish(await call('/api/auth/oidc/start', unverified, { providerId, invitationToken: newInvitation.token }), unverified, '#oidc-error=1');
+    await finish(await call('/api/auth/oidc/start', unverified, { providerId, invitationToken: newInvitation.token }), unverified, '#oidc-error=OIDC_EMAIL_UNVERIFIED');
     assert.equal((await pool.query('SELECT 1 FROM "user" WHERE email=$1', [newEmail])).rowCount, 0);
     nextClaims.email_verified = true;
     const newBrowser: Browser = new Map();
@@ -238,9 +243,9 @@ export async function runOidcChecks(options: Options): Promise<void> {
     const newIdentityId = (await call('/api/account/oidc/identities', newBrowser)).identities[0].id as string;
     const invitedClaims = { ...nextClaims };
     nextClaims = { ...invitedClaims, sub: 'another-subject' };
-    await finish(await call('/api/account/oidc/reauth/start', newBrowser, { identityId: newIdentityId }), newBrowser, '#oidc-error=1');
+    await finish(await call('/api/account/oidc/reauth/start', newBrowser, { identityId: newIdentityId }), newBrowser, '#oidc-error=OIDC_SIGN_IN_FAILED');
     nextClaims = { ...invitedClaims, auth_time: 1 };
-    await finish(await call('/api/account/oidc/reauth/start', newBrowser, { identityId: newIdentityId }), newBrowser, '#oidc-error=1');
+    await finish(await call('/api/account/oidc/reauth/start', newBrowser, { identityId: newIdentityId }), newBrowser, '#oidc-error=OIDC_SIGN_IN_FAILED');
     nextClaims = invitedClaims;
     async function accountProof() {
       await pool.query('DELETE FROM request_limit WHERE key=$1', [`oidc:POST:${newUserId}`]);
@@ -291,7 +296,7 @@ export async function runOidcChecks(options: Options): Promise<void> {
     const collision = await inviteMember(options.workspaceId, options.ownerId, { email, role: 'editor' });
     nextClaims = { sub: randomUUID(), email, email_verified: true, name: 'Must not merge' };
     const collideBrowser: Browser = new Map();
-    await finish(await call('/api/auth/oidc/start', collideBrowser, { providerId, invitationToken: collision.token }), collideBrowser, '#oidc-error=1');
+    await finish(await call('/api/auth/oidc/start', collideBrowser, { providerId, invitationToken: collision.token }), collideBrowser, '#oidc-error=OIDC_ACCOUNT_EXISTS');
     assert.equal((await pool.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [options.workspaceId, userId])).rows[0].role, 'viewer', 'Existing membership privileges must not change.');
     const revokedEmail = `${randomUUID()}@oidc.integration.test`;
     const revoked = await inviteMember(options.workspaceId, options.ownerId, { email: revokedEmail, role: 'viewer' });
@@ -299,7 +304,7 @@ export async function runOidcChecks(options: Options): Promise<void> {
     const revokedBrowser: Browser = new Map();
     const revokedStart = await call('/api/auth/oidc/start', revokedBrowser, { providerId, invitationToken: revoked.token });
     await revokeInvitation(options.workspaceId, options.ownerId, revoked.invitation.id);
-    await finish(revokedStart, revokedBrowser, '#oidc-error=1');
+    await finish(revokedStart, revokedBrowser, '#oidc-error=OIDC_SIGN_IN_FAILED');
     assert.equal((await pool.query('SELECT 1 FROM "user" WHERE email=$1', [revokedEmail])).rowCount, 0, 'Invitation revocation during provider sign-in must be atomic.');
     await assertOidcCredentialsReadable();
     await setInstanceOperator(email, false);
