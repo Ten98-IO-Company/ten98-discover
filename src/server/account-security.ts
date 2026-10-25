@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getSessionCookie, parseCookies } from 'better-auth/cookies';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
+import { ten98AuthPolicy } from '@ten98/runtime/auth';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError, getAuth } from './auth.ts';
@@ -14,6 +15,8 @@ import { accountPreferencesDefaults, accountPreferencesDtoSchema, accountPrefere
 
 /** The only place a step-up proof is minted; call it only right after the matching verification succeeded. */
 const verifiedStepUp = (userId: string, method: StepUpProof['method']) => ({ userId, method }) as StepUpProof;
+// Per-minute counts shared with Campaign; `limit` counts in one-minute windows (windowSeconds).
+const limits = ten98AuthPolicy.rateLimits;
 
 type Auth = ReturnType<typeof getAuth>;
 const currentPassword = z.string().min(1).max(128);
@@ -93,12 +96,14 @@ async function revokeOtherSessions(client: PoolClient, userId: string, sessionId
   await invalidateChallenges(client, userId);
 }
 
-async function invalidateChallenges(client: PoolClient, userId: string) {
+/** `alreadyRemoved` names challenges deleted earlier in this transaction, whose attempt and OIDC records remain. */
+async function invalidateChallenges(client: PoolClient, userId: string, alreadyRemoved: readonly string[] = []) {
   await client.query(
     `WITH removed AS (DELETE FROM verification WHERE value=$1
-       AND (identifier LIKE '2fa-%' OR identifier LIKE 'trust-device-%' OR identifier LIKE 'reset-password:%') RETURNING identifier)
-     DELETE FROM verification WHERE identifier IN (SELECT '2fa-attempts-' || identifier FROM removed)
-       OR identifier IN (SELECT 'oidc-challenge:' || identifier FROM removed)`, [userId],
+       AND (identifier LIKE '2fa-%' OR identifier LIKE 'trust-device-%' OR identifier LIKE 'reset-password:%') RETURNING identifier),
+     challenges AS (SELECT identifier FROM removed UNION SELECT unnest($2::text[]))
+     DELETE FROM verification WHERE identifier IN (SELECT '2fa-attempts-' || identifier FROM challenges)
+       OR identifier IN (SELECT 'oidc-challenge:' || identifier FROM challenges)`, [userId, alreadyRemoved],
   );
 }
 
@@ -207,11 +212,11 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       return json({ configured: getEmailStatus().configured });
     }
     if (request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
-    await limit(clientRateKey(request, `password-recovery:${asking ? 'request' : 'reset'}`), asking ? 20 : 60);
+    await limit(clientRateKey(request, `password-recovery:${asking ? 'request' : 'reset'}`), asking ? limits.resetRequestPerClient : limits.resetPerClient);
     const input = await readJson(request);
     if (asking) {
       const details = parsed(recoveryEmailInput, input);
-      await limit(emailLimitKey('password-recovery:email', details.email), 3);
+      await limit(emailLimitKey('password-recovery:email', details.email), limits.resetRequestPerEmail);
       if (!getEmailStatus().configured) throw new FoundationError(503, 'Email recovery is not configured. Contact the installation operator or use your linked identity provider.');
       const captured: { message?: { to: string; token: string } } = {};
       try {
@@ -239,7 +244,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       return json({ ok: true });
     }
     const rawToken = input !== null && typeof input === 'object' && 'token' in input && typeof input.token === 'string' ? input.token : '';
-    await limit(`password-recovery:token:${createHash('sha256').update(rawToken).digest('hex')}`, 5);
+    await limit(`password-recovery:token:${createHash('sha256').update(rawToken).digest('hex')}`, limits.resetPerToken);
     const details = resetPasswordInput.safeParse(input);
     if (!details.success) throw new FoundationError(400, invalidReset);
     return transaction(async (client, auth) => {
@@ -251,9 +256,11 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       const credential = await client.query('SELECT id FROM account WHERE "userId"=$1 AND "providerId"=\'credential\' AND password IS NOT NULL FOR UPDATE', [hint.value]);
       const verification = await client.query('SELECT id FROM verification WHERE identifier=$1 AND value=$2 AND "expiresAt">clock_timestamp() FOR UPDATE', [identifier, hint.value]);
       if (!user.rowCount || !credential.rowCount || verification.rowCount !== 1) throw new FoundationError(400, invalidReset);
+      // The auth reset deletes the account's pending challenges itself; name them first so their records go too.
+      const challenges = (await client.query<{ identifier: string }>("SELECT identifier FROM verification WHERE value=$1 AND identifier LIKE '2fa-%' FOR UPDATE", [hint.value])).rows.map(row => row.identifier);
       const response = await invoke(auth, request, '/reset-password', details.data);
       if (!response.ok) throw new FoundationError(response.status >= 500 ? 503 : 400, response.status >= 500 ? 'Password recovery is temporarily unavailable. Try again.' : invalidReset);
-      await invalidateChallenges(client, hint.value);
+      await invalidateChallenges(client, hint.value, challenges);
       return json({ ok: true });
     });
   }
@@ -271,8 +278,8 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
 
   if (signIn) {
     const details = parsed(signInInput, input);
-    await limit(clientRateKey(request, 'signin'), 60);
-    await limit(emailLimitKey('signin', details.email), 5);
+    await limit(clientRateKey(request, 'signin'), limits.signInPerClient);
+    await limit(emailLimitKey('signin', details.email), limits.signInPerEmail);
     return transaction(async (client, auth) => {
       await client.query('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email]);
       const response = await invoke(auth, request, '/sign-in/email', details);
@@ -285,9 +292,9 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
   if (challenge) {
     const totp = path.endsWith('/verify-totp');
     const details = parsed(totp ? codeInput : backupInput, input);
-    await limit(clientRateKey(request, 'two-factor'), 60);
+    await limit(clientRateKey(request, 'two-factor'), limits.twoFactorPerClient);
     const cookie = getSessionCookie(request, { cookieName: 'two_factor' }) ?? '';
-    await limit(`two-factor:${createHash('sha256').update(cookie).digest('hex')}`, 10);
+    await limit(`two-factor:${createHash('sha256').update(cookie).digest('hex')}`, limits.twoFactorPerChallenge);
     return transaction(async (client, auth) => {
       if (await auth.api.getSession({ headers: request.headers, query: { disableRefresh: true } })) {
         return json({ error: 'This sign-in is already complete.' }, 409);
@@ -321,7 +328,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
   if (mutation) parsed(accountInputs[path as keyof typeof accountInputs], input);
   const identity = await getAuth().api.getSession({ headers: request.headers, query: { disableRefresh: true } });
   if (!identity) throw new FoundationError(401, 'Sign in to continue.');
-  await limit(`account-security:${status ? 'read' : 'write'}:${identity.user.id}`, status ? 120 : 30);
+  await limit(`account-security:${status ? 'read' : 'write'}:${identity.user.id}`, status ? limits.accountSecurityReadsPerUser : limits.accountSecurityWritesPerUser);
   return transaction(async (client, auth) => {
     // Preserve provider -> account order when a factor operation rotates an OIDC session.
     const boundProvider = (await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1', [identity.session.id])).rows[0]?.oidcProviderId as string | null;
