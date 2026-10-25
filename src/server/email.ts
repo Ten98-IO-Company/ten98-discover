@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readResponseText, SES_REGIONS, sendSesEmail } from '@ten98/runtime';
+import { SES_REGIONS, sendCloudflareEmail, sendSesEmail } from '@ten98/runtime';
 import { Socket, isIP } from 'node:net';
 import type { SendMailOptions, SMTPTransportOptions } from 'nodemailer';
 import { z } from 'zod';
@@ -67,11 +67,6 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function cloudflareReply(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (!response.ok || response.redirected || !/^application\/json(?:;|$)/i.test(response.headers.get('content-type') ?? '')) { void response.body?.cancel().catch(() => undefined); throw new EmailDeliveryError(); }
-  return JSON.parse(await readResponseText(response, { maxBytes: 16_384, signal }));
-}
-
 /** One attempt, one recipient, bounded resources. Never logs messages, links or provider errors. */
 export async function sendTransactionalEmail(input: TransactionalEmail, env: NodeJS.ProcessEnv = process.env): Promise<EmailAcceptance> {
   let config: ReturnType<typeof configuration>, message: TransactionalEmail;
@@ -90,14 +85,12 @@ export async function sendTransactionalEmail(input: TransactionalEmail, env: Nod
       return { accepted: true, delivery: 'unconfirmed' };
     }
     if (config.transport === 'cloudflare') {
-      const response = await untilAborted((fixtures.getStore()?.fetch ?? fetch)(`https://api.cloudflare.com/client/v4/accounts/${config.accountId}/email/sending/send`, {
-        method: 'POST', redirect: 'error', signal: controller.signal,
-        headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(mail),
-      }), controller.signal);
-      const reply = z.object({ success: z.literal(true), errors: z.array(z.unknown()).length(0), result: z.object({ delivered: z.array(mailbox).max(1), queued: z.array(mailbox).max(1), permanent_bounces: z.array(mailbox).length(0) }) }).parse(await cloudflareReply(response, controller.signal));
-      const accepted = [...reply.result.delivered, ...reply.result.queued];
-      if (accepted.length !== 1 || accepted[0] !== message.to) throw new EmailDeliveryError();
-      return { accepted: true, delivery: reply.result.delivered.length === 1 ? 'provider-reported-delivered' : 'unconfirmed' };
+      const send = fixtures.getStore()?.fetch;
+      // Failed (permanent bounce) and suppressed recipients, like every thrown error, are the same unconfirmed error.
+      const { status } = await untilAborted(sendCloudflareEmail({ accountId: config.accountId, token: config.token, message: mail, signal: controller.signal, ...(send ? { fetch: send } : {}) }), controller.signal);
+      if (status === 'delivered') return { accepted: true, delivery: 'provider-reported-delivered' };
+      if (status === 'queued') return { accepted: true, delivery: 'unconfirmed' };
+      throw new EmailDeliveryError();
     }
     const socket = new Socket(); let sender: SmtpSender | undefined;
     // destroy alone permits Socket reuse; refuse Nodemailer's late DNS callback on this owned instance.

@@ -9,7 +9,7 @@ import { secret } from '../src/server/config.ts';
 const smtp = { EMAIL_TRANSPORT: 'smtp', EMAIL_FROM: 'sender@example.com', EMAIL_SMTP_HOST: 'smtp.example.com', EMAIL_SMTP_USER: 'login', EMAIL_SMTP_PASSWORD: 'short-password' };
 const cloudflare = { EMAIL_TRANSPORT: 'cloudflare', EMAIL_FROM: 'sender@example.com', EMAIL_CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), EMAIL_CLOUDFLARE_API_TOKEN: 'test-token' };
 const message = { to: 'recipient@example.com', subject: 'Reset your password', text: 'Use this link once:\nhttps://app.example.com/reset?token=private-token' };
-const receipt = (delivered: string[] = [], queued = [message.to], permanent_bounces: string[] = []) => ({ success: true, errors: [], messages: [], result: { delivered, queued, permanent_bounces } });
+const receipt = (delivered: string[] = [], queued = [message.to], permanent_bounces: string[] = [], suppressed_recipients: string[] = []) => ({ success: true, errors: [], messages: [], result: { delivered, queued, permanent_bounces, suppressed_recipients } });
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 
 test('mail readiness is configuration only; disabled and malformed optional config never break unrelated configuration', async () => {
@@ -53,21 +53,27 @@ test('Cloudflare sends one fixed credential-isolated request and escapes the def
     calls++; assert.equal(url, 'https://api.cloudflare.com/client/v4/accounts/' + 'a'.repeat(32) + '/email/sending/send');
     assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error'); assert.ok(init.signal instanceof AbortSignal);
     assert.deepEqual(init.headers, { authorization: 'Bearer test-token', 'content-type': 'application/json', accept: 'application/json' });
-    assert.deepEqual(JSON.parse(String(init.body)), { from: 'sender@example.com', to: message.to, subject: '😀', text, html: '<div>&lt;script&gt;&quot;private&quot; &amp; &#39;link&#39;&lt;/script&gt;<br>😀</div>' });
+    assert.deepEqual(JSON.parse(String(init.body)), { from: 'sender@example.com', to: [message.to], subject: '😀', text, html: '<div>&lt;script&gt;&quot;private&quot; &amp; &#39;link&#39;&lt;/script&gt;<br>😀</div>' });
     return json(receipt());
   } }, () => sendTransactionalEmail({ ...message, subject: '😀', text }, cloudflare));
   assert.deepEqual(accepted, { accepted: true, delivery: 'unconfirmed' }); assert.equal(calls, 1);
 });
 
-test('Cloudflare requires the exact sole accepted recipient and distinguishes queued from provider-reported delivery', async () => {
+test('Cloudflare requires the sole reported recipient and distinguishes queued from provider-reported delivery', async () => {
   assert.deepEqual(await withEmailTransportsForTests({ fetch: async () => json(receipt([message.to], [])) }, () => sendTransactionalEmail(message, cloudflare)), { accepted: true, delivery: 'provider-reported-delivered' });
-  for (const reply of [receipt([], []), receipt(['other@example.com'], []), receipt([message.to], [message.to]), receipt([], [message.to], [message.to]), { ...receipt(), success: false }, { ...receipt(), errors: [{ message: message.text }] }, { ...receipt(), result: null }]) await assert.rejects(withEmailTransportsForTests({ fetch: async () => json(reply) }, () => sendTransactionalEmail(message, cloudflare)), { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' });
+  // @ten98/runtime sendCloudflareEmail: recipients match case-insensitively, and neither an empty errors array nor the JSON
+  // content type is part of the receipt contract. Queued stays unconfirmed.
+  for (const [reply, delivery] of [[receipt(['RECIPIENT@Example.com'], []), 'provider-reported-delivered'], [receipt([], ['Recipient@EXAMPLE.com']), 'unconfirmed'], [{ ...receipt(), errors: [{ message: message.text }] }, 'unconfirmed']] as const) {
+    assert.deepEqual(await withEmailTransportsForTests({ fetch: async () => json(reply) }, () => sendTransactionalEmail(message, cloudflare)), { accepted: true, delivery }, JSON.stringify(reply));
+  }
+  assert.deepEqual(await withEmailTransportsForTests({ fetch: async () => new Response(JSON.stringify(receipt()), { headers: { 'content-type': 'text/html' } }) }, () => sendTransactionalEmail(message, cloudflare)), { accepted: true, delivery: 'unconfirmed' });
+  for (const reply of [receipt([], []), receipt(['other@example.com'], []), receipt([message.to], [message.to]), receipt([], [message.to], [message.to]), receipt([], [], [message.to]), receipt([], [], [], [message.to]), receipt([], [message.to], [], [message.to]), receipt([], [message.to, message.to]), { ...receipt(), success: false }, { ...receipt(), result: null }, { ...receipt(), result: { ...receipt().result, message_id: 'bad id' } }]) await assert.rejects(withEmailTransportsForTests({ fetch: async () => json(reply) }, () => sendTransactionalEmail(message, cloudflare)), { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' });
 });
 
-test('Cloudflare whole response is fatal UTF8/JSON and bounded16KiB; status, shape and transport errors never leak provider content', async () => {
+test('Cloudflare whole response is fatal UTF8/JSON and bounded to 64KiB; status, shape and transport errors never leak provider content', async () => {
   let calls = 0;
-  for (const response of [new Response('private-token\n' + message.to, { status: 403 }), new Response('{bad}', { headers: { 'content-type': 'application/json' } }), new Response(new Uint8Array([0xff]), { headers: { 'content-type': 'application/json' } }), new Response(' '.repeat(16_385), { headers: { 'content-type': 'application/json' } }), new Response(JSON.stringify(receipt()), { headers: { 'content-type': 'text/html' } }), new Response('', { status: 302, headers: { location: 'https://outside.example' } })]) await assert.rejects(withEmailTransportsForTests({ fetch: async () => { calls++; return response; } }, () => sendTransactionalEmail(message, cloudflare)), { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' });
-  assert.equal(calls, 6);
+  for (const response of [new Response('private-token\n' + message.to, { status: 403 }), new Response('{bad}', { headers: { 'content-type': 'application/json' } }), new Response(new Uint8Array([0xff]), { headers: { 'content-type': 'application/json' } }), new Response(JSON.stringify(receipt()) + ' '.repeat(65_536), { headers: { 'content-type': 'application/json' } }), new Response(JSON.stringify({ success: false, errors: [{ code: 10001, message: message.text }] }), { status: 400, headers: { 'content-type': 'application/json' } }), new Response('', { status: 429 }), new Response('', { status: 500 }), new Response('', { status: 302, headers: { location: 'https://outside.example' } })]) await assert.rejects(withEmailTransportsForTests({ fetch: async () => { calls++; return response; } }, () => sendTransactionalEmail(message, cloudflare)), { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' });
+  assert.equal(calls, 8);
   await assert.rejects(withEmailTransportsForTests({ fetch: async () => { throw Error('Bearer private-token ' + message.text); } }, () => sendTransactionalEmail(message, cloudflare)), { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' });
 });
 
