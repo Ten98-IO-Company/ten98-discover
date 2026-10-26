@@ -157,7 +157,7 @@ test('checkStorage removes its probe and reports available bytes', () => {
   assert.ok(readdirSync(d).every((f) => !f.startsWith('.probe-')));
 });
 
-test('host helper preserves existing Docker state and stops after failed migration', { skip: process.platform === 'win32' }, () => {
+test('host helper preserves Docker state and starts services only after a successful migration', { skip: process.platform === 'win32' }, () => {
   const directory = tmp();
   mkdirSync(join(directory, 'scripts'));
   mkdirSync(join(directory, 'bin'));
@@ -180,7 +180,9 @@ case "$*" in
   'compose '*'config --quiet') : ;;
   'compose '*'ps --status running -q web') : ;;
   'compose '*'stop web worker') : ;;
-  'compose '*'run --rm migrate') exit 23 ;;
+  'compose '*'run --rm web node src/server/cli.ts migrate') [ "$CHECK_MODE" = success ] || exit 23 ;;
+  'compose '*'up -d --no-build --wait --wait-timeout 180 web worker') : ;;
+  'compose '*'exec -T worker node src/server/cli.ts diagnose worker') : ;;
   *) exit 99 ;;
 esac
 `, { mode: 0o700 });
@@ -196,5 +198,15 @@ esac
   assert.equal(failedMigration.status, 1);
   assert.match(failedMigration.stderr, /Migration failed/);
   assert.ok(!readFileSync(log, 'utf8').includes('up -d'));
+  assert.equal(readFileSync(join(directory, '.env'), 'utf8'), 'existing private configuration');
+  writeFileSync(log, '');
+  const successfulMigration = spawnSync('sh', ['scripts/deploy.sh'], { cwd: directory, env: { ...env, CHECK_MODE: 'success' }, encoding: 'utf8' });
+  assert.equal(successfulMigration.status, 0, successfulMigration.stderr);
+  const commands = readFileSync(log, 'utf8');
+  const stopped = commands.indexOf('stop web worker');
+  const migrated = commands.indexOf('run --rm web node src/server/cli.ts migrate');
+  const started = commands.indexOf('up -d --no-build --wait --wait-timeout 180 web worker');
+  const diagnosed = commands.indexOf('exec -T worker node src/server/cli.ts diagnose worker');
+  assert.ok(stopped >= 0 && stopped < migrated && migrated < started && started < diagnosed, commands);
   assert.equal(readFileSync(join(directory, '.env'), 'utf8'), 'existing private configuration');
 });

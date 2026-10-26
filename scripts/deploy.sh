@@ -68,7 +68,7 @@ if [ "$mode" = caddy ] && [ -z "$(compose ps --status running -q caddy)" ]; then
 fi
 printf '%s\n' 'Before upgrading existing data, take the documented recoverable backup. Stopping app writers for explicit migration.'
 compose stop web worker
-if ! compose run --rm migrate; then
+if ! compose run --rm web node src/server/cli.ts migrate; then
   fail 'Migration failed. Web and worker remain stopped; configuration and volumes are preserved. Review the migration guidance before restarting.'
 fi
 if [ "$mode" = caddy ]; then
