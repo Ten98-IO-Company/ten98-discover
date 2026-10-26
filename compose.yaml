@@ -12,7 +12,7 @@
 #   docker compose up -d web worker   # each applies pending migrations before starting (advisory-locked)
 #
 # MIGRATE_ON_START=false makes web and worker wait (up to 5 minutes) for an
-# explicit `docker compose run --rm migrate`, e.g. after taking a backup.
+# explicit `docker compose run --rm web node src/server/cli.ts migrate`, e.g. after taking a backup.
 
 x-app: &app
   image: ${TEN98_IMAGE:-ten98-monitor:foundation}
@@ -136,15 +136,6 @@ services:
         limits:
           memory: 512M # dev guidance, not a capacity claim
           pids: 256
-
-  migrate:
-    <<: *app
-    command: ["node", "src/server/cli.ts", "migrate"]
-    profiles: ["tools"]
-    restart: "no"
-    # One-shot job: no healthcheck (image ships none), no artifacts volume.
-    # Optional with MIGRATE_ON_START (default); required when it is false:
-    #   docker compose run --rm migrate
 
 volumes:
   pgdata:
