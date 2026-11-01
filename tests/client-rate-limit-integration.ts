@@ -39,7 +39,7 @@ export async function runClientRateLimitChecks() {
     await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])', [keys]);
     await seed('oidc:callback:client:unresolved', 40);
     const limitedCallback = await handleApi(new Request(`${config.appUrl}/api/auth/oidc/callback?state=${state}&code=synthetic`));
-    assert.match(limitedCallback.headers.get('location') ?? '', /#oidc-error=1$/);
+    assert.match(limitedCallback.headers.get('location') ?? '', /#oidc-error=OIDC_RATE_LIMITED$/);
     assert.equal(await total('oidc:callback:client:unresolved'), 31, 'Unresolved callbacks are limited to 30 a minute.');
 
     const start = (make: (path: string, init?: RequestInit) => Request) => handleApi(make('/api/auth/oidc/start', { method: 'POST', headers: { origin: config.appUrl, 'content-type': 'application/json' }, body: JSON.stringify({ providerId: randomUUID() }) })).then(response => response.status, (error: { status?: number }) => error.status);
