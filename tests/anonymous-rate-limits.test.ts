@@ -36,24 +36,28 @@ const attacker='198.51.100.66',victim='203.0.113.7';
 
 test('one client exhausting password sign-in attempts does not refuse another client signing in',async()=>{
   const limit=memoryLimit();
-  await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/sign-in/email',{email:`attacker-${i}@example.test`,password:'not-the-password'}),limit))));
+  const attempts=await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/sign-in/email',{email:`attacker-${i}@example.test`,password:'not-the-password'}),limit))));
+  assert.equal(attempts.filter(value=>value===429).length,1,'The attacker must exhaust the per-client sign-in limit.');
   assert.notEqual(await status(handleAccountSecurity(from(victim,'/api/auth/sign-in/email',{email:'member@example.test',password:'members-password'}),limit)),429,
     'A different client\'s first sign-in attempt was refused because an anonymous instance-wide bucket was exhausted.');
 });
 
 test('one client exhausting second-factor attempts does not refuse another client\'s challenge',async()=>{
   const limit=memoryLimit();
-  await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/two-factor/verify-totp',{code:'000000'},{cookie:`better-auth.two_factor=junk-${i}.sig`}),limit))));
+  const attempts=await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/two-factor/verify-totp',{code:'000000'},{cookie:`better-auth.two_factor=junk-${i}.sig`}),limit))));
+  assert.equal(attempts.filter(value=>value===429).length,1,'The attacker must exhaust the per-client second-factor limit.');
   assert.notEqual(await status(handleAccountSecurity(from(victim,'/api/auth/two-factor/verify-totp',{code:'123456'},{cookie:'better-auth.two_factor=member.sig'}),limit)),429,
     'A different client\'s first second-factor attempt was refused because an anonymous instance-wide bucket was exhausted.');
 });
 
 test('one client exhausting password recovery does not refuse another client\'s recovery request or reset',async()=>{
   const limit=memoryLimit();
-  await Promise.all(Array.from({length:21},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/request-password-reset',{email:`attacker-${i}@example.test`}),limit))));
+  const requests=await Promise.all(Array.from({length:21},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/request-password-reset',{email:`attacker-${i}@example.test`}),limit))));
+  assert.equal(requests.filter(value=>value===429).length,1,'The attacker must exhaust the per-client recovery request limit.');
   assert.notEqual(await status(handleAccountSecurity(from(victim,'/api/auth/request-password-reset',{email:'member@example.test'}),limit)),429,
     'A different client\'s recovery request was refused because an anonymous instance-wide bucket was exhausted.');
-  await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/reset-password',{token:`junk${i}`,newPassword:'x'}),limit))));
+  const resets=await Promise.all(Array.from({length:61},(_,i)=>status(handleAccountSecurity(from(attacker,'/api/auth/reset-password',{token:String(i).padStart(24,'A'),newPassword:'a-new-long-password'}),limit))));
+  assert.equal(resets.filter(value=>value===429).length,1,'The attacker must exhaust the per-client password reset limit.');
   assert.notEqual(await status(handleAccountSecurity(from(victim,'/api/auth/reset-password',{token:'A'.repeat(24),newPassword:'a-new-long-password'}),limit)),429,
     'A different client\'s password reset was refused because an anonymous instance-wide bucket was exhausted.');
 });
