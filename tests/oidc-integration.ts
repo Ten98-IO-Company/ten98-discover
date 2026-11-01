@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { getConfig } from '../src/server/config.ts';
 import { getDatabase } from '../src/server/db.ts';
-import { acceptInvitation, inviteMember, revokeInvitation } from '../src/server/teams.ts';
+import { acceptInvitation, createWorkspace, inviteMember, revokeInvitation } from '../src/server/teams.ts';
 import { setInstanceOperator } from '../src/server/instance-operators.ts';
 import { assertOidcCredentialsReadable } from '../src/server/oidc.ts';
 import { authenticatorCode } from './account-security-integration.ts';
@@ -293,11 +293,15 @@ export async function runOidcChecks(options: Options): Promise<void> {
     assert.equal(Object.hasOwn(await call('/api/auth/sign-out', localRecovery, {}), 'providerSignOutUrl'), false, 'A local session of a linked account never signs out at the provider.');
     await call('/api/me', localRecovery, undefined, 401);
 
-    const collision = await inviteMember(options.workspaceId, options.ownerId, { email, role: 'editor' });
+    // Inviting a current member is refused (409 since runtime 0.20), so the collision invites the existing account to another workspace.
+    await assert.rejects(inviteMember(options.workspaceId, options.ownerId, { email, role: 'editor' }), (error: { status?: number }) => error.status === 409);
+    const collisionWorkspace = (await createWorkspace(options.ownerId, { name: 'OIDC collision checks' })).workspace.id;
+    const collision = await inviteMember(collisionWorkspace, options.ownerId, { email, role: 'editor' });
     nextClaims = { sub: randomUUID(), email, email_verified: true, name: 'Must not merge' };
     const collideBrowser: Browser = new Map();
     await finish(await call('/api/auth/oidc/start', collideBrowser, { providerId, invitationToken: collision.token }), collideBrowser, '#oidc-error=OIDC_ACCOUNT_EXISTS');
     assert.equal((await pool.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [options.workspaceId, userId])).rows[0].role, 'viewer', 'Existing membership privileges must not change.');
+    assert.equal((await pool.query('SELECT 1 FROM membership WHERE workspace_id=$1 AND user_id=$2', [collisionWorkspace, userId])).rowCount, 0, 'A colliding provider identity must not join the existing account.');
     const revokedEmail = `${randomUUID()}@oidc.integration.test`;
     const revoked = await inviteMember(options.workspaceId, options.ownerId, { email: revokedEmail, role: 'viewer' });
     nextClaims = { sub: randomUUID(), email: revokedEmail, email_verified: true, name: 'Revoked fixture' };

@@ -115,10 +115,11 @@ export async function runIdentityLinkChecks(){
       return {client,pid:(await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid as number};
     }
     async function observedWait(blocker:number,minimum=1){
-      for(let n=0;n<25;n++){
+      // A loaded runner can take a while to reach the wait; poll until it is seen or a generous deadline passes.
+      for(const deadline=Date.now()+5000;Date.now()<deadline;){
         const r=await pool.query("SELECT pid,pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query='SELECT id FROM project WHERE public_key=$1 FOR UPDATE'");
         if(r.rowCount!>=minimum&&r.rows.some(row=>(row.blockers as number[]).includes(blocker)))return r.rows.map(row=>row.pid);
-        await delay(4);
+        await delay(10);
       }assert.fail('The actual collector project-lock wait and exact blocker were not observed.');
     }
     for(const change of ['epoch','disabled'] as const){

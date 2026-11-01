@@ -7,18 +7,120 @@ import { getConfig } from '../src/server/config.ts';
 import { getDatabase } from '../src/server/db.ts';
 import { createBoardShare, listBoardShares, revokeBoardShare, saveBoard } from '../src/server/boards.ts';
 import { createReportShare, listReportShares, revokeReportShare, saveReport } from '../src/server/reports.ts';
+import { isInstanceOperator, requireInstanceOperator, setInstanceOperator } from '../src/server/instance-operators.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from '../src/server/teams.ts';
 import { createTrackedAssetShare, listTrackedAssetShares, revokeTrackedAssetShare, saveTrackedAsset } from '../src/server/tracked-assets.ts';
 import { createWebsiteShare, listWebsiteShares, revokeWebsiteShare } from '../src/server/website-shares.ts';
 
 type Options = { baseUrl: string; appUrl: string; ownerCookie: string; ownerId: string; workspaceId: string };
-async function rejects(promise: Promise<unknown>, status: number, message: string) {
+async function rejects(promise: Promise<unknown>, status: number, message: string): Promise<FoundationError> {
   try { await promise; }
   catch (error) {
     assert.ok(error instanceof FoundationError && error.status === status, message);
-    return;
+    return error;
   }
   assert.fail(message);
+}
+
+/**
+ * An invitation addressed to a current member can no longer be issued (409 since runtime 0.20), but rows issued earlier
+ * survive the upgrade. This plants one so acceptance of that state stays covered.
+ */
+async function plantInvitation(workspaceId: string, inviterId: string, address: string, role: 'admin' | 'editor' | 'viewer') {
+  const token = randomBytes(32).toString('base64url');
+  await getDatabase().pool.query(`INSERT INTO workspace_invitation(id,workspace_id,inviter_id,email,role,token_hash,expires_at)
+    VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+interval '7 days')`, [randomUUID(), workspaceId, inviterId, address.trim().toLowerCase(), role, createHash('sha256').update(token).digest('hex')]);
+  return token;
+}
+
+const controllerEmail = () => `${randomUUID()}@teams.integration.test`;
+const controllerPassword = () => randomBytes(24).toString('base64url');
+const userByEmail = async (address: string) => (await getDatabase().pool.query<{ id: string; email: string }>('SELECT id,email FROM "user" WHERE email=$1', [address])).rows[0];
+async function joinedMember(workspaceId: string, ownerId: string, role: 'admin' | 'editor' | 'viewer') {
+  const { token, invitation } = await inviteMember(workspaceId, ownerId, { email: controllerEmail(), role });
+  await acceptInvitation({ token, name: 'Controller member', password: controllerPassword() });
+  return userByEmail(invitation.email);
+}
+
+/** Runtime 0.20: workspace and account names refuse control characters, NUL included. */
+export async function checkControlCharacterNames(ownerId: string): Promise<void> {
+  const { workspace } = await createWorkspace(ownerId, { name: 'Control character checks' });
+  for (const name of ['Tab\there', 'Line\nbreak', 'Null\u0000name', 'Bell\u0007', 'Delete\u007f']) {
+    await rejects(createWorkspace(ownerId, { name }), 400, 'Workspace names must refuse control characters.');
+    await rejects(renameWorkspace(workspace.id, ownerId, { name }), 400, 'Workspace renames must refuse control characters.');
+  }
+  assert.equal((await getTeam(workspace.id, ownerId)).workspace.name, 'Control character checks');
+  const invited = await inviteMember(workspace.id, ownerId, { email: controllerEmail(), role: 'editor' });
+  await rejects(acceptInvitation({ token: invited.token, name: 'Line\nbreak', password: controllerPassword() }), 400, 'Account names must refuse control characters.');
+  assert.equal((await inspectInvitation({ token: invited.token })).email, invited.invitation.email, 'A refused name leaves the invitation usable.');
+}
+
+/** Runtime 0.20: acceptance reports the workspace, account, role it now holds, and whether it joined or was created. */
+export async function checkAcceptanceResult(ownerId: string): Promise<void> {
+  const { workspace } = await createWorkspace(ownerId, { name: 'Acceptance result checks' });
+  const invited = await inviteMember(workspace.id, ownerId, { email: controllerEmail(), role: 'editor' });
+  const accepted = await acceptInvitation({ token: invited.token, name: 'Accepted member', password: controllerPassword() });
+  const member = await userByEmail(invited.invitation.email);
+  assert.deepEqual(accepted, { workspaceId: workspace.id, userId: member.id, role: 'editor', joined: true, created: true, email: member.email });
+  const elsewhere = await createWorkspace(ownerId, { name: 'Acceptance result elsewhere' });
+  const lateEmail = controllerEmail();
+  const late = await inviteMember(workspace.id, ownerId, { email: lateEmail, role: 'viewer' });
+  await acceptInvitation({ token: (await inviteMember(elsewhere.workspace.id, ownerId, { email: lateEmail, role: 'viewer' })).token, name: 'Late member', password: controllerPassword() });
+  const lateUser = await userByEmail(lateEmail);
+  // The account joined by another route after this invitation was issued: accepting keeps the role it holds.
+  await getDatabase().pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'editor')", [workspace.id, lateUser.id]);
+  assert.deepEqual(await acceptInvitation({ token: late.token }, lateUser), { workspaceId: workspace.id, userId: lateUser.id, role: 'editor', joined: false, created: false, email: lateEmail });
+}
+
+/** Runtime 0.20: inviting a current member is refused with 409 MEMBER_EXISTS and leaves no invitation. */
+export async function checkMemberReinvite(ownerId: string): Promise<void> {
+  const { workspace } = await createWorkspace(ownerId, { name: 'Member re-invite checks' });
+  const member = await joinedMember(workspace.id, ownerId, 'viewer');
+  const refused = await rejects(inviteMember(workspace.id, ownerId, { email: member.email.toUpperCase(), role: 'editor' }), 409, 'Inviting a current member is refused.');
+  assert.equal(refused.message, 'This person already belongs to the workspace.');
+  assert.equal((await getDatabase().pool.query('SELECT 1 FROM workspace_invitation WHERE workspace_id=$1 AND email=$2', [workspace.id, member.email])).rowCount, 0, 'A refused re-invite leaves no invitation.');
+}
+
+/** Runtime 0.20: any member can leave (removeMember on themselves); the last owner still cannot. */
+export async function checkMemberLeaves(ownerId: string): Promise<void> {
+  const { workspace } = await createWorkspace(ownerId, { name: 'Member leave checks' });
+  for (const role of ['viewer', 'admin'] as const) {
+    const member = await joinedMember(workspace.id, ownerId, role);
+    await removeMember(workspace.id, member.id, member.id);
+    assert.equal((await getDatabase().pool.query('SELECT 1 FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspace.id, member.id])).rowCount, 0, `A ${role} can leave the workspace.`);
+    await rejects(removeMember(workspace.id, member.id, member.id), 404, 'A former member has nothing to leave.');
+  }
+  await rejects(removeMember(workspace.id, ownerId, ownerId), 409, 'The last owner still cannot leave.');
+}
+
+/** Runtime 0.20: operator grants and revokes are audited only when they change something, and closed accounts never count. */
+export async function checkOperatorAudits(): Promise<void> {
+  const { pool } = getDatabase();
+  const operatorId = randomUUID(), operatorEmail = controllerEmail();
+  await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [operatorId, 'Operator fixture', operatorEmail]);
+  const audits = async () => (await pool.query<{ action: string }>('SELECT action FROM instance_operator_audit WHERE user_id=$1 ORDER BY id', [operatorId])).rows.map(row => row.action);
+  await setInstanceOperator(operatorEmail, true);
+  await setInstanceOperator(operatorEmail, true);
+  assert.deepEqual(await audits(), ['grant'], 'A repeated grant changes nothing and is not audited again.');
+  await setInstanceOperator(operatorEmail, false);
+  await setInstanceOperator(operatorEmail, false);
+  assert.deepEqual(await audits(), ['grant', 'revoke'], 'A repeated revoke changes nothing and is not audited again.');
+  await setInstanceOperator(operatorEmail, true);
+  assert.equal(await isInstanceOperator(operatorId), true);
+  const closedEmail = `closed-${operatorId}@invalid`;
+  await pool.query(`UPDATE "user" SET name='Closed account',email=$2,image=NULL,"emailVerified"=false,"twoFactorEnabled"=false,closed_at=clock_timestamp() WHERE id=$1`, [operatorId, closedEmail]);
+  try {
+    assert.equal(await isInstanceOperator(operatorId), false, 'A closed account never counts as an instance operator.');
+    await rejects(requireInstanceOperator(pool, operatorId), 403, 'A closed account never holds operator authority.');
+    await rejects(setInstanceOperator(closedEmail, true), 400, 'A closed account is never granted operator authority.');
+    assert.deepEqual(await audits(), ['grant', 'revoke', 'grant'], 'Refusals write no audit.');
+  } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [operatorId]); }
+}
+
+export async function runTeamControllerChecks(ownerId: string): Promise<void> {
+  for (const check of [checkControlCharacterNames, checkAcceptanceResult, checkMemberReinvite, checkMemberLeaves]) await check(ownerId);
+  await checkOperatorAudits();
+  console.log('PASS control-character names, acceptance results, member re-invite refusal, leaving, and change-only operator audits that never count closed accounts');
 }
 
 export async function runTeamsChecks(options: Options): Promise<void> {
@@ -71,8 +173,9 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   const apiMemberId = apiMember.body.user.id as string;
   assert.equal(apiMember.body.workspaces.find((workspace: { id: string }) => workspace.id === apiWorkspaceId)?.role, 'viewer');
   await http(`/api/workspaces/${apiWorkspaceId}/team`, 404, undefined, joined.cookie);
-  const repeatInvite = await http(`/api/workspaces/${apiWorkspaceId}/invitations`, 201, { email: apiEmail, role: 'editor' }, options.ownerCookie);
-  const repeatToken = new URLSearchParams(new URL(repeatInvite.body.inviteUrl).hash.slice(1)).get('invite');
+  const memberInvite = await http(`/api/workspaces/${apiWorkspaceId}/invitations`, 409, { email: apiEmail, role: 'editor' }, options.ownerCookie);
+  assert.equal(memberInvite.body.error, 'This person already belongs to the workspace.', 'Inviting a current member is refused over HTTP.');
+  const repeatToken = await plantInvitation(apiWorkspaceId, options.ownerId, apiEmail, 'editor');
   const repeatPreview = await http('/api/invitations/inspect', 200, { token: repeatToken });
   assert.equal(repeatPreview.body.accountExists, true, 'The token holder learns that the invited email already has an account, so sign-in is offered up front.');
   await http('/api/invitations/accept', 409, { token: repeatToken, name: 'Must not overwrite', password: password() });
@@ -180,11 +283,14 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   console.log('PASS owner/admin role boundaries and workspace isolation');
 
   const unchangedCredential = (await pool.query('SELECT password FROM account WHERE "userId"=$1 AND "providerId"=\'credential\'', [viewer.id])).rows[0].password;
-  const existingInvite = await inviteMember(workspaceId, options.ownerId, { email: viewerEmail, role: 'viewer' });
+  await rejects(inviteMember(workspaceId, options.ownerId, { email: viewerEmail, role: 'viewer' }), 409, 'A current member cannot be invited again.');
+  const existingInvite = { token: await plantInvitation(workspaceId, options.ownerId, viewerEmail, 'viewer') };
   await rejects(acceptInvitation({ token: existingInvite.token, name: 'Overwrite attempt', password: password() }), 409, 'Existing accounts require authenticated acceptance.');
   await rejects(acceptInvitation({ token: existingInvite.token }, ownerIdentity), 403, 'A different signed-in account must not accept the invitation.');
   const acceptedExisting = await acceptInvitation({ token: existingInvite.token, name: 'Ignored replacement', password: password() }, viewer);
   assert.equal(acceptedExisting.created, false);
+  assert.equal(acceptedExisting.joined, false, 'An existing member is reported as not newly joined.');
+  assert.equal(acceptedExisting.role, 'editor', 'Acceptance reports the role the member still holds.');
   const existingUser = (await pool.query('SELECT u.name,a.password,m.role FROM "user" u JOIN account a ON a."userId"=u.id JOIN membership m ON m.user_id=u.id WHERE u.id=$1 AND m.workspace_id=$2', [viewer.id, workspaceId])).rows[0];
   assert.equal(existingUser.name, 'Team viewer');
   assert.ok(existingUser.password === unchangedCredential, 'Invitation acceptance must never reset an existing password.');
@@ -208,7 +314,7 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   await rejects(acceptInvitation({ token: staleInvite.token, name: 'Stale grant', password: password() }), 410, 'Demoting an inviter must invalidate outstanding authority.');
   await changeRole(workspaceId, options.ownerId, admin.id, { role: 'admin' });
   await rejects(inspectInvitation({ token: staleInvite.token }), 410, 'Re-promoting an inviter must not revive an old link.');
-  const pendingReturn = await inviteMember(workspaceId, options.ownerId, { email: viewerEmail, role: 'viewer' });
+  const pendingReturn = { token: await plantInvitation(workspaceId, options.ownerId, viewerEmail, 'viewer') };
   await removeMember(workspaceId, admin.id, viewer.id);
   await rejects(acceptInvitation({ token: pendingReturn.token }, viewer), 410, 'Removing a member must revoke an old link addressed to them.');
   assert.ok(!(await getTeam(workspaceId, options.ownerId)).members.some((member) => member.userId === viewer.id));
@@ -364,5 +470,6 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   await revokeBoardShare(workspaceId, options.ownerId, board.id, boardShare.ack.shareId, { requestId: randomUUID(), revision: 1 });
   await revokeWebsiteShare(project.id, options.ownerId, websiteShare.ack.shareId, { requestId: randomUUID() });
   assert.deepEqual(await links(), [404, 404, 404, 404], 'The owner must be able to close every link a removed member created.');
+  await runTeamControllerChecks(options.ownerId);
   console.log('PASS member removal keeps workspace-owned report/tracked/board/website share links live, strips the removed member\'s share management, lists the website creator as a former member and leaves owner revocation in force');
 }

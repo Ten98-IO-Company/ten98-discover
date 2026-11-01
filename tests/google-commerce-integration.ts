@@ -11,6 +11,7 @@ import { withGoogleTransportForTests } from '../src/server/google-http.ts';
 import { runGoogleImport } from '../src/server/google-jobs.ts';
 import { expireGoogleImportPages } from '../src/server/google-retention.ts';
 import { runGoogleGa4Checks, type GoogleGa4BrowserFixture } from './google-ga4-integration.ts';
+import { withTransport, type MakeRequest } from './collector-admission-integration.ts';
 
 // Literal contracts independent of the production catalog and parser.
 const profiles = {
@@ -43,8 +44,8 @@ async function commerceChecks(parent:GoogleGa4BrowserFixture) {
   const actors:Actor[]=[];
   for(const role of ['owner','admin','editor','viewer','foreign','owner']){const id=randomUUID(),email=id+'@commerce.integration.test';await pool.query('INSERT INTO "user"(id,name,email)VALUES($1,$2,$3)',[id,'Commerce '+role,email]);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password)VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),id,await hashPassword(password)]);if(role!=='foreign')await pool.query('INSERT INTO membership(workspace_id,user_id,role)VALUES($1,$2,$3)',[parent.workspaceId,id,role]);actors.push({id,email,role,cookies:new Map()});}
   const [owner,admin,editor,viewer,foreign,numericOwner]=actors,posts=new Map<string,number>(),snapshots:Record<string,any>={},groups:string[]=[],ids:string[]=[];
-  async function call(path:string,body?:unknown,actor=owner,origin=config.appUrl){const headers=new Headers({cookie:[...actor.cookies].map(([key,value])=>`${key}=${value}`).join('; ')});if(body!==undefined){headers.set('origin',origin);headers.set('content-type','application/json');if(origin===config.appUrl&&path.startsWith(base))posts.set(actor.id,(posts.get(actor.id)??0)+1);}const response=await handleApi(new Request(config.appUrl+path,{method:body===undefined?'GET':'POST',headers,...body===undefined?{}:{body:JSON.stringify(body)}}));for(const cookie of response.headers.getSetCookie()){const first=cookie.split(';')[0],at=first.indexOf('=');actor.cookies.set(first.slice(0,at),first.slice(at+1));}const text=await response.text();return {response,data:text?JSON.parse(text):null};}
-  for(const actor of actors)assert.equal((await call('/api/auth/sign-in/email',{email:actor.email,password},actor)).response.status,200);
+  async function call(path:string,body?:unknown,actor=owner,origin=config.appUrl,makeRequest:MakeRequest=(path,init)=>new Request(config.appUrl+path,init)){const headers=new Headers({cookie:[...actor.cookies].map(([key,value])=>`${key}=${value}`).join('; ')});if(body!==undefined){headers.set('origin',origin);headers.set('content-type','application/json');if(origin===config.appUrl&&path.startsWith(base))posts.set(actor.id,(posts.get(actor.id)??0)+1);}const response=await handleApi(makeRequest(path,{method:body===undefined?'GET':'POST',headers,...body===undefined?{}:{body:JSON.stringify(body)}}));for(const cookie of response.headers.getSetCookie()){const first=cookie.split(';')[0],at=first.indexOf('=');actor.cookies.set(first.slice(0,at),first.slice(at+1));}const text=await response.text();return {response,data:text?JSON.parse(text):null};}
+  await withTransport(config.appUrl,async peer=>{for(const actor of actors)assert.equal((await call('/api/auth/sign-in/email',{email:actor.email,password},actor,config.appUrl,peer)).response.status,200);});
   let mode='normal',providerCalls=0,reportCalls=0,compatibilityCalls=0,resumeFailed=false;
   const offsets:number[]=[];
   const transport=async(url:string,init:RequestInit):Promise<Response>=>{

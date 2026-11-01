@@ -104,11 +104,14 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
       if (typeof args[0] === 'string' && args[0].startsWith('UPDATE api_key SET last_used_at')) useWrites++;
       return (poolQuery as (...input: unknown[]) => unknown).apply(this, args);
     } as typeof pool.query;
+    let latest: Awaited<ReturnType<typeof usage>>;
     try {
       await Promise.all([authenticateApiKey(usageKey.token), authorizeApiKey(usageKey.token, workspaceId, 'projects:read')]);
+      // Count until the write has landed and a settle period has passed, so a late second write is also caught.
+      latest = await recorded(usageKey.key.id, staleAt);
+      await settle();
     } finally { pool.query = poolQuery; }
     assert.equal(useWrites, 1, 'Two concurrent authentications of a stale key queue exactly one last-use write.');
-    const latest = await recorded(usageKey.key.id, staleAt);
 
     // A key issued before 0074 has no recorded prefix; it is listed without one and still records its use.
     await pool.query("INSERT INTO api_key(id,workspace_id,issuer_user_id,name,token_hash,scopes,expires_at) VALUES($1,$2,$3,'Issued before prefixes',$4,ARRAY['projects:read'],clock_timestamp()+interval '1 day')",
