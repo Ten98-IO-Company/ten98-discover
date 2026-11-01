@@ -17,8 +17,32 @@ export function clientLimitKey(scope: string, address: string | null, key: strin
   return `${scope}:${runtimeClientLimitKey('client', address, key)}`;
 }
 
+/** The request's per-client limit key and whether its client address resolved; an unresolved key is `<scope>:client:unresolved`. */
+export function clientRateIdentity(request: Request, scope: string, env: NodeJS.ProcessEnv = process.env): { key: string; resolved: boolean } {
+  const address = requestClientAddress(request, env);
+  return { key: clientLimitKey(scope, address, secret('AUTH_SECRET', env)), resolved: address !== null };
+}
+
 export function clientRateKey(request: Request, scope: string, env: NodeJS.ProcessEnv = process.env): string {
-  return clientLimitKey(scope, requestClientAddress(request, env), secret('AUTH_SECRET', env));
+  return clientRateIdentity(request, scope, env).key;
+}
+
+/**
+ * Per-client ceilings for identity routes: per minute, except setup's 15-minute window. Every unresolved client of a scope shares
+ * one key, so it gets a quarter of the resolved ceiling (at least 1), as the runtime clientLimitKey recommends. Setup still admits
+ * unresolved clients, so a misconfigured proxy cannot lock the owner out of the first-boot claim.
+ */
+export const clientRateLimits = {
+  signin: { resolved: 60, unresolved: 15 },
+  'two-factor': { resolved: 60, unresolved: 15 },
+  'oidc:start': { resolved: 60, unresolved: 15 },
+  'oidc:callback': { resolved: 120, unresolved: 30 },
+  setup: { resolved: 10, unresolved: 2 },
+} as const;
+
+export function clientRateLimit(request: Request, scope: keyof typeof clientRateLimits, env: NodeJS.ProcessEnv = process.env): { key: string; maximum: number } {
+  const { key, resolved } = clientRateIdentity(request, scope, env);
+  return { key, maximum: clientRateLimits[scope][resolved ? 'resolved' : 'unresolved'] };
 }
 
 /**

@@ -11,7 +11,8 @@ import { networkSettings, useNetwork, withTransport, type MakeRequest } from './
 // Needs an isolated synthetic PostgreSQL database; never a real installation.
 // First-user setup attempts count per client over a 15-minute window, in one bucket shared by POST /api/auth/setup and its
 // /api/setup alias. These attempts carry a too-short password, so an attempt under the limit gets the normal 400 refusal rather than
-// 429 and never claims the installation, whether or not it is already claimed.
+// 429 and never claims the installation, whether or not it is already claimed. Unresolved clients share one bucket with a
+// stricter ceiling of 2, still admitted so a misconfigured proxy cannot lock the owner out of setup.
 export async function runSetupRateLimitChecks() {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
   const config = getConfig();
@@ -20,7 +21,7 @@ export async function runSetupRateLimitChecks() {
   // Derive the keys exactly as the route does, including AUTH_SECRET_FILE support.
   const { pool } = getDatabase(), secret = configSecret('AUTH_SECRET');
   const addressA = '198.51.100.31', addressB = '198.51.100.32';
-  const clientA = clientLimitKey('setup', addressA, secret), clientB = clientLimitKey('setup', addressB, secret), keys = [clientA, clientB];
+  const clientA = clientLimitKey('setup', addressA, secret), clientB = clientLimitKey('setup', addressB, secret), keys = [clientA, clientB, 'setup:client:unresolved'];
   const send = (from: MakeRequest, path = '/api/auth/setup') => handleApi(from(path, {
     method: 'POST', headers: { origin: config.appUrl, 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'Setup limit fixture', email: 'setup-limit@integration.test', password: randomBytes(4).toString('hex') }),
@@ -51,10 +52,16 @@ export async function runSetupRateLimitChecks() {
     await seed(clientA, 20, 10);
     const outside = await withTransport(config.appUrl, (_peer, via) => attempt(via(addressA)));
     assert.ok(outside !== 429 && outside >= 400 && outside < 500, 'Attempts twenty minutes ago fall outside the window.');
+
+    // A trusted peer without a forwarding chain is unresolved: two attempts are admitted, the third is refused.
+    await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])', [keys]);
+    const unresolved = await withTransport(config.appUrl, async peer => [await attempt(peer), await attempt(peer, '/api/setup'), await attempt(peer)]);
+    assert.deepEqual(unresolved, [400, 400, 429], 'Unresolved clients are admitted twice per window, not refused outright.');
+    assert.ok(await withTransport(config.appUrl, (_peer, via) => attempt(via(addressB))) !== 429, 'The unresolved bucket does not limit resolved clients.');
   } finally {
     useNetwork(savedNetwork);
     await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])', [keys]);
   }
-  return { groups: ['setup attempts count per client: one client over its limit leaves another admitted', 'setup attempts count over a 15-minute window', 'the canonical setup path and its alias share one bucket'] };
+  return { groups: ['setup attempts count per client: one client over its limit leaves another admitted', 'setup attempts count over a 15-minute window', 'the canonical setup path and its alias share one bucket', 'unresolved clients are admitted to setup under a stricter ceiling'] };
 }
 if (process.env.TEN98_INTEGRATION_TEST === '1' && pathToFileURL(resolve(process.argv[1] ?? '')).href === import.meta.url) try { console.log(await runSetupRateLimitChecks()); } finally { await closeDatabase(); }
