@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { getConfig } from './config.ts'
 import { getDatabase } from './db.ts'
 import * as schema from './schema.ts'
+import { team } from './workspace-team.ts'
 
 export type { ResetPasswordMessage }
 
@@ -84,6 +85,8 @@ export async function claimInstallation(input: z.input<typeof claimInput>): Prom
     const password = await hashPassword(details.password)
     const userId = randomUUID()
     const workspaceId = randomUUID()
+    // Every account-creation path takes the same per-email lock as invitation acceptance.
+    await team.lockEmail(client, details.email)
     await client.query(
       `INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
        VALUES ($1, $2, $3, false, now(), now())`,
