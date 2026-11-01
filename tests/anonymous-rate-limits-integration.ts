@@ -19,6 +19,7 @@ export async function runAnonymousRateLimitChecks(){
   const seed=()=>pool.query("INSERT INTO request_limit(key,minute,count) SELECT k,floor(extract(epoch FROM now())/60)+n,100 FROM unnest($1::text[]) k,generate_series(0,1) n ON CONFLICT(key,minute) DO UPDATE SET count=100",[keys]);
   const total=async(key:string)=>Number((await pool.query('SELECT COALESCE(sum(count),0)::int AS total FROM request_limit WHERE key=$1 AND minute>=floor(extract(epoch FROM now())/60)-1',[key])).rows[0].total);
   try{
+    await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])',[keys]);
     await seed();
     const unconfigured=`https://unconfigured-${randomUUID().slice(0,8)}.example.com`,before=await total('collector:global');
     const options=await handleApi(new Request(config.appUrl+'/api/collect',{method:'OPTIONS',headers:{origin:unconfigured}}));
