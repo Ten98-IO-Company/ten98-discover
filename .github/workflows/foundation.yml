@@ -348,7 +348,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
       PLAYWRIGHT_CHANNEL: chromium
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -374,6 +373,7 @@ jobs:
       - name: Verify retained research and analytics flows
         shell: bash
         env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
           TEN98_KEYWORD_COST_BROWSER: '1'
           TEN98_EXPLORER_LIBRARY_BROWSER: '1'
           TEN98_UTM_BROWSER: '1'
@@ -384,6 +384,7 @@ jobs:
       - name: Verify reopened domain and backlink polling
         shell: bash
         env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
           TEN98_RESEARCH_POLLING_BROWSER: '1'
           TEN98_DOMAIN_OVERVIEW_BROWSER: '1'
           TEN98_BACKLINK_RESEARCH_BROWSER: '1'
