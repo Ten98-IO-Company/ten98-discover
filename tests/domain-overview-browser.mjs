@@ -9,6 +9,7 @@ import {createServer} from 'vite';
 import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_DOMAIN_OVERVIEW_BROWSER,'1');
+const pollingOnly=process.env.TEN98_RESEARCH_POLLING_BROWSER==='1';
 const output=resolve('private/domain-overview-ui/browser/run-'+randomUUID().replaceAll('-','').slice(0,12));
 const ids={connection:'40000000-0000-4000-8000-000000000001',run:'50000000-0000-4000-8000-000000000001',quote:'60000000-0000-4000-8000-000000000001'};
 const at='2026-10-16T05:00:00.000Z',base='/api/projects/20000000-0000-4000-8000-000000000001/domain-research';
@@ -17,24 +18,24 @@ function request(report){if(report==='backlinks_overview_v1')return {connectionI
 function receipt(report,patch={}){return {id:ids.run,quoteId:ids.quote,request:request(report),status:'completed',createdAt:at,completedAt:at,estimateUsd:report==='overview_v1'?'0.010200':'0.015000',actualUsd:report==='overview_v1'?'0.010100':'0.012120',chargeStatus:'settled',canCancel:false,diagnostic:null,resultExpired:false,...patch};}
 function result(report){if(report==='backlinks_overview_v1')return {source:'DataForSEO Backlinks',retrievedAt:at,target:'example.com',scope:'subdomains',status:'live',report,rankScale:'one_hundred',rows:[{backlinks:10,referringDomains:5,referringMainDomains:4,referringPages:6,referringIps:3,referringSubnets:2,brokenBacklinks:0,spamScore:null,rank:15,firstSeen:at,lostAt:null}],returnedCount:1,totalCount:1,limited:false};const rows=report==='overview_v1'?[metrics()]:report==='pages_v1'?[{url:'https://example.com/guide',organic:metrics()}]:report==='competitors_v1'?[{domain:'competitor.example.org',sharedKeywords:0,averagePosition:null,fullDomain:metrics({estimatedTraffic:900}),targetOverlap:metrics({estimatedTraffic:3,estimatedAdsValueUsd:0})}]:[{keyword:'Synthetic keyword',position:1,searchVolume:null,estimatedTraffic:0,cpcUsd:null,keywordDifficulty:null,url:'https://example.com/guide',metricsUpdatedAt:null}];return {source:'DataForSEO Labs / Google',retrievedAt:at,target:'example.com',scope:'subdomains',locationCode:2840,languageCode:'en',...report?{report}:{},rows,returnedCount:rows.length,totalCount:report==='overview_v1'?1:101,limited:report!=='overview_v1'};}
 function overview(role,run){return {role,vaultConfigured:true,spendingPaused:false,connections:[{id:ids.connection,name:'Synthetic saved connection',checkStatus:'ok'}],catalog:{updatedAt:at,markets:[{locationCode:2840,locationName:'United States',languageCode:'en',languageName:'English'}]},runs:run?[run]:[]};}
-const checks=[],contexts=[],errors=[],external=[],draftContexts=[];let draftRequests=0; let apiRequests=0,costRequests=0,costMode=false; const costContexts=[];
+const checks=[],contexts=[],errors=[],external=[],draftContexts=[];let draftRequests=0; let apiRequests=0,costRequests=0,costMode=false,pollingMode=false,pollingRequests=0; const costContexts=[],pollingContexts=[];
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/domain-overview-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/domain-overview-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-runtime','react/jsx-dev-runtime','@tanstack/react-router','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Domain overview synthetic checks</title><div id="root"></div><script type="module" src="/tests/domain-overview-browser-fixture.tsx"></script></html>');});
 let browser,origin;
 const button=(page,name)=>page.getByRole('button',{name,exact:true});
 const idle=page=>page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Refresh receipts'&&!b.disabled));
-async function open({report='overview_v1',role='owner',patchResult,detailFault,exportFault,startFault,holdDetail=false,panel='domain',noConnections=false,spendingPaused=false,clock=false,draftRegression=false}={}){
- const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(draftRegression?draftContexts:costMode?costContexts:contexts).push(context);assert.ok(draftContexts.length<=2); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=45,'Legacy context cap.');
+async function open({report='overview_v1',role='owner',patchResult,detailFault,exportFault,startFault,holdDetail=false,panel='domain',noConnections=false,spendingPaused=false,clock=false,draftRegression=false,runPatch,previous}={}){
+ const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(pollingMode?pollingContexts:draftRegression?draftContexts:costMode?costContexts:contexts).push(context);assert.ok(pollingContexts.length<=2);assert.ok(draftContexts.length<=2); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=45,'Legacy context cap.');
  const page=await context.newPage();if(clock)await page.clock.install();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
- const model={role,run:receipt(report),result:result(report),calls:[],details:0,detailFault,exportFault,startFault,holdDetail,held:null,csv:'Source,DataForSEO Labs / Google\r\nSynthetic fixture,not native CSV proof\r\n',posts:[]};
+ const model={role,run:receipt(report,runPatch),previous,result:result(report),calls:[],details:0,detailFault,exportFault,startFault,holdDetail,held:null,csv:'Source,DataForSEO Labs / Google\r\nSynthetic fixture,not native CSV proof\r\n',posts:[]};
  model.holdEntered=new Promise(yes=>{model.markHeld=yes;}); model.startHeld=new Promise(yes=>{model.markStartHeld=yes;});
  patchResult?.(model.result);
  const reply=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const q=route.request(),url=new URL(q.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return q.method()==='GET'?route.continue():route.abort();
-  assert.ok(draftRegression?++draftRequests<=100:costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 500 legacy / 50 cost / 100 disclosure.');assert.ok(apiRequests+costRequests+draftRequests<=400,'Assigned aggregate API request cap.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');if(url.pathname==='/api/workspaces/10000000-0000-4000-8000-000000000001/providers'&&q.method()==='GET')return reply(route,{vaultConfigured:true,connections:[],budget:{paused:false,month:'2026-10',spentUsd:'0',reservedUsd:'0',uncertainUsd:'0'},ledger:[]});assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname===base.replace('/domain-research','/keyword-research')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'),'Only the two synthetic owned project routes are allowed.');
+  assert.ok(pollingMode?++pollingRequests<=100:draftRegression?++draftRequests<=100:costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 100 polling / 500 legacy / 50 cost / 100 disclosure.');assert.ok(apiRequests+costRequests+draftRequests<=400,'Assigned aggregate API request cap.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');if(url.pathname==='/api/workspaces/10000000-0000-4000-8000-000000000001/providers'&&q.method()==='GET')return reply(route,{vaultConfigured:true,connections:[],budget:{paused:false,month:'2026-10',spentUsd:'0',reservedUsd:'0',uncertainUsd:'0'},ledger:[]});assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname===base.replace('/domain-research','/keyword-research')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'),'Only the two synthetic owned project routes are allowed.');
   const currentBase=url.pathname.replace(/\/domain-research.*$/,'/domain-research');
-  if(url.pathname===currentBase)return reply(route,{...overview(model.role,panel==='keywords'?null:model.run),spendingPaused,...(noConnections?{connections:[]}:{})});
+  if(url.pathname===currentBase)return reply(route,{...overview(model.role,panel==='keywords'?null:model.run),...(panel!=='keywords'&&model.previous?{runs:[model.run,model.previous]}:{}),spendingPaused,...(noConnections?{connections:[]}:{})});
   if(q.method()==='POST'){
    const body=q.postDataJSON();model.posts.push({path:url.pathname,body});
    if(url.pathname.endsWith('/quote')){const stamp=new Date().toISOString(),estimate=(10000n+200n*BigInt(body.limit)).toString().padStart(7,'0');model.quote={id:ids.quote,request:body,connectionName:'Synthetic saved connection',priceAsOf:stamp,expiresAt:new Date(Date.parse(stamp)+300000).toISOString(),perTaskUsd:'0.010000',perItemUsd:'0.000200',estimateUsd:estimate.slice(0,-6)+'.'+estimate.slice(-6),upperItems:body.limit};return reply(route,{role:model.role,quote:model.quote});}
@@ -43,10 +44,11 @@ async function open({report='overview_v1',role='owner',patchResult,detailFault,e
    throw Error('Unexpected synthetic write: '+url.pathname);
   }
   if(url.pathname.endsWith('/export')){if(typeof model.exportFault==='number')return reply(route,{error:'Synthetic export refusal'},model.exportFault);const value={role:model.role,run:{...model.run},csv:model.csv,rowCount:model.result.returnedCount};if(typeof model.exportFault==='function')model.exportFault(value);return reply(route,value);}
-  if(url.pathname.endsWith('/runs/'+ids.run)){
+  if(url.pathname.endsWith('/runs/'+ids.run)||model.previous&&url.pathname.endsWith('/runs/'+model.previous.id)){
    model.details++;if(model.holdDetail){await new Promise(yes=>{model.held=yes;model.markHeld();});model.holdDetail=false;}
    if(typeof model.detailFault==='number')return reply(route,{error:'Synthetic detail read failure'},model.detailFault);
-   const value={role:model.role,run:{...model.run,result:model.run.resultExpired||model.run.status==='queued'?null:model.result}};if(typeof model.detailFault==='function')model.detailFault(value);return reply(route,value);
+   const saved=model.previous&&url.pathname.endsWith('/runs/'+model.previous.id)?model.previous:model.run;
+   const value={role:model.role,run:{...saved,result:saved.resultExpired||saved.status==='queued'?null:model.result}};if(typeof model.detailFault==='function')model.detailFault(value);return reply(route,value);
   }
   throw Error('Unexpected synthetic read: '+url.pathname);
  });
@@ -59,6 +61,8 @@ try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.warmupRequest('/tests/domain-overview-browser-fixture.tsx');await server.waitForRequestsIdle();
  browser=await launchChromium();
+
+ if(!pollingOnly){
 
  const draft=page=>page.getByRole('region',{name:'New domain research',exact:true}),disclosure=page=>draft(page).locator(':scope > details'),toggleDraft=page=>disclosure(page).locator(':scope > summary').click(),focusReport=page=>page.waitForFunction(()=>document.activeElement?.getAttribute('id')?.endsWith('report'));
  {
@@ -193,6 +197,20 @@ try{
   const {page,context,model}=await open({startFault:'lost',clock:true});await page.getByRole('combobox',{name:'Research report',exact:true}).selectOption('overview_v1');await page.getByLabel('Domain or URL',{exact:true}).fill('example.com');await page.getByLabel('Market and language',{exact:true}).selectOption('2840:en');await button(page,'Prepare quote').click();const cost=page.getByRole('region',{name:'Paid research quote'}).locator('.t98-cost-root');await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),'quoted');await button(page,'Start paid research').click();await button(page,'Retry same start').waitFor();assert.equal(await cost.getAttribute('data-state'),'uncertain');await page.clock.fastForward(301000);assert.equal(await cost.getAttribute('data-state'),'uncertain');assert.equal(await button(page,'Retry same start').isEnabled(),true);const first=model.posts.filter(p=>p.path.endsWith('/runs'))[0].body;await button(page,'Retry same start').click();await page.getByText('Run receipt saved.',{exact:true}).waitFor();assert.deepEqual(model.posts.filter(p=>p.path.endsWith('/runs'))[1].body,first);await context.close();
  }
  assert.ok(costContexts.length<=12);assert.ok(costRequests<=50);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log('PASS shared cost receipt states, exact six-decimal prices, unknown/zero, retained expiry, quote expiry, held native Start and same-key recovery plus four 2x-font/contrast captures');
- await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:45,draftChecks:{contexts:draftContexts.length,apiRequests:draftRequests},apiRequests,costChecks:{contexts:costContexts.length,apiRequests:costRequests,screenshots:4},errors,external,screenshots:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
+ }
+ pollingMode=true;
+ {
+  const previous=receipt('overview_v1',{id:'50000000-0000-4000-8000-000000000002',status:'running',completedAt:null,actualUsd:null,chargeStatus:'dispatched'});
+  const {page,context,model,view}=await open({clock:true,runPatch:{status:'queued',completedAt:null,actualUsd:null,chargeStatus:'reserved',canCancel:true},previous});
+  const pollAfter=async milliseconds=>{const before=model.details,next=page.waitForResponse(response=>response.url().includes('/runs/')&&response.request().method()==='GET');await page.clock.fastForward(milliseconds);await next;await idle(page);assert.equal(model.details,before+1,'One free status poll runs in the active selection window.');};
+  const noPollAfter=async milliseconds=>{const before=model.details;await page.clock.fastForward(milliseconds);await idle(page);assert.equal(model.details,before,'Background reads cannot extend the five-minute selection window.');};
+  await view();assert.equal(model.details,1);await pollAfter(2100);await pollAfter(292000);await noPollAfter(8000);await noPollAfter(60000);
+  await page.getByRole('region',{name:'Recent domain research'}).getByRole('button').nth(1).click();await idle(page);assert.equal(model.calls.at(-1).path,base+'/runs/'+previous.id);await pollAfter(2100);assert.equal(model.posts.length,0);assert.ok(model.calls.every(call=>call.method==='GET'));await context.close();
+ }
+ {
+  const {page,context,model,view}=await open({clock:true});await view();const reads=model.details;await page.clock.fastForward(10000);await idle(page);assert.equal(model.details,reads,'A retained terminal report never starts status polling.');assert.equal(model.posts.length,0);await context.close();
+ }
+ assert.ok(pollingRequests<=100);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await done('saved active domain receipts poll on selection, stop after five minutes without renewal, restart on another selection and leave terminal reports idle without POST',2);
+ await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:contexts.length,draftChecks:{contexts:draftContexts.length,apiRequests:draftRequests},apiRequests,costChecks:{contexts:costContexts.length,apiRequests:costRequests,screenshots:pollingOnly?0:4},pollingChecks:{contexts:pollingContexts.length,apiRequests:pollingRequests,only:pollingOnly},errors,external,screenshots:pollingOnly?0:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
 }catch(error){await writeFile(output+'/failure.json',JSON.stringify({scope:'synthetic component checks',checks,error:String(error),stack:error?.stack,errors,external},null,2));throw error;}
-finally{for(const context of [...contexts,...costContexts,...draftContexts])await context.close().catch(()=>{});await browser?.close();await server.close();}
+finally{for(const context of [...contexts,...costContexts,...draftContexts,...pollingContexts])await context.close().catch(()=>{});await browser?.close();await server.close();}

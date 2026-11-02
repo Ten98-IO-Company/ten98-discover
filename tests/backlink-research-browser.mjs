@@ -8,6 +8,7 @@ import {createServer} from 'vite';
 import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_BACKLINK_RESEARCH_BROWSER,'1');
+const pollingOnly=process.env.TEN98_RESEARCH_POLLING_BROWSER==='1';
 const output=resolve('private/backlink-research-ui/browser/run-'+randomUUID().replaceAll('-','').slice(0,12));
 const ids={connection:'40000000-0000-4000-8000-000000000001',run:'50000000-0000-4000-8000-000000000001',next:'50000000-0000-4000-8000-000000000002',quote:'60000000-0000-4000-8000-000000000001'};
 const at='2026-10-16T05:00:00.000Z',base='/api/projects/20000000-0000-4000-8000-000000000001/domain-research';
@@ -23,23 +24,23 @@ function result(r){
  return {source:'DataForSEO Backlinks',retrievedAt:at,target:r.target,scope:r.scope,status:r.status,rankScale:'one_hundred',report:r.report,rows,returnedCount:rows.length,totalCount:r.report==='backlinks_overview_v1'?1:51,limited:r.report!=='backlinks_overview_v1',...r.report!=='backlinks_overview_v1'?{offset:r.offset,limit:r.limit,follow:r.follow,sourceHost:r.sourceHost??null,order:r.order}:{}};
 }
 const state=(role,runs)=>({role,vaultConfigured:true,spendingPaused:false,connections:[{id:ids.connection,name:'Synthetic saved connection',checkStatus:'ok'}],catalog:{updatedAt:null,markets:[]},runs});
-const checks=[],contexts=[],errors=[],external=[]; let apiRequests=0,costRequests=0,costMode=false; const costContexts=[];
+const checks=[],contexts=[],errors=[],external=[]; let apiRequests=0,costRequests=0,costMode=false,pollingMode=false,pollingRequests=0; const costContexts=[],pollingContexts=[];
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/backlink-research-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/backlink-research-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-runtime','react/jsx-dev-runtime','@tanstack/react-router','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Backlink synthetic checks</title><div id="root"></div><script type="module" src="/tests/backlink-research-browser-fixture.tsx"></script></html>');});
 let browser,origin;
 const button=(p,name)=>p.getByRole('button',{name,exact:true});
 const select=(p,name)=>p.getByRole('combobox',{name,exact:true});
 const idle=p=>p.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Refresh receipts'&&!b.disabled));
-async function open({r=request(),role='owner',patchResult,detailFault,exportFault,startFault,ackFault,holdDetail=false,previous}={}){
- const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(costMode?costContexts:contexts).push(context); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=61,'Legacy context cap.');
- const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
- const current=receipt(r),model={role,run:current,runs:previous?[current,previous]:[current],results:new Map([[current.id,result(r)]]),calls:[],posts:[],details:0,detailFault,exportFault,startFault,ackFault,holdDetail,held:null,csv:'Source,DataForSEO Backlinks\r\nSynthetic fixture,not native CSV proof\r\n'};
+async function open({r=request(),role='owner',patchResult,detailFault,exportFault,startFault,ackFault,holdDetail=false,previous,clock=false,runPatch}={}){
+ const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(pollingMode?pollingContexts:costMode?costContexts:contexts).push(context);assert.ok(pollingContexts.length<=2); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=61,'Legacy context cap.');
+ const page=await context.newPage();if(clock)await page.clock.install();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
+ const current=receipt(r,runPatch),model={role,run:current,runs:previous?[current,previous]:[current],results:new Map([[current.id,result(r)]]),calls:[],posts:[],details:0,detailFault,exportFault,startFault,ackFault,holdDetail,held:null,csv:'Source,DataForSEO Backlinks\r\nSynthetic fixture,not native CSV proof\r\n'};
  if(previous)model.results.set(previous.id,result(previous.request));patchResult?.(model.results.get(current.id));
  model.holdEntered=new Promise(yes=>{model.markHeld=yes;});
  const reply=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const q=route.request(),url=new URL(q.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return q.method()==='GET'?route.continue():route.abort();
-  assert.ok(costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 500 legacy / 50 added.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'));
+  assert.ok(pollingMode?++pollingRequests<=100:costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 100 polling / 500 legacy / 50 added.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'));
   if(url.pathname.includes('20000000-0000-4000-8000-000000000002'))return reply(route,state(model.role,[]));
   if(url.pathname===base)return reply(route,state(model.role,model.runs));
   if(q.method()==='POST'){
@@ -71,6 +72,8 @@ try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.warmupRequest('/tests/backlink-research-browser-fixture.tsx');await server.waitForRequestsIdle();
  browser=await launchChromium();
+
+ if(!pollingOnly){
 
  for(const report of ['backlinks_overview_v1','backlinks_profile_v1'])for(const scope of ['domain','subdomains','subfolder','exact_url']){
   const {page,context,model}=await open();const target=scope==='subfolder'?'http://www.example.com/Guide/':scope==='exact_url'?'http://www.example.com/Guide/':'https://www.example.com/';
@@ -177,6 +180,20 @@ try{
   const {page,context,model,view}=await open();Object.assign(model.run,item,{canCancel:false});delete model.run.state;await view();const cost=page.locator('.t98-cost-root').filter({has:page.getByText('Research receipt and charge',{exact:true})});await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),item.state);assert.equal(await cost.locator('dt').filter({hasText:'Settled price'}).locator('..').locator('dd').innerText(),item.actualUsd===null?'Settled amount unknown':'$0.000000');assert.equal(model.posts.length,0);await context.close();
  }
  assert.ok(costContexts.length<=12);assert.ok(costRequests<=50);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log('PASS actual shared cost roots for all four backlink reports with exact prices, units, saved scope and pending/uncertain/known-zero/cancelled states');
- await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:contexts.length,costChecks:{contexts:costContexts.length,apiRequests:costRequests},errors,external,screenshots:12,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
+ }
+ pollingMode=true;
+ {
+  const previous=receipt(request({offset:25}),{id:ids.next,status:'running',completedAt:null,actualUsd:null,chargeStatus:'dispatched'});
+  const {page,context,model,view}=await open({clock:true,runPatch:{status:'queued',completedAt:null,actualUsd:null,chargeStatus:'reserved',canCancel:true},previous});
+  const pollAfter=async milliseconds=>{const before=model.details,next=page.waitForResponse(response=>response.url().includes('/runs/')&&response.request().method()==='GET');await page.clock.fastForward(milliseconds);await next;await idle(page);assert.equal(model.details,before+1,'One free status poll runs in the active selection window.');};
+  const noPollAfter=async milliseconds=>{const before=model.details;await page.clock.fastForward(milliseconds);await idle(page);assert.equal(model.details,before,'Background reads cannot extend the five-minute selection window.');};
+  await view();assert.equal(model.details,1);await pollAfter(2100);await pollAfter(292000);await noPollAfter(8000);await noPollAfter(60000);
+  await page.getByRole('region',{name:'Recent domain research'}).getByRole('button').nth(1).click();await idle(page);assert.equal(model.calls.at(-1).path,base+'/runs/'+previous.id);await pollAfter(2100);assert.equal(model.posts.length,0);assert.ok(model.calls.every(call=>call.method==='GET'));await context.close();
+ }
+ {
+  const {page,context,model,view}=await open({clock:true});await view();const reads=model.details;await page.clock.fastForward(10000);await idle(page);assert.equal(model.details,reads,'A retained terminal report never starts status polling.');assert.equal(model.posts.length,0);await context.close();
+ }
+ assert.ok(pollingRequests<=100);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);done('saved active backlink receipts poll on selection, stop after five minutes without renewal, restart on another selection and leave terminal reports idle without POST',2);
+ await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:contexts.length,costChecks:{contexts:costContexts.length,apiRequests:costRequests},pollingChecks:{contexts:pollingContexts.length,apiRequests:pollingRequests,only:pollingOnly},errors,external,screenshots:pollingOnly?0:12,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
 }catch(error){await writeFile(output+'/failure.json',JSON.stringify({scope:'synthetic component checks',checks,error:String(error),stack:error?.stack,errors,external},null,2));throw error;}
-finally{for(const context of [...contexts,...costContexts])await context.close().catch(()=>{});if(browser)await browser.close();await server.close();}
+finally{for(const context of [...contexts,...costContexts,...pollingContexts])await context.close().catch(()=>{});if(browser)await browser.close();await server.close();}
