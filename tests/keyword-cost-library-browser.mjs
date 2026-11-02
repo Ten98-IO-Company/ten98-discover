@@ -59,6 +59,7 @@ try{
  const names=['zulu keyword','alpha keyword','unknown keyword'],metrics=names.map((keyword,index)=>({keyword,searchVolume:index===2?null:index===1?900:0,cpcUsd:index===2?null:index===1?'1.250000':'0.000000',competition:null,competitionLevel:null,keywordDifficulty:index===2?null:index===1?75:0,intent:index===2?null:index===1?'commercial':'informational',metricsUpdatedAt:null,intentUpdatedAt:null,monthlySearches:[]}));
  await open({...original,keywords:names,request:{...request,keywords:names},status:'completed',diagnostic:null,actualUsd:'0.123456',result:{retrievedAt:at,source:'DataForSEO Labs / Google',missingKeywords:[],totalCount:3,limited:false,rows:metrics}});
  const table=page.getByRole('region',{name:'Keyword data table',exact:true}),beforeFilter=calls.length;
+ for(const label of ['Include keyword text','Exclude keyword text','Keyword intent'])assert.ok(await page.getByLabel(label,{exact:true}).evaluate(element=>element.getBoundingClientRect().height)>=44,'Keyword filters meet the app touch-target contract');
  await page.getByLabel('Include keyword text',{exact:true}).fill('KEYWORD');await page.getByLabel('Exclude keyword text',{exact:true}).fill('unknown');
  assert.equal(await table.getByRole('checkbox',{name:'Select research keyword unknown keyword',exact:true}).count(),0);
  await page.getByLabel('Keyword intent',{exact:true}).selectOption('commercial');assert.equal(await table.getByRole('checkbox').count(),2);
