@@ -1,5 +1,5 @@
-import {useState} from 'react';
-import {Alert, BarList, Card, DataTable, MetricCard, Sparkline, Stack, Tabs, TimeSeriesChart,Disclosure} from '@ten98/ui';
+import {useEffect,useState} from 'react';
+import {Alert, BarList, Card, DataTable, MetricCard, ReportToolbar, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
@@ -107,6 +107,7 @@ function CarriedPanel({carried}: {carried: CarriedInsights}) {
 export function AIInsightsView(props: AIInsightsViewProps) {
   const [trendMetric, setTrendMetric] = useState<TrendMetric>('visibility');
   const [basis, setBasis] = useState<'observed' | 'carried'>('observed');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const {
     prefix, role, reading, exporting, error, notice, filterError, dirty,
     draft, promptSearch, promptOptions, canPreviousPrompts, canNextPrompts,
@@ -127,6 +128,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
   const exportOff = !known || report === null || dirty || busy || !report.canExport;
   const brand = report?.metrics.find(entity => entity.id === 'brand');
   const leaders = report ? [...report.metrics].sort((a,b) => b.counts.mentions - a.counts.mentions).slice(0,5) : [];
+  useEffect(() => { if (filterError !== '') setAdvancedOpen(true); }, [filterError]);
 
   return (
     <div className="research-panel stack" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
@@ -158,7 +160,6 @@ export function AIInsightsView(props: AIInsightsViewProps) {
 
       {known && report !== null && (
         <div className="stack">
-          <p id={prefix + 'scope'}><strong>{report.scopeLabel}</strong></p>
           {report.pooledModels && <p className="hint">The All models view pools retained answers. Each model answer counts separately; these rates are not a balanced model comparison.</p>}
           {report.warnings.length > 0 && (
             <ul className="stack">
@@ -169,10 +170,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
       )}
 
       {known && (
-        <details open={!report || dirty || filterError !== ''}>
-          <summary>Report filters</summary>
-          <form className="stack" style={{ marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); if (applyOff) return; onApply(); }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,180px),1fr))', gap: 12 }}>
+          <form className="stack" onSubmit={(e) => { e.preventDefault(); if (applyOff) return; onApply(); }}>
+            <ReportToolbar label="Answer analysis filters" advancedOpen={advancedOpen} onAdvancedOpenChange={setAdvancedOpen} controls={<>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'from'}>From</label>
                 <input id={prefix + 'from'} type="date" value={draft.from} disabled={draftOff} style={controlStyle}
@@ -196,7 +195,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                   {draft.model&&!props.modelOptions?.values.includes(draft.model)&&<option value={draft.model}>{draft.model} — selected, outside these options</option>}
                   {(props.modelOptions?.values??[]).map(model=><option key={model} value={model}>{model}</option>)}
                 </select>
-                <p className="hint">Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</p>
+                <Tooltip content={<>Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</>}><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About model options</button></Tooltip>
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'prompt'}>Prompt</label>
@@ -206,11 +205,12 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                   {promptOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
               </div>
+            </>} advanced={<>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'tag'}>Current tag</label>
                 <input id={prefix + 'tag'} type="text" value={draft.tag} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('tag', e.target.value); }} />
-                <p className="hint">Matches current user tags; historical tags were not recorded.</p>
+                <Tooltip content="Matches current user tags; historical tags were not recorded."><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About current tags</button></Tooltip>
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'matcher'}>Matching method</label>
@@ -219,9 +219,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                   <option value="unicode-boundary-v1">Unicode word boundaries</option>
                   <option value="elmo-substring-v1">Elmo substring baseline</option>
                 </select>
-                <p className="hint">Substring matching can include parts of unrelated words.</p>
+                <Tooltip content="Substring matching can include parts of unrelated words."><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About matching methods</button></Tooltip>
               </div>
-            </div>
 
             <div className="row" style={{ flexWrap: 'wrap', alignItems: 'flex-end', gap: 8 }}>
               <div className="field" style={{ margin: 0 }}>
@@ -237,13 +236,11 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                 onClick={() => { if (nextPromptsOff) return; onNextPrompts(); }}>Next prompts</button>
             </div>
 
-            {filterError !== '' && <div className="alert" role="alert">{filterError}</div>}
-
-            <div className="row">
-              <button type="submit" className="btn" style={controlStyle} disabled={applyOff}>Apply filters</button>
-            </div>
+            </>} summary={<>
+              {report !== null && <p id={prefix + 'scope'}><strong>{report.scopeLabel}</strong></p>}
+              {filterError !== '' && <div className="alert" role="alert">{filterError}</div>}
+            </>} actions={<button type="submit" className="btn" style={controlStyle} disabled={applyOff}>Apply filters</button>}/>
           </form>
-        </details>
       )}
       {known && dirty && <p className="hint">Unapplied filter changes. The report below still uses the applied filters.</p>}
 

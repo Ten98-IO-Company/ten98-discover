@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {heatmapSettings,defaultHeatmapSettings,heatmapBegin,heatmapBatch,heatmapDepth,heatmapPlane,readHeatmapQuery,replayHeatmapParams,savedReplayWrite,savedReplayAck,heatmapClicks,heatmapBackgroundUpload,heatmapBackgroundPage,replayEventLocator} from '../src/lib/replay-heatmaps.ts';
+import {heatmapSettings,defaultHeatmapSettings,heatmapBegin,heatmapBatch,heatmapDepth,heatmapPlane,heatmapQueryString,heatmapStageNavigation,readHeatmapQuery,replayHeatmapParams,savedReplayWrite,savedReplayAck,heatmapClicks,heatmapBackgroundUpload,heatmapBackgroundPage,replayEventLocator} from '../src/lib/replay-heatmaps.ts';
 const begin={siteKey:randomUUID(),requestId:randomUUID(),url:'https://example.test/page',consent:{analytics:true as const,epoch:randomUUID()}},geometry={basis:'document-css-v1' as const,direction:'rtl' as const,pageWidth:1600,pageHeight:2000,viewportWidth:320,viewportHeight:500};
 const click={kind:'click' as const,x:1500,y:900,clientX:220,clientY:400,scrollX:-0,scrollY:500,offsetMs:100};
 const batch={...begin,captureId:randomUUID(),token:'server-signed',geometry,observations:[click,{kind:'scroll' as const,scrollX:-100,scrollY:1000,offsetMs:200}]};
@@ -41,4 +41,19 @@ test('unavailable historical backgrounds never carry chunk bytes or usable refer
  const body={version:1,projectId:randomUUID(),role:'viewer',query:q,asOf:'2026-10-16T00:00:00Z',state:'expired',reference:null,item:null,chunks:[],nextAfter:null};
  assert.equal(heatmapBackgroundPage.safeParse(body).success,true);
  for(const patch of [{query:{...q,mode:'pages'}},{nextAfter:0},{reference:{}},{item:{}},{chunks:[{}]},{state:'available'}])assert.equal(heatmapBackgroundPage.safeParse({...body,...patch}).success,false);
+});
+
+test('heatmap stage links recover exact parent scopes after direct entry without pagination history',()=>{
+ const workspaceId=randomUUID(),projectId=randomUUID(),dates={from:'2026-10-10',to:'2026-10-16'},page={origin:'https://example.test:8443',path:'/pricing/世界 & <literal>'},geometryKey='f'.repeat(64);
+ for(const mode of ['click','scroll'] as const){
+  const query=readHeatmapQuery(new URLSearchParams({...dates,...page,mode,geometry:geometryKey})),stages=heatmapStageNavigation(query,workspaceId,projectId);
+  assert.deepEqual(stages.map(stage=>[stage.label,stage.current,stage.disabled]),[['Pages',false,false],['Layouts',false,false],['Heatmap',true,false]]);
+  assert.deepEqual(stages.map(stage=>stage.query),[{...dates,mode:'pages'},{...dates,mode:'geometries',...page},{...dates,mode,...page,geometry:geometryKey}]);
+  for(const stage of stages){const href=new URL(stage.href,'https://discover.test');assert.equal(href.pathname,'/');assert.equal(href.searchParams.get('workspace'),workspaceId);assert.equal(href.searchParams.get('project'),projectId);assert.equal(href.searchParams.get('view'),'heatmaps');assert.deepEqual(readHeatmapQuery(href.searchParams.get('heatmapQuery')!),stage.query);assert.equal(href.searchParams.getAll('heatmapQuery').length,1);}
+  assert.equal(stages.some(stage=>stage.query?.cursor!==undefined),false);
+ }
+ const paged=readHeatmapQuery(new URLSearchParams({...dates,...page,mode:'geometries',cursor:'cGFnZTI'})),parents=heatmapStageNavigation(paged,workspaceId,projectId);
+ assert.deepEqual(parents[1].query,{...dates,mode:'geometries',...page});assert.equal(parents[2].disabled,true);assert.equal(parents[2].disabledReason,'Choose one captured layout first.');assert.equal(parents[2].href,'#');
+ const first=heatmapStageNavigation({...dates,mode:'pages',cursor:'cGFnZTI'},workspaceId,projectId);assert.equal(first[0].query?.cursor,undefined);assert.equal(first[1].disabled,true);assert.equal(first[1].disabledReason,'Choose a captured page first.');
+ assert.equal(heatmapQueryString({...dates,mode:'pages'}),'from=2026-10-10&to=2026-10-16&mode=pages');
 });

@@ -15,14 +15,13 @@ async function phase(label){
   const panel=page.locator('section[aria-label="Keyword research"]');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
   return {group,page,panel,B:'/api/projects/'+group.main.id+'/keyword-research'};
 }
-async function overview(panel,text){
+async function overviewInputs(panel,text){
   await openKeywordForm(panel);
   await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
-  await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();
 }
 async function start(page,panel,B,{double=false}={}){
   const response=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
-  const button=panel.getByRole('button',{name:'Run quoted research (paid)',exact:true});
+  const button=panel.getByRole('button',{name:'Run',exact:true});
   if(double)await button.evaluate(element=>{element.click();element.click();});else await button.click();
   const received=await response;assert.equal(received.status(),202);const run=(await received.json()).run;await selectedKeywordFocus(page,panel);return run;
 }
@@ -42,9 +41,9 @@ try{
       await panel.getByLabel('Seed keyword',{exact:true}).fill('Synthetic ideas '+limit);await panel.getByLabel('Max ideas',{exact:true}).selectOption(String(limit));
       await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
       const response=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
-      await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();const quote=(await (await response).json()).quote;
+      const accepted=start(page,panel,B),preparation=await response;assert.equal(preparation.status(),200);const quote=(await preparation.json()).quote;
       assert.equal(quote.request.limit,limit);assert.equal(quote.request.mode,'ideas');assert.deepEqual(quote.request.keywords,['synthetic ideas '+limit]);
-      const run=await start(page,panel,B);await runKeyword(run.id);await completed(page,panel,B,run);
+      const run=await accepted;await runKeyword(run.id);await completed(page,panel,B,run);
       assert.match(await panel.innerText(),new RegExp('Showing 1 of 250 keywords \\(bounded to the requested limit of '+limit+'\\)'));
     }
     assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'3');
@@ -52,17 +51,18 @@ try{
     console.log('PASS keyword ideas25/50/100 preserve exact limit, explicit bounded results and one dispatch per intent.');
   }
 
-  stage='quote lock/double click and held poll cancellation';{
+  stage='Run preparation lock/double click and held poll cancellation';{
     const {group,page,panel,B}=await phase('cancel');const before=await providerCounts(),entered=deferred(),release=deferred();let quoteCalls=0,startCalls=0;
     const quotePath='**'+B+'/quote';
     await page.route(quotePath,async route=>{quoteCalls++;const response=await route.fetch();entered.resolve();await release.promise;await route.fulfill({response});});
     cleanups.push(async()=>{release.resolve();await page.unroute(quotePath);});
     await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Cancellation fixture');await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
-    await panel.getByRole('button',{name:'Prepare quote',exact:true}).evaluate(element=>{element.click();element.click();});await bounded(entered.promise);
-    assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);assert.equal(await panel.getByRole('button',{name:'Refresh markets',exact:true}).isDisabled(),true);
-    release.resolve();await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();await page.unroute(quotePath);assert.equal(quoteCalls,1);
     const countStarts=route=>{if(route.request().method()==='POST')startCalls++;return route.continue();};await page.route('**'+B+'/runs',countStarts);
-    const run=await start(page,panel,B,{double:true});await page.unroute('**'+B+'/runs',countStarts);assert.equal(startCalls,1);
+    const accepted=start(page,panel,B,{double:true});await bounded(entered.promise);
+    assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);assert.equal(await panel.getByRole('button',{name:'Refresh markets',exact:true}).isDisabled(),true);
+    assert.equal(await panel.getByRole('button',{name:'Run',exact:true}).isDisabled(),true);assert.equal(startCalls,0);
+    release.resolve();const run=await accepted;await page.unroute(quotePath);assert.equal(quoteCalls,1);
+    await page.unroute('**'+B+'/runs',countStarts);assert.equal(startCalls,1);
     const held=await holdNextGet(page,'**'+B+'/runs/'+run.id);cleanups.push(held.dispose);await bounded(held.entered,10_000);
     assert.equal(await panel.getByRole('button',{name:'Cancel run',exact:true}).isEnabled(),true,'Cancel must remain usable during an interruptible poll.');
     await panel.getByRole('button',{name:'Cancel run',exact:true}).click();await page.getByRole('dialog',{name:'Cancel this queued run?',exact:true}).getByRole('button',{name:'Cancel run',exact:true}).click();
@@ -77,11 +77,11 @@ try{
   stage='503/malformed acknowledged starts and expiry recovery';{
     const {group,page,panel,B}=await phase('ack-faults');await page.clock.install();const before=await providerCounts();
     for(const failure of ['503','malformed','malformed-row']){
-      await overview(panel,'Acknowledgement '+failure);
+      await overviewInputs(panel,'Acknowledgement '+failure);
       const lost=await loseFirstPost(page,'**'+B+'/runs',{failure,onCommitted:async(body,accepted)=>{
         await runKeyword(accepted.run.id);await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.quoteId]);
       }});cleanups.push(lost.dispose);
-      await panel.getByRole('button',{name:'Run quoted research (paid)',exact:true}).evaluate(element=>{element.click();element.click();});
+      await panel.getByRole('button',{name:'Run',exact:true}).evaluate(element=>{element.click();element.click();});
       await panel.getByRole('button',{name:'Retry same request',exact:true}).waitFor();assert.equal(lost.bodies.length,1);
       await page.clock.setSystemTime(new Date(Date.now()+360_000));await page.waitForTimeout(1100);
       assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);
@@ -99,11 +99,11 @@ try{
   }
 
   stage='known receipt reconciliation without paid retry';{
-    const {group,page,panel,B}=await phase('reconcile');const before=await providerCounts();await overview(panel,'Known reconciliation fixture');
+    const {group,page,panel,B}=await phase('reconcile');const before=await providerCounts();await overviewInputs(panel,'Known reconciliation fixture');
     const run=await start(page,panel,B);await runKeyword(run.id,'receipt-only');await panel.getByRole('button',{name:'Check status',exact:true}).click();
     await panel.getByText('Check provider charge (owner)',{exact:true}).click();await panel.getByRole('button',{name:'Check provider charge',exact:true}).click();
     const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Reconciled ·/).waitFor();
-    assert.match(await selected.innerText(),/Only the cost was reconciled/);assert.match(await selected.innerText(),/\$0\.012120/);
+    await selected.getByText('Request details',{exact:true}).click();assert.match(await selected.innerText(),/Only the cost was reconciled/);assert.match(await selected.innerText(),/\$0\.012120/);
     // Owner decision D3: the uncertain charge never paused the workspace and reconciliation leaves it unpaused.
     assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[group.workspace.id])).rows[0].paused,false);
     const after=await providerCounts();assert.equal(after['keyword-dispatch']-(before['keyword-dispatch']??0),1);assert.equal(after['keyword-reconcile']-(before['keyword-reconcile']??0),1);
@@ -111,19 +111,19 @@ try{
     console.log('PASS owner metadata reconciliation records known cost, leaves the workspace unpaused (D3) and does not recover/invent a result or rerun paid work.');
   }
 
-  stage='current403/404 purge cached results and quote';{
-    const {page,panel,B}=await phase('access-loss');await overview(panel,'Access loss completed fixture');const run=await start(page,panel,B);await runKeyword(run.id);await completed(page,panel,B,run);
+  stage='current403/404 purge cached results and draft';{
+    const {page,panel,B}=await phase('access-loss');await overviewInputs(panel,'Access loss completed fixture');const run=await start(page,panel,B);await runKeyword(run.id);await completed(page,panel,B,run);
     for(const status of [403,404]){
-      await overview(panel,'Privileged draft '+status);const path='**'+B;
+      await overviewInputs(panel,'Privileged draft '+status);const path='**'+B;
       const denial=route=>route.fulfill({status,json:{error:'Synthetic current access unavailable.'}});await page.route(path,denial);
       await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByRole('alert').waitFor();
-      assert.equal(await panel.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);assert.equal(await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).count(),0);
+      assert.equal(await panel.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);assert.equal(await panel.getByRole('button',{name:'Run',exact:true}).count(),0);assert.equal(await panel.getByRole('button',{name:'Retry same request',exact:true}).count(),0);
       assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).count(),0);assert.equal(await panel.getByRole('heading',{name:'Recent runs',exact:true}).count(),0);
       await page.unroute(path,denial);await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
       assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).inputValue(),'');
       if(status===403){await panel.getByRole('region',{name:'Recent keyword runs',exact:true}).getByRole('button',{name:'View',exact:true}).click();await panel.getByRole('region',{name:'Keyword data table',exact:true}).waitFor();await selectedKeywordFocus(page,panel);}
     }
-    noBrowserErrors();console.log('PASS current403/404 purge all privileged drafts, quotes and retained result controls before explicit reload.');
+    noBrowserErrors();console.log('PASS current403/404 purge all privileged drafts, Run and retained result controls before explicit reload.');
   }
 }catch(error){await captureFailure(session?.page,error,stage).catch(()=>{});console.error('FAIL keyword lifecycle stage: '+stage+' ('+(error?.name??'Error')+'). Details saved privately.');process.exitCode=1;}
 finally{for(const cleanup of cleanups)await cleanup().catch(()=>{});await session?.browser.close();await stopJobs();await closeDatabase();}

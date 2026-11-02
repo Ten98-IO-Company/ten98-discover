@@ -178,16 +178,14 @@ export async function runSavedKeywordChecks(){
     const rollbackKey=randomUUID();try{await assert.rejects(start(rollback,rollbackQuote.id,owner,rollbackKey));}finally{boss.send=originalSend;}
     assert.equal(queuedIds.length,2);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=ANY($1::uuid[])',[queuedIds])).rowCount,0);assert.equal((await childRuns(rollbackQuote.id)).length,0);
     assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,rollbackQuote.id)).plan.startedAt,null);
-    // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first child's reservation (N=1),
-    // so the second child meets the real ledger gate (409 SPENDING_BUDGET) and the whole start rolls back, sentinel included.
+    // Pause after the first reservation so the real manual-pause gate rolls back every child and the pause.
     await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-        INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
-        VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+      IF NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id)=TG_ARGV[1]::int THEN
+        UPDATE workspace_budget SET paused=true WHERE workspace_id=NEW.workspace_id;
       END IF; RETURN NULL; END $$`);
     await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${rollback.workspace}','1')`);
-    try{await assert.rejects(start(rollback,rollbackQuote.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
-    assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
+    try{await assert.rejects(start(rollback,rollbackQuote.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/paused/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
+    assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[rollback.workspace])).rows[0].paused,false);
     const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
     console.log('PASS actual queue insert rollback, all-child reservation atomicity and undispatched cancellation');
 
@@ -227,8 +225,8 @@ export async function runSavedKeywordChecks(){
     assert.equal((await charge(during.children[0].runId!)).status,'settled');assert.equal((await list(access)).rows[0].metrics.status,'unavailable');
     const uncertain=await fixture(true),uncertainId=(await manual(uncertain,['lost result'])).ids[0],uncertainPlan=(await start(uncertain,(await quote(uncertain,[uncertainId])).quote.id)).plan,uncertainRun=uncertainPlan.children[0].runId!;
     mode='unknown';await executeKeywordResearch(uncertainRun,send);mode='ok';const uncertainPaid=paidCalls;assert.equal((await charge(uncertainRun)).status,'uncertain');await executeKeywordResearch(uncertainRun,send);assert.equal(paidCalls,uncertainPaid);
-    // Owner decision D3: the uncertain charge blocks Start through the ledger; the workspace was never paused, so there is no unpause step.
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[uncertain.workspace])).rows[0].paused,false);await assert.rejects(start(uncertain,(await quote(uncertain,[uncertainId])).quote.id),failed(409));
+    // A new refresh plan is independent of the original unknown charge and can be cancelled before dispatch.
+    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[uncertain.workspace])).rows[0].paused,false);const independentPlan=(await start(uncertain,(await quote(uncertain,[uncertainId])).quote.id)).plan;assert.ok(independentPlan.children.every(child=>child.runId));await cancelSavedKeywordRefresh(uncertain.project,owner,independentPlan.id,{});for(const child of independentPlan.children)await executeKeywordResearch(child.runId!,send);await executeKeywordResearch(uncertainRun,send);assert.deepEqual((await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[uncertainRun])).rows[0],{status:'uncertain',actual_micros:null});assert.equal(paidCalls,uncertainPaid);
     await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[uncertainRun]);
     const originalCompletedAt=(await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at;
     const originalRequest=(await getKeywordRun(uncertain.project,owner,uncertainRun)).run.request;
@@ -236,7 +234,7 @@ export async function runSavedKeywordChecks(){
     await assert.rejects(reconcileSavedKeywordRefresh(uncertain.project,editor,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send),failed(404));
     assert.equal((await reconcileSavedKeywordRefresh(uncertain.project,owner,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send)).reconciliation.status,'matched');assert.equal((await charge(uncertainRun)).status,'settled');assert.equal((await list(uncertain)).rows[0].metrics.status,'unavailable');assert.equal(paidCalls,uncertainPaid);
     assert.equal((await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at,originalCompletedAt,'Charge recovery cannot restart the provider evidence retention clock.');
-    console.log('PASS live permission rechecks, settlement after revocation, uncertain block and charge-only reconciliation');
+    console.log('PASS live permission rechecks, settlement after revocation, independent starts during uncertainty and charge-only reconciliation');
 
     const retention=await fixture(true),retainedRun=await retained(retention,['retained'],[metrics('retained',{searchVolume:0,cpcUsd:'0.000000'})]);const authored=await observed(retention,retainedRun,[0],{tags:['Authored tag']});
     await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[retainedRun]);await pool.query("UPDATE saved_keyword SET metric_observed_at=clock_timestamp()-interval '366 days' WHERE project_id=$1",[retention.project]);

@@ -1231,13 +1231,13 @@ SOFTWARE.
 
 ## Current ten98 shared packages
 
-The current manifest pins `@ten98/ui` 0.30.0 (`vendor/ten98-ui-0.30.0.tgz`, SHA-256 `3d3812059130b8dcb85fd3b36080ef9df45e55fb698c9238ea1d9f895ae6515a`) and `@ten98/runtime` 0.20.0 (`vendor/ten98-runtime-0.20.0.tgz`, SHA-256 `d2f8bf2abda99f400dc0b58909d077ca2c5664bd622f061aea4b1c14bbe92659`). Both are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+The current manifest pins the qualified `@ten98/ui` 0.31.0 development candidate (`vendor/ten98-ui-0.31.0.tgz`, SHA-256 `ed3263bc4adba126638f5a8a92eb98e1be18904f5e4ee2d1ee098e92d99e15c1`, canonical source commit `2869820af24659405747c40c14e3281665ac5b59`) and `@ten98/runtime` 0.20.0 (`vendor/ten98-runtime-0.20.0.tgz`, SHA-256 `d2f8bf2abda99f400dc0b58909d077ca2c5664bd622f061aea4b1c14bbe92659`). The frozen UI candidate adds the shared ReportToolbar; it is not a published design-system release. Both packages are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
 
 Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
 
 ### Inter typeface — SIL Open Font License 1.1
 
-`@ten98/ui` 0.30.0 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
+`@ten98/ui` 0.31.0 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
 
 ```text
 Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)

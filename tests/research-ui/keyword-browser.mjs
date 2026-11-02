@@ -21,33 +21,34 @@ try{
   const panel=page.locator('section[aria-label="Keyword research"]');
   assert.deepEqual(await providerCounts(),initialCounts,'Opening the panel must cause no provider calls.');
   assert.ok(await panel.getByRole('link',{name:'Connections',exact:true}).isVisible());
-  const quote=async(text,marketKey='2840|en')=>{
+  const inputs=async(text,marketKey='2840|en')=>{
     await openKeywordForm(panel);
     await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);
     await panel.getByLabel('Country or territory and language',{exact:true}).selectOption(marketKey);
-    await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();
-    await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();
   };
-  stage='real quote/start/manual synthetic dispatch';await quote(' Example \nEXAMPLE\nOmitted fixture');
+  stage='one Run/manual synthetic dispatch';await inputs(' Example \nEXAMPLE\nOmitted fixture');
   assert.ok((await panel.innerText()).includes('2 unique keywords'));
   assert.equal((await providerCounts())['keyword-dispatch']??0,initialCounts['keyword-dispatch']??0);
   const started=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
-  await panel.getByRole('button',{name:'Run quoted research (paid)',exact:true}).click();
+  const prepared=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
+  await panel.getByRole('button',{name:'Run',exact:true}).click();
+  const preparation=await prepared;assert.equal(preparation.status(),200);assert.deepEqual((await preparation.json()).quote.request.keywords,['example','omitted fixture']);
   const first=(await (await started).json()).run;assert.equal(first.status,'queued');await selectedKeywordFocus(page,panel);
   await runKeyword(first.id);
   await panel.getByRole('button',{name:'Check status',exact:true}).click();
   const table=panel.getByRole('region',{name:'Keyword data table',exact:true});await table.waitFor();
   const cells=await table.locator('tbody > tr').first().locator(':scope > td:not(:has(input[type=checkbox]))').allTextContents();
   assert.equal(cells[1],'0');assert.equal(cells[2],'Unavailable');assert.match(await panel.innerText(),/No data returned.*omitted fixture/);
+  await panel.getByText('Request details',{exact:true}).click();
   assert.match(await panel.innerText(),/DataForSEO Labs \/ Google/);assert.match(await panel.innerText(),/\$0\.012120/);
-  await assertLayout(page,'keyword-result');console.log('PASS keyword free quote, explicit paid intent, one synthetic dispatch, exact charge/null metrics and responsive results.');
+  await assertLayout(page,'keyword-result');console.log('PASS keyword one Run prepares and starts once, one synthetic dispatch, exact charge/null metrics and responsive results.');
 
-  stage='committed acknowledgement loss and expired retry';await quote('Lost acknowledgement fixture');
+  stage='committed acknowledgement loss and expired retry';await inputs('Lost acknowledgement fixture');
   const lost=await loseFirstPost(page,'**'+B+'/runs',{onCommitted:async(body,accepted)=>{
     await runKeyword(accepted.run.id);
     await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.quoteId]);
   }});
-  await panel.getByRole('button',{name:'Run quoted research (paid)',exact:true}).click();await panel.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
+  await panel.getByRole('button',{name:'Run',exact:true}).click();await panel.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
   assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);
   assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'2');
   const retry=panel.getByRole('button',{name:'Retry same request',exact:true});
@@ -93,12 +94,12 @@ try{
       const quoted=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
       await openKeywordForm(panel);await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Region '+locationCode+' '+languageCode);
       await panel.getByLabel('Country or territory and language',{exact:true}).selectOption(locationCode+'|'+languageCode);
-      await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();
+      const startedRegion=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
+      await panel.getByRole('button',{name:'Run',exact:true}).click();
       const quoteResponse=await quoted;assert.equal(quoteResponse.status(),200);const quoteBody=(await quoteResponse.json()).quote;
       assert.equal(quoteResponse.request().postDataJSON().locationCode,locationCode);assert.equal(quoteResponse.request().postDataJSON().languageCode,languageCode);
       assert.equal(quoteBody.request.locationCode,locationCode);assert.equal(quoteBody.request.languageCode,languageCode);assert.ok((await panel.innerText()).includes(locationName));
-      const startedRegion=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
-      await panel.getByRole('button',{name:'Run quoted research (paid)',exact:true}).click();const acceptedRegion=await startedRegion;assert.equal(acceptedRegion.status(),202);const regionRun=(await acceptedRegion.json()).run;await selectedKeywordFocus(page,panel);await runKeyword(regionRun.id);
+      const acceptedRegion=await startedRegion;assert.equal(acceptedRegion.status(),202);const regionRun=(await acceptedRegion.json()).run;await selectedKeywordFocus(page,panel);await runKeyword(regionRun.id);
       const finished=page.waitForResponse(response=>response.url().endsWith(B+'/runs/'+regionRun.id)&&response.request().method()==='GET');
       await panel.getByRole('button',{name:'Check status',exact:true}).click();const saved=(await (await finished).json()).run;
       assert.equal(saved.status,'completed');assert.equal(saved.request.locationCode,locationCode);assert.equal(saved.request.languageCode,languageCode);assert.equal(saved.result.rows[0].keyword,quoteBody.request.keywords[0]);
@@ -111,7 +112,7 @@ try{
   stage='actual live-role downgrade removes writes';
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[group.workspace.id,group.owner.id]);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByText(/Ask a workspace owner/).waitFor();
-  assert.equal(await panel.getByRole('button',{name:'Prepare quote',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'Connections',exact:true}).count(),0);
+  assert.equal(await panel.getByRole('button',{name:'Run',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'Connections',exact:true}).count(),0);
   assert.ok(await panel.getByRole('heading',{name:'Recent runs',exact:true}).isVisible());
   assert.deepEqual(session.errors,[]);assert.deepEqual(session.outbound,[]);
   console.log('PASS keyword expiry distinction, stale project response isolation and live viewer role gating.');

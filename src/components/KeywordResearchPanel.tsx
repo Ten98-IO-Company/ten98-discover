@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl} from '@ten98/ui';
+import {DataTable,RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl,Tooltip} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
@@ -457,17 +457,14 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
 }
 
 function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;result:Result;marketName:string;canSave:boolean;disabled:boolean;onSave:(indexes:number[])=>void}){
-  const [selected,setSelected]=useState<number[]>([]);
+  const [selected,setSelected]=useState<string[]>([]);
+  const rows=result.rows.map((row,sourceIndex)=>({...row,sourceIndex}));
   return <div className="stack">
     {result.rows.length===0&&<p>No matching keyword data was returned. Unavailable data is not zero.</p>}
     <p className="hint">Source: {result.source} · retrieved {dt(result.retrievedAt)} · market {marketName}. Showing {result.rows.length}{result.totalCount!=null?' of '+result.totalCount:''} keywords{result.limited?' (bounded to the requested limit of '+run.request.limit+')':''}. Volumes may overlap between keywords and are not summed.</p>
-    {canSave&&result.rows.length>0&&<div className="row"><button className="btn ghost" disabled={disabled} onClick={()=>setSelected(result.rows.map((_,i)=>i))}>Select all results</button><button className="btn ghost" disabled={disabled||!selected.length} onClick={()=>setSelected([])}>Clear selection</button><button className="btn primary" disabled={disabled||!selected.length} onClick={()=>onSave(selected)}>Save {selected.length||''} selected keywords</button></div>}
-    <div className="table-wrap" role="region" aria-label="Keyword data table" tabIndex={0}><table style={{minWidth:760}}>
-      <thead><tr>{canSave&&<th>Select</th>}<th>Keyword</th><th>Est. monthly volume</th><th>Historical CPC (USD)</th><th>Paid competition</th><th>Organic difficulty</th><th>Intent</th><th>Metrics updated</th></tr></thead>
-      <tbody>
-        {result.rows.map((r,index)=><tr key={index}>
-          {canSave&&<td><input type="checkbox" aria-label={'Select research keyword '+r.keyword} disabled={disabled} checked={selected.includes(index)} onChange={e=>setSelected(ids=>e.target.checked?[...ids,index]:ids.filter(i=>i!==index))}/></td>}
-          <td style={{minWidth:200,overflowWrap:'anywhere'}}>{r.keyword}
+    {canSave&&result.rows.length>0&&<div className="row"><button className="btn ghost" disabled={disabled} onClick={()=>setSelected(rows.map(row=>String(row.sourceIndex)))}>Select all results</button><button className="btn ghost" disabled={disabled||!selected.length} onClick={()=>setSelected([])}>Clear selection</button><button className="btn primary" disabled={disabled||!selected.length} onClick={()=>onSave(selected.map(Number))}>Save {selected.length||''} selected keywords</button><Tooltip content="Search and sorting use saved results and make no provider requests. Selected keywords stay selected when hidden by search or pagination."><button type="button" className="btn ghost" aria-label="About result selection">?</button></Tooltip></div>}
+    <div role="region" aria-label="Keyword data table"><DataTable ariaLabel="Keyword research results" rows={rows} rowKey={row=>String(row.sourceIndex)} responsive="stack" pageSize={25} searchPlaceholder="Search retained keywords…" selectable={canSave} selectionLabel={row=>'Select research keyword '+row.keyword} selectionDisabled={disabled} selectedKeys={selected} onSelectionChange={setSelected} emptyTitle="No matching keyword results" emptyDescription="Unavailable data is not zero." sortLabel={header=>'Sort by '+header} columns={[
+      {key:'keyword',header:'Keyword',rowHeader:true,wrap:true,minWidth:'md',render:r=><>{r.keyword}
             {(r.monthlySearches.length>0||r.intentUpdatedAt)&&<Disclosure summary="Monthly history" variant="plain">
               {r.monthlySearches.length>0?
                 <div className="table-wrap" role="region" aria-label={`Monthly searches for ${r.keyword}`} tabIndex={0}><table>
@@ -477,16 +474,14 @@ function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;res
               :<p className="hint">No monthly history available.</p>}
               <p className="hint">Intent updated: {dt(r.intentUpdatedAt)}</p>
             </Disclosure>}
-          </td>
-          <td>{num(r.searchVolume)}</td>
-          <td>{usd(r.cpcUsd)}</td>
-          <td>{r.competition==null?'Unavailable':r.competition+(r.competitionLevel?' ('+r.competitionLevel+')':'')}</td>
-          <td>{num(r.keywordDifficulty)}</td>
-          <td>{r.intent??'Unavailable'}</td>
-          <td>{dt(r.metricsUpdatedAt)}</td>
-        </tr>)}
-      </tbody>
-    </table></div>
+          </>},
+      {key:'searchVolume',header:'Est. monthly volume',numeric:true,render:r=>num(r.searchVolume)},
+      {key:'cpcUsd',header:'Historical CPC (USD)',numeric:true,sortValue:r=>r.cpcUsd===null?'':Number(r.cpcUsd),render:r=>usd(r.cpcUsd)},
+      {key:'competition',header:'Paid competition',numeric:true,render:r=>r.competition==null?'Unavailable':r.competition+(r.competitionLevel?' ('+r.competitionLevel+')':'')},
+      {key:'keywordDifficulty',header:'Organic difficulty',numeric:true,render:r=>num(r.keywordDifficulty)},
+      {key:'intent',header:'Intent',render:r=>r.intent??'Unavailable'},
+      {key:'metricsUpdatedAt',header:'Metrics updated',render:r=>dt(r.metricsUpdatedAt)}
+    ]}/></div>
     {result.missingKeywords.length>0&&<p className="hint">No data returned for {result.missingKeywords.length} keyword(s) — unavailable, not zero: {result.missingKeywords.join(', ')}</p>}
   </div>;
 }

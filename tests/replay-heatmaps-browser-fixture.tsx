@@ -7,9 +7,9 @@ import {HeatmapsPanel} from '../src/components/HeatmapsPanel';
 import {AnalyticsSettingsPanel} from '../src/components/AnalyticsSettingsPanel';
 import '../src/styles.css';
 
-type Scope={projectId:string;userId:string;query:string;readOwner:string;readEnabled:boolean;mode:'replay'|'heatmap'|'settings'};
+type Scope={workspaceId:string;projectId:string;userId:string;query:string;readOwner:string;readEnabled:boolean;mode:'replay'|'heatmap'|'settings'};
 declare global{interface Window{replayHeatmapsScope?:Scope;replayHeatmapsFixture:{set:(value:Partial<Scope>)=>void}}}
-const initial:Scope={projectId:'51000000-0000-4000-8000-000000000001',userId:'51000000-0000-4000-8000-000000000002',query:'',readOwner:'entry-0',readEnabled:true,mode:'replay'};
+const initial:Scope={workspaceId:'51000000-0000-4000-8000-000000000006',projectId:'51000000-0000-4000-8000-000000000001',userId:'51000000-0000-4000-8000-000000000002',query:'',readOwner:'entry-0',readEnabled:true,mode:'replay'};
 function Fixture(){
  const [scope,setScope]=React.useState(()=>window.replayHeatmapsScope??initial),[callbacks,setCallbacks]=React.useState(0),[settings,setSettings]=React.useState(0),[signedOut,setSignedOut]=React.useState(false),[shown,setShown]=React.useState(true),entry=React.useRef(0);
  React.useEffect(()=>{window.replayHeatmapsFixture={set:value=>setScope(old=>({...old,...value}))};},[]);

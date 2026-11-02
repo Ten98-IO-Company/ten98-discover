@@ -89,16 +89,14 @@ export async function runRankExecutionChecks(){
     console.log('PASS current paid settings, captured keyword membership, archive and connection revisions fence stale starts');
 
     const queued=await fixture(101),queuedQuote=await quote(queued,{method:'queued'});assert.equal(queuedQuote.run.taskCount,101);assert.equal(queuedQuote.run.dispatchCount,2);assert.equal(queuedQuote.run.estimateUsd,'0.101000');
-    // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first group's reservation (N=1),
-    // so the second group meets the real ledger gate (409 SPENDING_BUDGET) and the whole start rolls back, sentinel included.
+    // Pause after the first group so the real manual-pause gate rolls back every group and the pause.
     await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-        INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
-        VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+      IF NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id)=TG_ARGV[1]::int THEN
+        UPDATE workspace_budget SET paused=true WHERE workspace_id=NEW.workspace_id;
       END IF; RETURN NULL; END $$`);
     await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${queued.workspace}','1')`);
-    try{await assert.rejects(start(queued,queuedQuote.run.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
-    assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});
+    try{await assert.rejects(start(queued,queuedQuote.run.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/paused/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
+    assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[queued.workspace])).rows[0].paused,false);
     const rolled=await fixture(),rollbackQuote=await quote(rolled),boss=await getBoss(),originalSend=boss.send.bind(boss),inserted:string[]=[];
     boss.send=(async(...args:any[])=>{const job=await(originalSend as any)(...args);assert.equal(typeof job,'string');inserted.push(job);if(inserted.length===2)throw new Error('Synthetic failure after second real queue insertion.');return job;})as typeof boss.send;
     const rollbackKey=randomUUID();try{await assert.rejects(start(rolled,rollbackQuote.run.id,rollbackKey));}finally{boss.send=originalSend;}
