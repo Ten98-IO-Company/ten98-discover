@@ -50,7 +50,7 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
  function approve(item:PromptTracker){if(!owner||!fresh||!consent||attempt)return;try{void request(base+'/'+item.id+'/approve',{requestId:crypto.randomUUID(),revision:item.revision,quoteId:quote!.id,calendar:calendar()});}catch(cause){setError(errMsg(cause));}}
  const items=shown?.items??[],visible=shownPoint&&!items.some(item=>item.id===shownPoint.item.id)?[shownPoint.item,...items]:items;
  const same=(item:PromptTracker)=>!!quote&&item.definition.promptId===quote.input.promptId&&item.definition.versionId===quote.input.versionId&&item.definition.systemText===quote.input.systemText&&item.definition.maxCompletionTokens===quote.input.maxCompletionTokens&&JSON.stringify(item.definition.models)===JSON.stringify(quote.input.models);
- return <details className="card stack prompt-recurring" onToggle={event=>{if(event.currentTarget.open)void request();}}>
+ return <details className="card stack prompt-recurring" open={fresh} onToggle={event=>{if(event.currentTarget.open)void request();}}>
   <summary>Recurring prompt tracking</summary>
   <p>Each scheduled run requests fresh model answers using the saved prompt version, models, system message and output limit. These API answers do not measure consumer web search.</p>
   <p className="hint">Trackers start paused. Only an owner can approve future spending. Monthly runs use the last calendar day. When clocks change, skipped local times move forward and repeated times use the later occurrence. Missed runs are not backfilled.</p>
@@ -60,7 +60,7 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
   {attempt&&<div className="banner"><p>Keep this exact request until its result is known. Refreshing status does not start new work.</p><button type="button" className="btn" disabled={busy} onClick={()=>void request(attempt.path===base?pageUrl():attempt.path.replace(/\/(approve|pause|run|archive|restore)$/,''))}>Inspect saved tracker</button><button type="button" className="btn" disabled={busy||!owner} onClick={()=>void request(attempt.path,attempt.body)}>Retry same recurring request</button></div>}
   {owner&&<form className="stack" onSubmit={create}>
    <fieldset disabled={busy||!!attempt} style={{border:0,padding:0,minWidth:0}}><legend>Recurring setup</legend>
-    {!fresh&&<p>Choose “Request fresh answers” and explicitly get a new quote above before saving or approving a tracker.</p>}
+    {!fresh&&<p>Choose models and select Schedule above to configure a tracker.</p>}
     <label>Tracker name<input value={name} onChange={e=>setName(e.target.value)} maxLength={120}/></label>
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,140px),1fr))',gap:12,minWidth:0}}>
      <label>Cadence<select value={interval} onChange={e=>setInterval(e.target.value as typeof interval)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly, month end</option></select></label>
@@ -69,7 +69,7 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
      {interval==='weekly'&&<label>Weekday<select value={weekday} onChange={e=>setWeekday(e.target.value)}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i)=><option key={day} value={i}>{day}</option>)}</select></label>}
     </div>
     <label className="row"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I authorize future fresh requests for this definition at each occurrence's current price until paused or approval changes.</label>
-    <p className="hint">The master pause, current owner/key/model approval and uncertain-charge checks still apply. There is no app spending limit; your provider account limits apply.</p>
+    <p className="hint">Only this saved prompt and model selection will run. Pause the tracker to stop future requests.</p>
     <button className="btn primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save paused tracker'}</button>
    </fieldset>
   </form>}

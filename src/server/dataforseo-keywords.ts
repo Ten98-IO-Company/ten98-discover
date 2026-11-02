@@ -104,5 +104,5 @@ export async function reconcileKeywordCharge(credentials:unknown,request:Keyword
   if(Date.now()-dispatchedAt.getTime()>28*86400000)throw new FoundationError(409,'This request is beyond the provider metadata window; the charge remains unresolved.');
   const stamp=(date:Date)=>date.toISOString().replace('T',' ').slice(0,19)+' +00:00';
   try{return parseKeywordReconciliation(await keywordProviderJson(keywordReconcileEndpoint,credentials,[{datetime_from:stamp(new Date(dispatchedAt.getTime()-60_000)),datetime_to:stamp(new Date(Math.min(Date.now(),dispatchedAt.getTime()+120_000))),limit:1000,offset:0,sort:'asc',include_metadata:true}],send),request,id);}
-  catch{throw new FoundationError(409,'The provider metadata did not prove a unique charge. Spending remains blocked; check again later or contact the provider.');}
+  catch{throw new FoundationError(409,'The provider metadata did not prove a unique charge. This request still needs recovery; check again later or contact the provider.');}
 }

@@ -8,6 +8,14 @@ import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('API model report modes preserve exact scope through reload and history without leaking to siblings',()=>{
+ const base={workspace,project,view:'ai-insights'} as const,aiInsightsQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',model:'',promptId:project,tag:'true',matcher:'unicode-boundary-v1'}).toString();
+ for(const aiInsightsMode of ['comparison','citations','specialized'] as const){const target={...base,aiInsightsMode,aiInsightsQuery},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.deepEqual(parseNavigation({...target,view:'prompts'}),{workspace,project,view:'prompts'});assert.equal(canonicalNavigation(wire+'&aiInsightsMode=summary',target),false);}
+ assert.deepEqual(parseNavigation({...base,aiInsightsMode:'summary'}),base);
+ const invalid={...base,aiInsightsInvalid:'1'};for(const patch of [{aiInsightsMode:'unknown'},{aiInsightsMode:['comparison','citations']},{aiInsightsQuery:[]},{aiInsightsQuery:''},{aiInsightsQuery:'a\0b'},{aiInsightsQuery:'x'.repeat(6145)},{aiInsightsMode:'comparison',project:undefined},{aiInsightsMode:'comparison',capability:'private'}])assert.equal(parseNavigation({...base,...patch}).aiInsightsInvalid,'1');
+ assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(invalid))),invalid);
+});
+
 test('provider setup links preselect only a known provider on Settings › Connections',()=>{
  const target={workspace,project,view:'providers',provider:'dataforseo'} as const;
  assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(target))),target);

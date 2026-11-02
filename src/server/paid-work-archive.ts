@@ -47,7 +47,7 @@ export type PaidWorkScope = { workspaceId: string; projectId?: string };
  *
  * Uncertain or open charges are never archived away: website deletion refuses them before calling this (project-delete.ts),
  * and a workspace scope is refused here while any receipt of the workspace is reserved, dispatched or uncertain, so
- * reconciliation and the uncertain-charge block keep seeing it. Both scopes first take the workspace row lock (the W gate
+ * reconciliation can still recover the original request. Both scopes first take the workspace row lock (the W gate
  * website deletion holds), which serializes every reserve/dispatch/settle path, so no receipt opens after the check.
  */
 export async function archivePaidWork(client: PoolClient, scope: PaidWorkScope): Promise<Record<string, number>> {

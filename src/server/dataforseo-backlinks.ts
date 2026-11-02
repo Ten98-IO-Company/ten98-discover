@@ -27,7 +27,7 @@ export type BacklinkOutcome=Omit<DomainOutcome,'result'>&{result:BacklinkResult|
 function groupMetrics(v:Obj):BacklinkGroupMetrics{return {backlinks:metric(v.backlinks,Number.MAX_SAFE_INTEGER,true),referringDomains:metric(v.referring_domains,Number.MAX_SAFE_INTEGER,true),referringMainDomains:metric(v.referring_main_domains,Number.MAX_SAFE_INTEGER,true),referringPages:metric(v.referring_pages,Number.MAX_SAFE_INTEGER,true),referringPagesNofollow:metric(v.referring_pages_nofollow,Number.MAX_SAFE_INTEGER,true),referringIps:metric(v.referring_ips,Number.MAX_SAFE_INTEGER,true),referringSubnets:metric(v.referring_subnets,Number.MAX_SAFE_INTEGER,true),brokenBacklinks:metric(v.broken_backlinks,Number.MAX_SAFE_INTEGER,true),brokenPages:metric(v.broken_pages,Number.MAX_SAFE_INTEGER,true),rank:metric(v.rank,100),spamScore:metric(v.backlinks_spam_score,100),firstSeen:stamp(v.first_seen),lostAt:stamp(v.lost_date)};}
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseBacklinkOutcome(response:{httpStatus:number;body:unknown},request:BacklinkRequest,id:string,now=new Date()):BacklinkOutcome{
- const outcome:BacklinkOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Reconcile it before spending again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
+ const outcome:BacklinkOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Recover this original request; unrelated features can continue.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
  const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
   const b=response.body;if(!object(b))invalid();outcome.evidence.reportedCost=b.cost;outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
@@ -60,7 +60,7 @@ export function parseBacklinkOutcome(response:{httpStatus:number;body:unknown},r
  return outcome;
 }
 export async function requestBacklinkResearch(credentials:unknown,request:BacklinkRequest,id:string,send:typeof fetch=fetch):Promise<BacklinkOutcome>{
- try{return parseBacklinkOutcome(await dataforseoJson(backlinkEndpoint(request),credentials,'POST',[backlinkPayload(request,id)],send),request,id);}catch{return {cost:null,reference:null,result:null,diagnostic:'The request may have reached the provider. Its charge is unknown; reconcile it before spending again.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};}
+ try{return parseBacklinkOutcome(await dataforseoJson(backlinkEndpoint(request),credentials,'POST',[backlinkPayload(request,id)],send),request,id);}catch{return {cost:null,reference:null,result:null,diagnostic:'The request may have reached the provider. Its charge is unknown; recover this original request; unrelated features can continue.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};}
 }
 export function parseBacklinkReconciliation(response:{httpStatus:number;body:unknown},request:BacklinkRequest,id:string){
  const b=response.body;if(response.httpStatus!==200||!object(b)||b.status_code!==20000||providerMicros(b.cost)!==0n||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();

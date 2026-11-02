@@ -91,9 +91,9 @@ export async function runProviderSpendingControlsChecks(){
     assert.deepEqual(twins.map(saved=>saved.created).sort(),[false,true]);assert.equal(twins[0].id,twins[1].id);assert.equal(enqueued,1);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request WHERE workspace_id=$1 AND request_key=$2',[wid,same.requestKey])).rows[0].n,1);
     await cancelReservation(wid,owner,twins[0].id);
-    // One of two still wins a race: each racer records its own charge as uncertain, so the gate read after the lock refuses the other.
+    // Independent requests retain separate unknown receipts without blocking each other.
     const lost=()=>providerTransaction(wid,owner,['owner'],async client=>{const saved=await reserveSpendInTransaction(client,wid,owner,request(a.id));await client.query("UPDATE provider_request SET status='uncertain' WHERE id=$1",[saved.id]);return saved;});
-    const race=await Promise.allSettled([lost(),lost()]);assert.equal(race.filter(v=>v.status==='fulfilled').length,1);assert.ok(race.some(v=>v.status==='rejected'&&gate(v.reason)));
+    const race=await Promise.allSettled([lost(),lost()]);assert.equal(race.filter(v=>v.status==='fulfilled').length,2);assert.ok(race.every(v=>v.status==='fulfilled'),'An unrelated unknown charge must not block another request.');
     await settle(wid,(race.find(v=>v.status==='fulfilled') as PromiseFulfilledResult<{id:string}>).value.id,'6');
     console.log('PASS no-vault pause rule, unpaused new workspace, no connection cap (D3) and serialized idempotent reservations');
 
@@ -120,27 +120,30 @@ export async function runProviderSpendingControlsChecks(){
     await saveBudget(wid,owner,{paused:true});
     await settle(wid,reserved.id,'2.5');await settle(wid,reserved.id,'2.5');await assert.rejects(settle(wid,reserved.id,'2.4'),fail(409));assert.equal((await pool.query('SELECT actual_micros FROM provider_request WHERE id=$1',[reserved.id])).rows[0].actual_micros,'2500000');
     await saveBudget(wid,owner,{paused:false});
-    // Owner decision D3: an unknown charge blocks the whole workspace through the ledger, and pauses nothing.
-    const unknown=await reserveSpend(wid,owner,request(b.id,'1'));await dispatchSpend(wid,owner,unknown.id);await settle(wid,unknown.id,null);
+    // An unknown charge stays recoverable on its original request; unrelated work continues.
+    const unknownInput=request(b.id,'1'),unknown=await reserveSpend(wid,owner,unknownInput);await dispatchSpend(wid,owner,unknown.id);await settle(wid,unknown.id,null);
     assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[unknown.id])).rows[0].status,'uncertain');assert.equal((await listProviders(wid,owner)).budget.paused,false);
-    await assert.rejects(reserveSpend(wid,owner,request(a.id,'1')),gate,'Other connection uncertainty blocks workspace.');await assert.rejects(cancelReservation(wid,owner,unknown.id),fail(409));
+    const replay=await reserveSpend(wid,owner,unknownInput);assert.equal(replay.id,unknown.id);assert.equal(replay.created,false);assert.equal(replay.status,'uncertain');
+    await assert.rejects(dispatchSpend(wid,owner,unknown.id),fail(409),'An uncertain original request cannot be dispatched again.');
+    const unrelated=await reserveSpend(wid,owner,{...request(a.id,'1'),operation:'fixture.unrelated'});assert.equal(unrelated.created,true);await dispatchSpend(wid,owner,unrelated.id);await settle(wid,unrelated.id,'1');
+    assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[unknown.id])).rows[0].status,'uncertain','Unrelated success does not erase the original unknown charge.');await assert.rejects(cancelReservation(wid,owner,unknown.id),fail(409));
     await settle(wid,unknown.id,'0.5');const overrun=await reserveSpend(wid,owner,request(b.id,'1'));await dispatchSpend(wid,owner,overrun.id);await settle(wid,overrun.id,'1.1');
     assert.equal((await pool.query('SELECT actual_micros FROM provider_request WHERE id=$1',[overrun.id])).rows[0].actual_micros,'1100000');assert.equal((await listProviders(wid,owner)).budget.paused,false);
     const next=await reserveSpend(wid,owner,request(b.id,'1'));assert.equal(next.created,true,'A recorded overrun does not block the next reservation.');await cancelReservation(wid,owner,next.id);
-    console.log('PASS exact replay, manual pause at reserve and dispatch, immutable receipts, global uncertainty block without automatic pause and recorded overrun (D3)');
+    console.log('PASS exact replay, manual pause at reserve and dispatch, immutable receipts, independent work during uncertainty with same-request recovery and recorded overrun (D3)');
 
     const atomic=await workspace(),child=await connect(atomic);assert.match(atomic,/^[0-9a-f-]{36}$/);
-    // Owner decision D3: no cap fails the second child, so a test-only uncertain sentinel lets the real gate refuse it.
+    // A test-only manual stop after the first child exercises atomic rollback through the real gate.
     await pool.query(`CREATE FUNCTION spending_fixture_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.workspace_id=TG_ARGV[0] AND NEW.operation<>'test.sentinel' AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-        INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,status,budget_month)
-          VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.connection_revision,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,'uncertain',NEW.budget_month);
+        INSERT INTO workspace_budget(workspace_id,paused) VALUES(NEW.workspace_id,true)
+          ON CONFLICT(workspace_id) DO UPDATE SET paused=true;
       END IF; RETURN NULL; END $$`);
     try{
       await pool.query(`CREATE TRIGGER spending_fixture_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION spending_fixture_sentinel('${atomic}','1')`);
       await assert.rejects(providerTransaction(atomic,owner,['owner'],async client=>{await reserveSpendInTransaction(client,atomic,owner,request(child.id,'3'));await reserveSpendInTransaction(client,atomic,owner,request(child.id,'3'));}),gate);
     }finally{await pool.query('DROP TRIGGER IF EXISTS spending_fixture_sentinel ON provider_request');await pool.query('DROP FUNCTION spending_fixture_sentinel()');}
-    assert.equal(await ledger(atomic),0,'The rollback removes both children and the sentinel.');
+    assert.equal(await ledger(atomic),0,'The rollback removes the children and the manual-stop sentinel.');
     const reused=request(child.id,'3');
     await assert.rejects(providerTransaction(atomic,owner,['owner'],async client=>{await reserveSpendInTransaction(client,atomic,owner,reused);await reserveSpendInTransaction(client,atomic,owner,{...request(child.id,'3'),requestKey:reused.requestKey,inputHash:requestHash('different work')});}),(error:unknown)=>fail(409)(error)&&/already used for different work/.test((error as Error).message));
     assert.equal(await ledger(atomic),0);
@@ -159,7 +162,7 @@ export async function runProviderSpendingControlsChecks(){
     }finally{await holder.query('ROLLBACK').catch(()=>undefined);holder.release();await waiting?.catch(()=>undefined);}
     assert.deepEqual(await budgetRows(),budgetBefore,'The refused pause leaves the budget state unchanged.');
     assert.equal(outgoing,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND state='idle in transaction'")).rows[0].n,0);
-    console.log('PASS atomic multi-child rollback through the real uncertain-charge gate, outstanding month reporting and observed gate wait with fresh role denial (D3)');
+    console.log('PASS atomic multi-child rollback through the real manual-stop gate, outstanding month reporting and observed gate wait with fresh role denial (D3)');
   }finally{globalThis.fetch=originalFetch;await closeDatabase();}
 }
 

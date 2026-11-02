@@ -86,7 +86,7 @@ function ScheduleController(props:Props){
         if(object(raw)&&raw.role!=='owner'){purge('Only current workspace owners can approve this schedule.');return;}
         if(quote)knownDeadline.current=expiry(quote);
         const saved=data.schedule;
-        patch({quote,form:{...blank(),...(saved.interval!=='manual'?{interval:saved.interval,timezone:saved.timezone!,hour:String(saved.hour),minute:String(saved.minute),weekday:String(saved.weekday??1)}:{})},notice:quote?'':'Prepare your own unstarted full queued quote to approve a schedule.'});}
+        patch({quote,form:{...blank(),...(saved.interval!=='manual'?{interval:saved.interval,timezone:saved.timezone!,hour:String(saved.hour),minute:String(saved.minute),weekday:String(saved.weekday??1)}:{})},notice:quote?'':'Choose check settings to configure this schedule.'});}
     }catch(error){failure(error,op);}finally{finish(op);}}
   function change(value:ScheduleForm){if(locked()||state.current.loading||!state.current.data?.canManage)return;const before=state.current.form,calendarChanged=['interval','timezone','hour','minute','weekday'].some(k=>before[k as keyof ScheduleForm]!==value[k as keyof ScheduleForm]);
     patch({form:{...value,consent:calendarChanged?false:value.consent},...(calendarChanged?{preview:null}:{}),dirty:true,error:'',notice:''});}

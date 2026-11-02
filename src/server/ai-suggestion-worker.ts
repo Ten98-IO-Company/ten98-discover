@@ -64,7 +64,7 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
    if(!dispatched)throw new FoundationError(409,'The suggestion quote expired. Prepare another quote.');
    dispatchedAt=dispatched.dispatched_at;
   });
- }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: quote expiry, permissions, context, credentials, endpoint, the paid-work pause or an uncertain charge changed. Prepare a new quote.');});return;}
+ }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: quote expiry, permissions, context, credentials, endpoint, the provider-request pause changed. Prepare a new quote.');});return;}
  const outcome=await requestSuggestionExecution(secret,captured.messages,captured.route,id,captured.request_actor,dispatchedAt!,async generation=>{
   await withSuggestionRun(id,async(client,row)=>{
    if(row.lease_owner!==owner||!['dispatched','uncertain'].includes(row.charge_status)||row.generation_id&&row.generation_id!==generation)throw new Error('Suggestion receipt changed.');

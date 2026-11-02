@@ -37,7 +37,7 @@ function competitorRow(value:unknown,request:DomainRequest):DomainCompetitorRow{
 export type DomainOutcome={cost:string|null;reference:string|null;result:DomainReportResult|null;diagnostic:string|null;evidence:{httpStatus:number|null;statusCode:number|null;taskStatus:number|null;reportedCost:unknown;taskCost:unknown}};
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseDomainOutcome(response:{httpStatus:number;body:unknown},request:DomainRequest,id:string,now=new Date()):DomainOutcome{
- const outcome:DomainOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Reconcile it before spending again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
+ const outcome:DomainOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Recover this original request; unrelated features can continue.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
  const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
   const b=response.body;if(!object(b))invalid();outcome.evidence.reportedCost=b.cost;outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
@@ -69,7 +69,7 @@ export function parseDomainOutcome(response:{httpStatus:number;body:unknown},req
  return outcome;
 }
 export async function requestDomainResearch(credentials:unknown,request:DomainRequest,id:string,send:typeof fetch=fetch):Promise<DomainOutcome>{
- try{return parseDomainOutcome(await dataforseoJson(domainEndpoint(request),credentials,'POST',[domainPayload(request,id)],send),request,id);}catch{return {cost:null,reference:null,result:null,diagnostic:'The request may have reached the provider. Its charge is unknown; reconcile it before spending again.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};}
+ try{return parseDomainOutcome(await dataforseoJson(domainEndpoint(request),credentials,'POST',[domainPayload(request,id)],send),request,id);}catch{return {cost:null,reference:null,result:null,diagnostic:'The request may have reached the provider. Its charge is unknown; recover this original request; unrelated features can continue.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};}
 }
 export function parseDomainReconciliation(response:{httpStatus:number;body:unknown},request:DomainRequest,id:string){
  const b=response.body;if(response.httpStatus!==200||!object(b)||b.status_code!==20000||providerMicros(b.cost)!==0n||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();

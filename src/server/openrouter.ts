@@ -91,9 +91,9 @@ export async function readOpenRouterRoutes(credentials:unknown,models:PromptMode
 export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTag?:string){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true,profile,pinnedTag?[pinnedTag]:undefined))[0];}
 export async function readContentSupportRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,pinnedTag?:string){return (await readRoutes(credentials,[model],contentSupportLimits.outputTokens,send,true,openRouterTextProfile,pinnedTag?[pinnedTag]:undefined))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
-// Owner decision D3: an outcome never pauses spending; an unknown cost settles uncertain and that ledger row blocks new work.
+// Owner decision D3: an outcome never pauses spending; an unknown cost stays on its original ledger row for recovery; unrelated work may continue.
 export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;evidence:Record<string,unknown>};
-export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
+export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Recover this original request; unrelated features can continue.'):ExecutionOutcome{
   return {cost:null,reference,result:null,diagnostic,evidence:{source:'response',generationId:reference,reportedCost:null}};
 }
 function costValue(value:unknown){if(!(value instanceof ExactCost))invalid();const micros=decimalSumMicros([{price:value.source,count:1}]);return {reported:value.source,cost:micros>1_000_000_000_000n?null:usd(micros)};}

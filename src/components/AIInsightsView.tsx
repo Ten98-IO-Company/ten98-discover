@@ -159,10 +159,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
       {known && report !== null && (
         <div className="stack">
           <p id={prefix + 'scope'}><strong>{report.scopeLabel}</strong></p>
-          <p className="hint">{report.contextLabel}</p>
-          <p className="hint">Source: OpenRouter API · web search off. Not consumer ChatGPT or search observations. Market and language not recorded.</p>
           {report.pooledModels && <p className="hint">The All models view pools retained answers. Each model answer counts separately; these rates are not a balanced model comparison.</p>}
-          <p className="hint">{report.snapshotLabel}</p>
           {report.warnings.length > 0 && (
             <ul className="stack">
               {report.warnings.map((w, i) => <li key={i}>{w}</li>)}
@@ -340,8 +337,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
             <div className="stack" style={{ marginTop: 8 }}>
               <p className="hint">{report.snapshotLabel}</p>
               <ul className="stack hint">
-                <li>Recomputed from retained answers using current project context.</li>
-                <li>OpenRouter API · web search off. No consumer ChatGPT/search inference.</li>
+                <li>{report.contextLabel}</li>
+                <li>Source: OpenRouter API · web search off. Not consumer ChatGPT or search observations. Market and language not recorded.</li>
                 <li>Daily dates use the comparison's requested day in the applied timezone.</li>
                 <li>Provider citation annotations are separate from prose mentions.</li>
               </ul>

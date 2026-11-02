@@ -77,7 +77,7 @@ function statusLabel(r:RunSummary):string{
 }
 
 function chargeNote(r:RunSummary):string{
-  if(r.chargeStatus==='uncertain'||r.status==='uncertain')return 'The charge for this run is unknown. Spending stays blocked pending reconciliation; unknown is not free.';
+  if(r.chargeStatus==='uncertain'||r.status==='uncertain')return 'The charge for this run is unknown. Recover this original request; unrelated features can continue.';
   if(r.actualUsd!=null)return 'Actual charge $'+r.actualUsd+' (reserved estimate $'+r.estimateUsd+').'+(r.status==='failed'?' A failed run can still be charged by the provider.':'');
   return 'Reserved estimate $'+r.estimateUsd+'; no settled charge yet.';
 }
@@ -124,7 +124,6 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const unauthRef=useRef(onUnauthorized);
   const notifiedRef=useRef(false);
   const resultHeading=useRef<HTMLHeadingElement|null>(null),focusResult=useRef(false);
-  const [clock,setClock]=useState(Date.now());
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   unauthRef.current=onUnauthorized;
   useEffect(()=>{onLockChange(writing||lostStart);},[writing,lostStart,onLockChange]);
@@ -190,7 +189,6 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     aliveRef.current=true;void reloadAccess();
     return ()=>{aliveRef.current=false;genRef.current++;activeRef.current?.controller.abort();activeRef.current=null;};
   },[B]);
-  useEffect(()=>{if(!quote)return;const timer=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(timer);},[quote?.id]);
   useEffect(()=>{if(focusResult.current&&selected){resultHeading.current?.focus();focusResult.current=false;}},[selected]);
 
   async function selectRun(id:string,automatic=false){
@@ -230,7 +228,6 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const parsed=normKeywords(kwText);
   const markets=st?.catalog.markets??[];
   const market=markets.find(m=>marketKey===m.locationCode+'|'+m.languageCode);
-  const quoteExpired=quote?Date.parse(quote.expiresAt)<=clock:false;
 
   async function refreshCatalog(){
     if(lostStart)return;
@@ -241,10 +238,10 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       if(state.role==='viewer')throw new Error('Your current role can read research but cannot refresh markets.');
       const response=await api<{catalog:State['catalog']}>(B+'/catalog',{method:'POST',body:{connectionId:connId},signal:op.controller.signal});
       if(!current(op))return;
-      setSt(s=>s?{...s,catalog:response.catalog}:s);setMsg('Markets refreshed. Prepare a new quote.');
+      setSt(s=>s?{...s,catalog:response.catalog}:s);setMsg('Markets refreshed. Choose a market and run research.');
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
-  async function prepareQuote(ev:FormEvent){
+  async function runResearch(ev:FormEvent){
     ev.preventDefault();if(lostStart)return;
     const op=begin(true,true);if(!op)return;
     const formGeneration=formGenRef.current;
@@ -254,24 +251,25 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       if(!market)throw new Error('Choose a country or territory and language. Refresh markets first if none are listed.');
       const body:Req={connectionId:connId,mode,keywords:parsed,locationCode:market.locationCode,languageCode:market.languageCode,limit:mode==='overview'?100:limit};
       const state=await access(op);if(!state||!current(op))return;
-      if(state.role==='viewer')throw new Error('Your current role can read research but cannot prepare quotes.');
+      if(state.role==='viewer')throw new Error('Your current role can read research but cannot run research.');
       const response=await api<{quote:Quote}>(B+'/quote',{method:'POST',body,signal:op.controller.signal});
       if(!current(op)||formGeneration!==formGenRef.current)return;
       const q=response.quote;
-      if(!uuid(q?.id)||!date(q.expiresAt)||!validRequest(q.request)||!sameRequest(q.request,body)||typeof q.connectionName!=='string'||!amount(q.estimateUsd)||!amount(q.perTaskUsd)||!amount(q.perItemUsd)||!Number.isSafeInteger(q.upperItems)||q.upperItems<1||!date(q.priceAsOf))throw new Error('The quote could not be read. Prepare a new quote.');
-      setClock(Date.now());setQuote(response.quote);setMsg('Quote ready. Review the exact inputs and charge before starting.');
+      if(!uuid(q?.id)||!date(q.expiresAt)||!validRequest(q.request)||!sameRequest(q.request,body)||typeof q.connectionName!=='string'||!amount(q.estimateUsd)||!amount(q.perTaskUsd)||!amount(q.perItemUsd)||!Number.isSafeInteger(q.upperItems)||q.upperItems<1||!date(q.priceAsOf))throw new Error('The research request could not be verified. Try Run again.');
+      setQuote(q);await startRun(q,op);
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
-  async function startRun(){
-    if(!quote)return;
-    const op=begin(true,true);if(!op)return;
+  async function startRun(prepared=quote,operation?:Operation){
+    if(!prepared)return;
+    const quote=prepared;
+    const op=operation??begin(true,true);if(!op)return;
     const recovering=lostStart;
     let sent=false;
     setErr(null);setMsg(null);
     try{
       const state=await access(op);if(!state||!current(op))return;
       if(state.role==='viewer'){setErr('Your current role can read research but cannot start it.');return;}
-      if(!recovering&&(state.spendingPaused||!state.vaultConfigured||Date.parse(quote.expiresAt)<=Date.now()))throw new Error('This quote cannot start now. Review spending settings or prepare a new quote.');
+      if(!recovering&&(state.spendingPaused||!state.vaultConfigured||Date.parse(quote.expiresAt)<=Date.now()))throw new Error('Research cannot run now. Check Connections and try again.');
       const key=quoteKey??crypto.randomUUID();
       setQuoteKey(key);
       const body={quoteId:quote.id,requestKey:key};
@@ -288,7 +286,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
         setLostStart(true);setErr('The start may already have been accepted. Retry the same request, or inspect Recent runs before starting new research.');
       }else{
         if(sent)clearQuote();
-        setErr(e instanceof ApiError&&e.status===409?'The server rejected this attempt. Inspect Recent runs, then explicitly prepare a new quote if needed.':errMsg(e));
+        setErr(e instanceof ApiError&&e.status===409?'The server rejected this attempt. Inspect Recent runs before choosing Run again.':errMsg(e));
       }
     }finally{finish(op);}
   }
@@ -327,10 +325,6 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const canResearch=st.role!=='viewer';
   const isOwner=st.role==='owner';
   const selMarket=selected?markets.find(m=>m.locationCode===selected.request.locationCode&&m.languageCode===selected.request.languageCode):undefined;
-  const startBlockers:string[]=[];
-  if(st.spendingPaused)startBlockers.push('spending is paused');
-  if(!st.vaultConfigured)startBlockers.push('credential storage needs installation operator setup');
-  if(quoteExpired)startBlockers.push('the quote expired — prepare a new one');
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
     <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers',provider:'dataforseo'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'Connections'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
@@ -344,7 +338,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     :st.connections.length===0?
       <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Choose Set up DataForSEO to add one, then return here.' : 'Ask a workspace owner to add one in Settings › Connections, then reload access.'}</div>
     :
-      <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={prepareQuote}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gridTemplateColumns:'minmax(0,1fr)',gap:14}}><legend>Research inputs</legend>
+      <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={runResearch}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gridTemplateColumns:'minmax(0,1fr)',gap:14}}><legend>Research inputs</legend>
         <div>
           <label htmlFor={uid+'-conn'}>Provider connection</label>
           <select id={uid+'-conn'} style={{width:'100%'}} value={connId} onChange={e=>edit(()=>setConnId(e.target.value))} required>
@@ -388,52 +382,24 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           </div>
         </Disclosure>
         <div className="row">
-          <button type="submit" className="btn primary" disabled={writing}>Prepare quote</button>
+          <button type="submit" className="btn primary" disabled={writing||st.spendingPaused||!st.vaultConfigured}>Run</button>
         </div>
-        <p className="hint">Preparing a quote is a free account-price lookup; it starts no research and charges nothing.</p>
+        <Disclosure summary="How research runs" variant="plain"><p>Run sends the selected keywords and market to DataForSEO. Your provider account may be charged. Results and charge receipts are saved.</p></Disclosure>
       </fieldset></form></details>
     )}
 
-    {canResearch&&quote&&<div className="card stack" aria-label="Quote">
-      <h3>Quote for {quote.request.mode==='overview'?'keyword overview':'keyword ideas'}</h3>
-      <p>{quote.request.mode==='overview'
-        ?quote.request.keywords.length+' keywords'
-        :'Seed "'+(quote.request.keywords[0]??'')+'"'} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName} · up to {quote.upperItems} billed items</p>
-      <Disclosure summary="Exact quoted keywords" variant="plain"><ol>{quote.request.keywords.map(keyword=><li key={keyword} style={{overflowWrap:'anywhere'}}>{keyword}</li>)}</ol></Disclosure>
-      <RunCostSummary title="Quote cost" state={lostStart?'uncertain':quoteExpired?'expired':st.spendingPaused||!st.vaultConfigured?'blocked':'quoted'}
-        scope={<span>{quote.request.mode} · {quote.request.keywords.join(', ')} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName}</span>}
-        units={<span>Up to {quote.upperItems} billed items · per task ${quote.perTaskUsd} · per item ${quote.perItemUsd}</span>}
-        estimatedPrice={'$'+quote.estimateUsd}
-        settledPrice={lostStart?undefined:'No settled charge reported'}
-        quoteExpiryLabel={dt(quote.expiresAt)}
-        receipt={<span>Quote {quote.id} · prices observed {dt(quote.priceAsOf)}</span>}
-        reason={lostStart?'The start response was lost; this run may already exist and its charge is unknown.':quoteExpired?'The quote expired; prepare a new quote before starting.':startBlockers.length?'Start unavailable: '+startBlockers.join('; ')+'.':'Review the exact inputs and estimate before authorizing paid research.'}
-        warnings="A 5-minute quote is not a provider price guarantee. This covers spending requested by this app, not all usage on the provider account. The quote itself charges nothing — only the button below authorizes paid research."/>
-      {lostStart?
-        <div className="alert" role="alert">
-          <p>The start request was sent but the response was lost, so this run may already exist. Retrying sends the exact same request (same quote ID and request key); no new charge key is created and paid work is never silently retried.</p>
-          <div className="row">
-            <button type="button" className="btn primary" onClick={startRun} disabled={writing}>Retry same request</button>
-            <button type="button" className="btn" onClick={()=>void (async()=>{if(await confirm({title:'Discard local retry controls?',description:'The server request may already exist; this does not cancel it.',confirmLabel:'Dismiss retry controls'})&&!activeRef.current?.write){clearQuote();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}})()} disabled={writing}>Dismiss retry controls</button>
-          </div>
-        </div>
-      :
-        <div className="row">
-          <button type="button" className="btn primary" onClick={startRun} disabled={writing||quoteExpired||st.spendingPaused||!st.vaultConfigured}>Run quoted research (paid)</button>
-        </div>}
-      {!lostStart&&startBlockers.length>0&&<p className="hint">Start unavailable: {startBlockers.join('; ')}.</p>}
-    </div>}
+    {canResearch&&quote&&lostStart&&<div className="alert" role="alert"><p>The run may already exist. Retry this exact request or inspect Recent runs before starting new research.</p><div className="row"><button type="button" className="btn primary" onClick={()=>void startRun()} disabled={writing}>Retry same request</button><button type="button" className="btn" onClick={()=>void (async()=>{if(await confirm({title:'Discard local retry controls?',description:'The server request may already exist; this does not cancel it.',confirmLabel:'Dismiss retry controls'})&&!activeRef.current?.write){clearQuote();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}})()} disabled={writing}>Dismiss retry controls</button></div></div>}
 
     {selected&&<div className="card stack" aria-label="Selected run">
       <h3 ref={resultHeading} tabIndex={-1}>{selected.mode==='overview'?'Keyword overview':'Keyword ideas'} results</h3>
       <p>{statusLabel(selected)} · created {dt(selected.createdAt)}{selected.completedAt?' · finished '+dt(selected.completedAt):''} · {selected.mode} · {selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</p>
-      <RunCostSummary title="Run cost" state={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?'uncertain':selected.actualUsd!=null?'settled':selected.chargeStatus==='reserved'||selected.chargeStatus==='dispatched'?'pending':selected.chargeStatus==='cancelled'?'blocked':'uncertain'}
+      <><Disclosure summary="Request details" variant="plain"><RunCostSummary title="Run cost" state={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?'uncertain':selected.actualUsd!=null?'settled':selected.chargeStatus==='reserved'||selected.chargeStatus==='dispatched'?'pending':selected.chargeStatus==='cancelled'?'blocked':'uncertain'}
         scope={<span>{selected.mode} · {selected.keywords.join(', ')} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</span>}
         units={<span>{selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · requested limit {selected.request.limit}</span>}
         estimatedPrice={'$'+selected.estimateUsd}
         settledPrice={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?undefined:selected.actualUsd!=null?'$'+selected.actualUsd:selected.chargeStatus==='cancelled'?'Charge cancelled; no settled charge reported.':undefined}
         receipt={'Run '+selected.id}
-        reason={chargeNote(selected)}/>
+        reason={chargeNote(selected)}/></Disclosure></>
 
       {selected.diagnostic&&<p className="hint">Diagnostic: {selected.diagnostic}</p>}
       {(selected.status==='queued'||selected.status==='running')&&<p role="status" className="dim">{pollDead?'Automatic status checks stopped.':selected.status==='queued'?'Waiting in queue; checking status every 2 seconds.':'Running; checking status every 2 seconds.'}</p>}

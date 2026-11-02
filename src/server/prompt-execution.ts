@@ -259,7 +259,7 @@ export async function executePromptExecution(executionId:string,send:typeof fetc
       // A duplicate worker must not cancel this child after another worker advances it.
       const current=(await client.query('SELECT status FROM prompt_execution WHERE id=$1',[row.id])).rows[0];
       if(current?.status!=='queued')return;
-      await cancelChildren(client,row.comparison_id,'Not dispatched because the endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.',row.id);
+      await cancelChildren(client,row.comparison_id,'Not dispatched because the endpoint, permissions, credentials, the provider-request pause changed.',row.id);
     });return;}throw error;
   }
   const outcome=await requestPromptExecution(secret,row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor,dispatchedAt!,async generation=>{
@@ -293,8 +293,8 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
     if(current.charge_status!=='uncertain'||current.generation_id!==outcome.reference)throw new FoundationError(409,'The receipt changed. Reload this comparison.');
     const settled=await settleSpend(client,wid,id,outcome.cost,outcome.reference);
     // Charge recovery is not a new answer or a new raw-evidence retention period.
-    await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new paid quote.']);
-    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:settled.reconciliationRequired?'The charge remains unresolved; new paid work stays blocked until it is reconciled.':'Charge recorded.'}});
+    await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new run.']);
+    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:settled.reconciliationRequired?'The charge remains unresolved. Recover this original request; unrelated features can continue.':'Charge recorded.'}});
   });
 }
 // Per child: quote age never cancels a started child (D3). A live job keyed by the child or, for legacy

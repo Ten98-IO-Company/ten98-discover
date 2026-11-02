@@ -1,4 +1,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
+import {SectionNav} from '@ten98/ui';
+import {defaultStringifySearch} from '@tanstack/react-router';
+import type {AIInsightsMode,AIInsightsNavigation} from '../lib/navigation';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId} from '../lib/openrouter-models';
 import {modelApi as api,validObservedModels} from './OpenRouterModelPicker';
@@ -10,11 +13,11 @@ import {CitationSpecializationsPanel} from './CitationSpecializationsPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Props={userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onBack:()=>void;backLabel:string;onOpenComparison?:(comparisonId:string,promptId:string)=>void};
+type Props={navigation?:AIInsightsNavigation;onNavigate?:(navigation:AIInsightsNavigation)=>void;userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onBack:()=>void;backLabel:string;onOpenComparison?:(comparisonId:string,promptId:string)=>void};
 type Role=PromptInsightsReport['role'];
 type Drill=PromptInsightsReport['drilldown'];
 type Option={id:string;label:string};
-type Op={controller:AbortController;signal:AbortSignal;exporting:boolean};
+type Op={controller:AbortController;signal:AbortSignal;exporting:boolean;navigation:string};
 type State={role:Role|null;reading:boolean;exporting:boolean;error:string;notice:string;draft:AIInsightsDraft;applied:AIInsightsDraft;data:PromptInsightsReport|null;
  pages:(string|null)[];promptSearch:string;promptQuery:string;promptPages:(string|null)[];promptNext:string|null;options:Option[];selected:Option|null;appliedPromptLabel:string|null;dailyEntity:string;focus:boolean};
 const methods=['unicode-boundary-v1','elmo-substring-v1'];
@@ -35,6 +38,12 @@ const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$/.test
 function zone(v:string){try{return new Intl.DateTimeFormat('en',{timeZone:v}).resolvedOptions().timeZone;}catch{return null;}}
 function initial():AIInsightsDraft{const timeZone=Intl.DateTimeFormat().resolvedOptions().timeZone,parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),p=(type:string)=>parts.find(p=>p.type===type)!.value,to=`${p('year')}-${p('month')}-${p('day')}`;return {from:new Date(Date.parse(to)-6*86400000).toISOString().slice(0,10),to,timeZone,model:'',promptId:'',tag:'',matcher:'unicode-boundary-v1'};}
 function filters(d:AIInsightsDraft):InsightFilters|null{const timeZone=zone(d.timeZone);if(!day(d.from)||!day(d.to)||d.from>d.to||Date.parse(d.to)-Date.parse(d.from)>30*86400000||!text(d.timeZone,120,1)||!timeZone||d.model!==''&&!openRouterModelId(d.model)||d.promptId!==''&&!uuid(d.promptId)||!multiline(d.tag,80)||d.tag.trim()!==d.tag||!methods.includes(d.matcher))return null;return {...d,timeZone,model:d.model||null,promptId:d.promptId.toLowerCase()||null,tag:d.tag||null};}
+function queryDraft(query:string|undefined,fallback:AIInsightsDraft):AIInsightsDraft|null{
+ if(query===undefined)return fallback;
+ try{decodeURIComponent(query.replaceAll('+',' '));const params=new URLSearchParams(query),keys=['from','to','timeZone','model','promptId','tag','matcher'];if([...params.keys()].some(key=>!keys.includes(key)||params.getAll(key).length!==1)||keys.some(key=>!params.has(key)))return null;const draft=Object.fromEntries(params) as AIInsightsDraft;return filters(draft)?draft:null;}catch{return null;}
+}
+const draftQuery=(draft:AIInsightsDraft)=>new URLSearchParams({...draft}).toString();
+const modes:{id:AIInsightsMode;label:string}[]=[{id:'summary',label:'Answer analysis'},{id:'comparison',label:'Compare periods'},{id:'citations',label:'Analyze citations'},{id:'specialized',label:'Specialized citation reports'}];
 const same=(a:AIInsightsDraft,b:AIInsightsDraft)=>Object.keys(a).every(k=>a[k as keyof AIInsightsDraft]===b[k as keyof AIInsightsDraft]);
 const equalFilters=(v:unknown,f:InsightFilters)=>object(v)&&Object.entries(f).every(([k,value])=>v[k]===value)&&Object.keys(v).length===7;
 function validCoverage(v:unknown):v is InsightCoverage{return object(v)&&coverageKeys.every(k=>integer(v[k]))&&kinds.reduce((n,k)=>n+v[k],0)===v.attempted;}
@@ -80,21 +89,30 @@ function Controller(props:Props){
  const prefix=useId()+'-insights-',base=`/api/projects/${props.projectId}`,first=useRef(initial()).current;
  const [receipt,setReceipt]=useState<{comparisonId:string;promptId:string;drill:Drill;dailyEntity:string;promptSearch:string;promptQuery:string;originId:string}|null>(null);
  const returnFocus=useRef<string|null>(null),expiredInputs=useRef(new Set<string>());
- const [comparison,setComparison]=useState<{filters:InsightFilters;label:string}|null>(null);
- const [citations,setCitations]=useState<{filters:InsightFilters;label:string}|null>(null);
- const [specializations,setSpecializations]=useState<{filters:InsightFilters;label:string}|null>(null);
+ const [localNavigation,setLocalNavigation]=useState<AIInsightsNavigation>({});
+ const navigation=props.navigation??localNavigation,mode=navigation.aiInsightsMode??'summary',requested=queryDraft(navigation.aiInsightsQuery,first),invalid=!!navigation.aiInsightsInvalid||!requested;
+ const navigationIdentity=JSON.stringify([mode,navigation.aiInsightsQuery,navigation.aiInsightsInvalid]);
+ const modeRef=useRef(mode);modeRef.current=mode;
+ const navigationRef=useRef(navigationIdentity);navigationRef.current=navigationIdentity;
+ const [resolvedNavigation,setResolvedNavigation]=useState(navigationIdentity),navigationCurrent=resolvedNavigation===navigationIdentity;
+ const [snapshot,setSnapshot]=useState<{filters:InsightFilters;label:string;query:string}|null>(null),snapshotRef=useRef(snapshot);snapshotRef.current=snapshot;
  const [s,setState]=useState<State>({role:null,reading:false,exporting:false,error:'',notice:'',draft:first,applied:first,data:null,pages:[null],promptSearch:'',promptQuery:'',promptPages:[null],promptNext:null,options:[],selected:null,appliedPromptLabel:null,dailyEntity:'brand',focus:false});
  const state=useRef(s),alive=useRef(true),operation=useRef<Op|null>(null),expired=useRef(new Set<string>()),blob=useRef<string|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
  function revoke(){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;if(blob.current)URL.revokeObjectURL(blob.current);blob.current=null;}
  function invalidate(){operation.current?.controller.abort();operation.current=null;revoke();}
- function begin(exporting=false){invalidate();const controller=new AbortController(),op={controller,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]),exporting};operation.current=op;patch({reading:!exporting,exporting,error:'',notice:''});return op;}
- const current=(op:Op)=>alive.current&&operation.current===op&&!op.controller.signal.aborted;
+ function begin(exporting=false){invalidate();const controller=new AbortController(),op={controller,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]),exporting,navigation:navigationIdentity};operation.current=op;patch({reading:!exporting,exporting,error:'',notice:''});return op;}
+ const current=(op:Op)=>alive.current&&operation.current===op&&op.navigation===navigationRef.current&&!op.controller.signal.aborted;
  function finish(op:Op){if(current(op)){operation.current=null;patch({reading:false,exporting:false});}}
  function purge(){patch({role:null,data:null,options:[],selected:null,appliedPromptLabel:null,pages:[null],promptPages:[null],promptNext:null,promptSearch:'',promptQuery:'',dailyEntity:'brand'});}
- function fail(error:unknown,op:Op){if(!current(op))return;const status=error instanceof ApiError?error.status:0;purge();patch({focus:!!returnFocus.current,error:status===409?'The report or current context changed. Reload insights before continuing.':op.signal.aborted?'The read timed out. Reload insights to try again.':errMsg(error)});if(status===401)props.onUnauthorized();}
+ function fail(error:unknown,op:Op){if(!current(op))return;setSnapshot(null);const status=error instanceof ApiError?error.status:0;purge();patch({focus:!!returnFocus.current,error:status===409?'The report or current context changed. Reload insights before continuing.':op.signal.aborted?'The read timed out. Reload insights to try again.':errMsg(error)});if(status===401)props.onUnauthorized();}
  function leave(callback:()=>void){invalidate();purge();patch({reading:false,exporting:false});callback();}
- useEffect(()=>{alive.current=true;void load(first);return()=>{alive.current=false;invalidate();};},[]);
+ useEffect(()=>{
+  alive.current=true;invalidate();purge();setReceipt(null);setResolvedNavigation(navigationIdentity);patch({reading:false,exporting:false,error:'',notice:''});
+  if(invalid){setSnapshot(null);patch({error:'This answer analysis link is invalid. Open Answer analysis to reset the report.'});}
+  else if(mode==='summary'||snapshotRef.current?.query!==draftQuery(requested!)){setSnapshot(null);void load(requested!);}
+  return()=>{alive.current=false;invalidate();};
+ },[navigationIdentity]);
  useEffect(()=>{if(s.focus){(document.getElementById(returnFocus.current??'')??document.getElementById(prefix+'heading'))?.focus();returnFocus.current=null;patch({focus:false});}},[s.focus]);
  async function readPrompts(op:Op,query:string,pages:(string|null)[]){const params=new URLSearchParams({status:'all',q:query});if(pages.at(-1))params.set('cursor',pages.at(-1)!);const result=promptPage(await api<unknown>(base+'/prompts?'+params,{signal:op.signal}));if(!result)throw new Error('The prompt options could not be verified. Reload insights.');return result;}
  async function load(draft:AIInsightsDraft,pages:(string|null)[]=[null],drill:Drill={entityId:null,outcome:'all'}){
@@ -107,13 +125,16 @@ function Controller(props:Props){
     const error=reportRead.reason;
     if(!(error instanceof ApiError)||error.status!==413||error.message!=='Narrow the date range. This report exceeds its analysis capacity.')throw error;
     const options=promptRead.value??await readPrompts(op,before.promptQuery,before.promptPages);if(!current(op))return;if(op.signal.aborted)throw new Error('The prompt read timed out.');
-    const selected=!before.draft.promptId?null:options.options.find(o=>o.id===before.draft.promptId)??{id:before.draft.promptId,label:'Selected prompt (outside this option page)'};
-    patch({role:options.role,options:options.options,promptNext:options.nextCursor,promptPages:needsOptions?[null]:before.promptPages,promptQuery:before.promptQuery,promptSearch:before.promptSearch,selected,data:null,pages:[null],appliedPromptLabel:null,dailyEntity:'brand',focus:true,error:errMsg(error)});return;
+    const selected=!draft.promptId?null:options.options.find(o=>o.id===draft.promptId)??{id:draft.promptId,label:'Selected prompt (outside this option page)'};
+    setSnapshot(null);
+    patch({role:options.role,draft:{...draft},applied:{...draft},options:options.options,promptNext:options.nextCursor,promptPages:needsOptions?[null]:before.promptPages,promptQuery:before.promptQuery,promptSearch:before.promptSearch,selected,data:null,pages:[null],appliedPromptLabel:null,dailyEntity:'brand',focus:true,error:errMsg(error)});return;
    }
    const data=reportRead.value,options=promptRead.value;if(!validReport(data,f,drill,pages.length-1))throw new Error('The insight response could not be verified. Reload insights.');
    if(pages.length>1&&old&&data.selectionRevision!==old.selectionRevision||data.evidenceStates.some(e=>expired.current.has(e.id)&&e.eligibility!=='expired')){const e=new ApiError('The insight evidence changed. Reload insights.');e.status=409;throw e;}
    for(const e of data.evidenceStates)if(e.eligibility==='expired')expired.current.add(e.id);
    const selected=!draft.promptId?null:options?.options.find(o=>o.id===draft.promptId)??(before.selected?.id===draft.promptId?before.selected:{id:draft.promptId,label:'Selected prompt (outside this option page)'});
+   setSnapshot({filters:{...data.filters},query:draftQuery(draft),label:`${data.filters.from} to ${data.filters.to} · ${data.filters.timeZone} · ${data.filters.model?modelLabel(data.filters.model):'All models'} · ${data.filters.promptId?selected?.label??'Selected prompt':'All prompts'}${data.filters.tag?' · Current tag: '+data.filters.tag:''}`});
+   if(modeRef.current!=='summary'){purge();patch({applied:{...draft},draft:{...draft}});return;}
    patch({role:data.role,data,pages,applied:{...draft},draft:{...draft},selected,appliedPromptLabel:selected?.label??null,focus:true,dailyEntity:data.subjects.some(s=>s.id===before.dailyEntity)?before.dailyEntity:'brand',...(options?{options:options.options,promptNext:options.nextCursor,promptPages:[null],promptQuery:before.promptQuery,promptSearch:before.promptSearch}:{})});
   }catch(error){fail(error,op);}finally{finish(op);}
  }
@@ -139,12 +160,23 @@ function Controller(props:Props){
    drilldownLabel:drillLabel,rowCountLabel:`${d.totalRows} executions · Page ${s.pages.length}`,executions:d.executions.map(e=>({id:e.id,requestedAt:`${e.requestedAt} · Requested day ${e.date}`,model:`Requested: ${modelLabel(e.model)} · Resolved: ${e.resolvedModel?modelLabel(e.resolvedModel):'Unavailable'}`,eligibility:labels[e.eligibility],matches:e.matches?e.matches.filter(m=>m.mentioned||m.cited).map(m=>`${entity(m.id)}: ${[m.mentioned?'mention ('+m.matchedTerm+')':'',m.cited?'provider citation':''].filter(Boolean).join('; ')}`).join(' · ')||'No entity mentions or citation hits':'Unavailable'})),canPrevious:!dirty&&s.pages.length>1,canNext:!dirty&&!!d.nextCursor,canExport:!dirty}:null,
   onChange:(field,value)=>{if(busy||!s.role||!['from','to','timeZone','model','promptId','tag','matcher'].includes(field)||field==='matcher'&&!methods.includes(value))return;if(field==='promptId'&&value!==''&&!options.some(o=>o.id===value))return;patch({draft:{...s.draft,[field]:value},...(field==='promptId'?{selected:options.find(o=>o.id===value)??null}:{})});},
   onPromptSearchChange:value=>{if(!busy&&s.role)patch({promptSearch:value});},onSearchPrompts:()=>void searchPrompts(s.promptSearch),onPreviousPrompts:()=>void searchPrompts(s.promptQuery,s.promptPages.slice(0,-1)),onNextPrompts:()=>{if(s.promptNext)void searchPrompts(s.promptQuery,[...s.promptPages,s.promptNext]);},
-  onApply:()=>{if(!busy&&s.role)void load(s.draft);},onReload:()=>{if(!busy)void load(s.applied);},onBack:()=>leave(props.onBack),onDailyEntity:id=>{if(!busy&&!dirty&&d?.subjects.some(s=>s.id===id))patch({dailyEntity:id});},
+  onApply:()=>{if(busy||!s.role||invalid)return;const value={aiInsightsQuery:draftQuery(s.draft)};if(value.aiInsightsQuery===navigation.aiInsightsQuery){void load(s.draft);return;}if(props.onNavigate)props.onNavigate(value);else setLocalNavigation(value);},onReload:()=>{if(!busy&&!invalid)void load(s.applied);},onBack:()=>leave(props.onBack),onDailyEntity:id=>{if(!busy&&!dirty&&d?.subjects.some(s=>s.id===id))patch({dailyEntity:id});},
   onDrilldown:(outcome,entityId)=>{if(busy||dirty||!d)return;const needs=['mentioned','not_mentioned','cited'].includes(outcome);if(!['all','eligible','unavailable','mentioned','not_mentioned','cited'].includes(outcome)||needs&&(!entityId||!d.subjects.some(s=>s.id===entityId)))return;void load(s.applied,[null],{outcome,entityId:needs?entityId!:null});},
   onPrevious:()=>{if(!busy&&!dirty&&d&&s.pages.length>1)void load(s.applied,s.pages.slice(0,-1),d.drilldown);},onNext:()=>{if(!busy&&!dirty&&d?.nextCursor)void load(s.applied,[...s.pages,d.nextCursor],d.drilldown);},onOpenExecution:id=>{const at=state.current,e=at.data?.executions.find(e=>e.id===id);if(at.reading||at.exporting||!same(at.draft,at.applied)||!at.role||!e||!filters(at.applied))return;const open=props.onOpenComparison;if(open){leave(()=>open(e.comparisonId,e.promptId));return;}const entry={comparisonId:e.comparisonId,promptId:e.promptId,drill:{...at.data!.drilldown},dailyEntity:at.dailyEntity,promptSearch:at.promptSearch,promptQuery:at.promptQuery,originId:prefix+'execution-'+e.id};invalidate();purge();patch({reading:false,exporting:false,error:'',notice:''});setReceipt(entry);},onExport:()=>void download(),onCancelExport:()=>{if(s.exporting){invalidate();patch({exporting:false,notice:'Export cancelled.'});}}};
- if(receipt)return <PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to answer analysis" initialExpiredAnswerIds={[...expired.current]} initialExpiredInputComparisonIds={[...expiredInputs.current]} onEvidenceExpired={({comparisonId,answerIds,inputIds})=>{for(const id of answerIds)expired.current.add(id);if(inputIds.length)expiredInputs.current.add(comparisonId);}} onUnauthorized={props.onUnauthorized} onBack={()=>{returnFocus.current=receipt.originId;patch({dailyEntity:receipt.dailyEntity,promptSearch:receipt.promptSearch,promptQuery:receipt.promptQuery});setReceipt(null);void load(state.current.applied,[null],receipt.drill);}}/>;
- if(comparison)return <AIComparisonPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} filters={comparison.filters} filtersLabel={comparison.label} initialExpiredAnswerIds={[...expired.current]} onAnswerExpired={ids=>{for(const id of ids)expired.current.add(id);}} onUnauthorized={props.onUnauthorized} onBack={()=>{setComparison(null);void load(state.current.applied);}}/>;
- if(citations){const {matcher:_,...scope}=citations.filters;return <CitationAnalysisPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} filters={scope} filtersLabel={citations.label} initialExpiredAnswerIds={[...expired.current]} onAnswerExpired={ids=>{for(const id of ids)expired.current.add(id);}} onUnauthorized={props.onUnauthorized} onBack={()=>{setCitations(null);void load(state.current.applied);}}/>;}
- if(specializations){const {matcher:_,...scope}=specializations.filters;return <CitationSpecializationsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} filters={scope} filtersLabel={specializations.label} initialExpiredAnswerIds={[...expired.current]} onAnswerExpired={ids=>{for(const id of ids)expired.current.add(id);}} onUnauthorized={props.onUnauthorized} onBack={()=>{setSpecializations(null);void load(state.current.applied);}}/>;}
- return <div className="stack" style={{minWidth:0}}>{d&&s.role?<div className="row"><button className="btn ghost" type="button" disabled={busy||dirty} style={{minHeight:44}} onClick={()=>{const at=state.current;if(!at.data||!at.role||at.reading||at.exporting||!same(at.draft,at.applied)||!view.report)return;const entry={filters:{...at.data.filters},label:view.report.scopeLabel};invalidate();purge();patch({reading:false,exporting:false});setComparison(entry);}}>Compare periods</button><button className="btn ghost" type="button" disabled={busy||dirty} style={{minHeight:44}} onClick={()=>{const at=state.current;if(!at.data||!at.role||at.reading||at.exporting||!same(at.draft,at.applied)||!view.report)return;const entry={filters:{...at.data.filters},label:`${at.data.filters.from} to ${at.data.filters.to} · ${at.data.filters.timeZone} · ${at.data.filters.model?modelLabel(at.data.filters.model):'All models'} · ${at.data.filters.promptId?at.appliedPromptLabel??'Selected prompt':'All prompts'}${at.data.filters.tag?' · Current tag: '+at.data.filters.tag:''}`};invalidate();purge();patch({reading:false,exporting:false});setCitations(entry);}}>Analyze citations</button><button className="btn ghost" type="button" disabled={busy||dirty} style={{minHeight:44}} onClick={()=>{const at=state.current;if(!at.data||!at.role||at.reading||at.exporting||!same(at.draft,at.applied)||!view.report)return;const entry={filters:{...at.data.filters},label:`${at.data.filters.from} to ${at.data.filters.to} · ${at.data.filters.timeZone} · ${at.data.filters.model?modelLabel(at.data.filters.model):'All models'} · ${at.data.filters.promptId?at.appliedPromptLabel??'Selected prompt':'All prompts'}${at.data.filters.tag?' · Current tag: '+at.data.filters.tag:''}`};invalidate();purge();patch({reading:false,exporting:false});setSpecializations(entry);}}>Specialized citation reports</button></div>:null}<AIInsightsView {...view}/></div>;
+ function navigateMode(next:AIInsightsMode){
+  if(next===mode&&!invalid){if(receipt){invalidate();purge();setReceipt(null);void load(state.current.applied);}return;}
+  const query=invalid?undefined:snapshot?.query??navigation.aiInsightsQuery;
+  invalidate();purge();setReceipt(null);patch({reading:false,exporting:false,error:'',notice:''});
+  const value:AIInsightsNavigation={...next!=='summary'?{aiInsightsMode:next}:{},...query?{aiInsightsQuery:query}:{}};
+  if(props.onNavigate)props.onNavigate(value);else setLocalNavigation(value);
+ }
+ const navItems=modes.map(item=>({id:item.id,label:item.label,current:item.id===mode,href:defaultStringifySearch({workspace:props.workspaceId,project:props.projectId,view:'ai-insights',...item.id!=='summary'?{aiInsightsMode:item.id}:{},...!invalid&&(snapshot?.query??navigation.aiInsightsQuery)?{aiInsightsQuery:snapshot?.query??navigation.aiInsightsQuery}:{}}),disabled:item.id!=='summary'&&(invalid||!snapshot||mode==='summary'&&(busy||dirty)),disabledReason:dirty?'Apply filter changes first.':'Load Answer analysis first.'}));
+ let content=navigationCurrent?<AIInsightsView {...view}/>:<p role="status">Opening report…</p>;
+ if(navigationCurrent&&receipt)content=<PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to answer analysis" initialExpiredAnswerIds={[...expired.current]} initialExpiredInputComparisonIds={[...expiredInputs.current]} onEvidenceExpired={({comparisonId,answerIds,inputIds})=>{for(const id of answerIds)expired.current.add(id);if(inputIds.length)expiredInputs.current.add(comparisonId);}} onUnauthorized={props.onUnauthorized} onBack={()=>{returnFocus.current=receipt.originId;patch({dailyEntity:receipt.dailyEntity,promptSearch:receipt.promptSearch,promptQuery:receipt.promptQuery});setReceipt(null);void load(state.current.applied,[null],receipt.drill);}}/>;
+ else if(navigationCurrent&&!invalid&&mode!=='summary'&&snapshot&&snapshot.query===draftQuery(requested!)){
+  const common={userId:props.userId,workspaceId:props.workspaceId,projectId:props.projectId,filtersLabel:snapshot.label,initialExpiredAnswerIds:[...expired.current],onAnswerExpired:(ids:string[])=>{for(const id of ids)expired.current.add(id);},onUnauthorized:props.onUnauthorized,onBack:()=>navigateMode('summary')};
+  const {matcher:_,...scope}=snapshot.filters;
+  content=mode==='comparison'?<AIComparisonPanel {...common} filters={snapshot.filters}/>:mode==='citations'?<CitationAnalysisPanel {...common} filters={scope}/>:<CitationSpecializationsPanel {...common} filters={scope}/>;
+ }
+ return <div className="stack" style={{minWidth:0}}><SectionNav label="API model reports" items={navItems} wrap onSelect={(item,event)=>{event.preventDefault();navigateMode(item.id as AIInsightsMode);}}/>{content}</div>;
 }

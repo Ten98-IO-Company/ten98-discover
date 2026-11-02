@@ -179,7 +179,7 @@ export async function executeKeywordResearch(id:string,send:typeof fetch=fetch){
     }
     const dispatched=(await client.query("UPDATE keyword_research_run SET status='running',dispatched_at=clock_timestamp() WHERE id=$1 RETURNING dispatched_at",[id])).rows[0];
     if(plan)await markSavedRefreshAttempt(client,row.project_id,plan.targets,plan.version,'running',dispatched.dispatched_at);
-  });}catch(error){if(error instanceof FoundationError){await cancelUndispatched(id,'Research was not dispatched because its quote, permissions or connection changed, paid work is paused or an earlier charge is uncertain.');return;}throw error;}
+  });}catch(error){if(error instanceof FoundationError){await cancelUndispatched(id,'Research was not dispatched because its quote, permissions or connection changed, provider requests are paused.');return;}throw error;}
   const outcome=await requestKeywordResearch(secret,request!,id,send);
   await finishResearch(id,outcome);
 }
@@ -195,7 +195,7 @@ export async function reconcileKeywordResearch(projectId:string,userId:string,id
     if(current.charge_status!=='uncertain')throw new FoundationError(409,'The charge changed during reconciliation. Reload this run.');
     const settled=await settleSpend(client,wid,id,matched.cost,matched.reference);
     const status=settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled';
-    const completed=(await client.query('UPDATE keyword_research_run SET status=$2,diagnostic=$3,reconciliation_evidence=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1 RETURNING completed_at',[id,status,settled.reconciliationRequired?'The reported charge is outside supported limits; spending remains blocked.':current.result?null:'The charge was recovered. The original live result is unavailable; a new result requires a new paid quote.',JSON.stringify({source:'dataforseo_labs/id_list',taskId:matched.reference,statusCode:matched.statusCode,actualUsd:matched.cost,checkedAt:new Date().toISOString()})])).rows[0];
+    const completed=(await client.query('UPDATE keyword_research_run SET status=$2,diagnostic=$3,reconciliation_evidence=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1 RETURNING completed_at',[id,status,settled.reconciliationRequired?'The reported charge is outside supported limits; this request needs reconciliation.':current.result?null:'The charge was recovered. The original live result is unavailable; a new result requires a new run.',JSON.stringify({source:'dataforseo_labs/id_list',taskId:matched.reference,statusCode:matched.statusCode,actualUsd:matched.cost,checkedAt:new Date().toISOString()})])).rows[0];
     const plan=await savedPlan(client,current);
     if(plan)await publishSavedKeywordMetrics(client,projectId,plan.targets,{runId:id,version:plan.version,observedAt:completed.completed_at,result:current.result,status});
     return {run:dto(await runRow(client,projectId,id),userId,role),reconciliation:{status:settled.reconciliationRequired?'inconclusive' as const:'matched' as const,message:settled.reconciliationRequired?'The charge remains unresolved.':'Provider charge matched and recorded.'}};
@@ -207,5 +207,5 @@ export async function reconcileKeywordJobs(){
     LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$1
     WHERE (r.status='queued' AND ((q.saved_refresh_plan_id IS NULL AND q.expires_at<clock_timestamp()) OR j.id IS NULL OR j.state IN('failed','cancelled','completed')))
        OR (r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds') ORDER BY r.created_at LIMIT 50`,[keywordQueue]);
-  for(const row of rows.rows){if(row.status==='queued')await cancelUndispatched(row.id,'The queued research did not run. Prepare a new quote to try again.');else await finishResearch(row.id,{cost:null,reference:null,result:null,diagnostic:'The worker stopped after dispatch. The provider charge must be reconciled before spending again.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}},true);}
+  for(const row of rows.rows){if(row.status==='queued')await cancelUndispatched(row.id,'The queued research did not run. Prepare a new quote to try again.');else await finishResearch(row.id,{cost:null,reference:null,result:null,diagnostic:'The worker stopped after dispatch. The provider charge is unknown. Recover this original request; unrelated features can continue.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}},true);}
 }

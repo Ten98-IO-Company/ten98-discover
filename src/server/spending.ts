@@ -11,18 +11,15 @@ export function requestHash(canonicalInput: string) { return createHash('sha256'
 
 type LedgerRow = { id: string; workspace_id: string; connection_id: string; connection_revision: number; user_id: string; operation: string; input_hash: string; estimate_micros: string; actual_micros: string | null; status: 'reserved'|'dispatched'|'uncertain'|'settled'|'cancelled'; budget_month: string; provider_reference: string | null };
 
-// Owner decision D3: no app money limit. Paid work stops only for a missing/revoked connection, the
-// owner's manual pause or an uncertain charge anywhere in the workspace. A missing budget row is unpaused.
-// The row being dispatched is 'reserved', never 'uncertain', so it needs no exclusion.
+// Unknown charges stay attached to their original request and cannot be redispatched.
+// Independent work is allowed; a revoked connection or manual emergency stop still prevents dispatch.
 async function spendingGate(client: PoolClient, workspaceId: string, connectionId: string) {
   const connection = (await client.query('SELECT revoked_at,revision FROM provider_connection WHERE id=$1 AND workspace_id=$2', [connectionId, workspaceId])).rows[0];
   if (!connection || connection.revoked_at) throw new FoundationError(404, 'Provider connection is unavailable.');
   // Capture the month after acquiring the workspace lock, not at transaction start before a possible wait.
   const gate = (await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-01') AS month,
-    COALESCE((SELECT paused FROM workspace_budget WHERE workspace_id=$1),false) AS paused,
-    EXISTS(SELECT 1 FROM provider_request WHERE workspace_id=$1 AND status='uncertain') AS uncertain`, [workspaceId])).rows[0];
-  if (gate.paused) throw Object.assign(new FoundationError(409, 'Provider spending is paused. An owner must enable paid provider work.'), {code:'SPENDING_BUDGET'});
-  if (gate.uncertain) throw Object.assign(new FoundationError(409, 'An earlier request has an uncertain charge. Reconcile it before spending again.'), {code:'SPENDING_BUDGET'});
+    COALESCE((SELECT paused FROM workspace_budget WHERE workspace_id=$1),false) AS paused`, [workspaceId])).rows[0];
+  if (gate.paused) throw Object.assign(new FoundationError(409, 'Provider requests are paused. An owner can enable them in Connections.'), {code:'SPENDING_BUDGET'});
   return { revision: connection.revision as number, month: gate.month as string };
 }
 
@@ -59,8 +56,8 @@ export async function dispatchSpend(workspaceId: string, userId: string, request
     if (!row || row.user_id !== userId) throw new FoundationError(404, 'Provider request is unavailable.');
     if (row.status !== 'reserved') throw new FoundationError(409, 'This request has already been dispatched or cancelled. Reconcile it before retrying.');
     const { revision, month } = await spendingGate(client, workspaceId, row.connection_id);
-    if (revision !== row.connection_revision) throw new FoundationError(409, 'Provider credentials changed. Cancel this reservation and request a new quote.');
-    // Optional execution-specific validation shares this authorization/budget transaction.
+    if (revision !== row.connection_revision) throw new FoundationError(409, 'Provider credentials changed. Cancel this reservation and run again.');
+    // Optional execution-specific validation shares this authorization transaction.
     if (prepare) await prepare(client, row);
     // Persist dispatch BEFORE the network call. An interrupted dispatch must never be replayed automatically.
     await client.query("UPDATE provider_request SET status='dispatched',budget_month=$2::date,updated_at=now() WHERE id=$1", [requestId, month]);
@@ -74,7 +71,7 @@ export async function settleSpend(client: PoolClient, workspaceId: string, reque
   z.uuid().parse(workspaceId); z.uuid().parse(requestId);
   if (providerReference !== null) z.string().min(1).max(512).parse(providerReference);
   const reported = actualUsd === null ? null : micros(actualInput.parse(actualUsd));
-  // The current ledger stores at most $1M per charge. Keep larger reports uncertain and block spending;
+  // The current ledger stores at most $1M per charge. Keep larger reports uncertain;
   // callers must persist provider evidence and inspect this outcome before treating a job as settled.
   const actual = reported === null || reported > 1_000_000_000_000n ? null : reported.toString();
   const outcome = { status: actual === null ? 'uncertain' as const : 'settled' as const, reconciliationRequired: actual === null, reportedAmount: actualUsd };
