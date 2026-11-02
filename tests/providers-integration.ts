@@ -114,12 +114,19 @@ export async function runProviderChecks(options: Options) {
   assert.equal(updated.revision, 2);
   await rejects(dispatchSpend(wid, owner, rotation.id), 409, 'Old quotes must not silently use new credentials.');
   await cancelReservation(wid, owner, rotation.id);
-  const uncertain = await reserveSpend(wid, owner, request(connection.id, '1'));
+  const uncertainInput = request(connection.id, '1');
+  const uncertain = await reserveSpend(wid, owner, uncertainInput);
   await dispatchSpend(wid, owner, uncertain.id);
   await settle(wid, uncertain.id, null);
-  // Owner decision D3: an unknown or overrun charge pauses nothing; the uncertain ledger row alone blocks new work.
+  // Unknown charges stay on their original request without blocking independent reservations or dispatch.
   assert.equal((await listProviders(wid, owner)).budget.paused, false);
-  await rejects(reserveSpend(wid, owner, request(connection.id, '1')), 409, 'Uncertain charges block new paid work without pausing.');
+  assert.deepEqual(await reserveSpend(wid, owner, uncertainInput), { id: uncertain.id, status: 'uncertain', created: false });
+  await rejects(dispatchSpend(wid, owner, uncertain.id), 409, 'An uncertain original request cannot be dispatched again.');
+  const independent = await reserveSpend(wid, owner, request(connection.id, '1'));
+  assert.equal(independent.created, true);
+  await dispatchSpend(wid, owner, independent.id);
+  await settle(wid, independent.id, '0');
+  assert.deepEqual((await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1', [uncertain.id])).rows[0], { status: 'uncertain', actual_micros: null });
   await settle(wid, uncertain.id, '1.5');
   assert.equal((await listProviders(wid, owner)).budget.paused, false, 'An overrun is recorded, not paused.');
   assert.equal((await pool.query('SELECT actual_micros FROM provider_request WHERE id=$1', [uncertain.id])).rows[0].actual_micros, '1500000');
@@ -159,7 +166,11 @@ export async function runProviderChecks(options: Options) {
   const overflowRow = (await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1', [overflow.id])).rows[0];
   assert.deepEqual(overflowRow, { status: 'uncertain', actual_micros: null, provider_reference: 'synthetic-overflow' });
   assert.equal((await listProviders(rolloverWorkspace, owner)).budget.paused, false, 'An oversized report stays uncertain without pausing (D3).');
-  await rejects(reserveSpend(rolloverWorkspace, owner, request(rollConnection, '1')), 409, 'An oversized reported charge must block further spending.');
+  const overflowIndependent = await reserveSpend(rolloverWorkspace, owner, request(rollConnection, '1'));
+  assert.equal(overflowIndependent.created, true, 'An oversized charge does not block an independent request.');
+  await cancelReservation(rolloverWorkspace, owner, overflowIndependent.id);
+  await rejects(dispatchSpend(rolloverWorkspace, owner, overflow.id), 409, 'The original oversized charge cannot be dispatched again.');
+  assert.deepEqual((await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1', [overflow.id])).rows[0], overflowRow);
   await rejects(cancelReservation(rolloverWorkspace, owner, overflow.id), 409, 'An owner cannot cancel an uncertain charge.');
 
   // Rotate only synthetic data; restore the original active key before the running web/worker use it.

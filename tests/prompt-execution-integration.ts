@@ -54,17 +54,14 @@ export async function runPromptExecutionChecks(){
  const start=async(f:Fixture,user=owner)=>(await startPromptExecution(f.project,user,{quoteId:(await quote(f,user)).id,requestKey:randomUUID()})).comparison;
  const detail=async(f:Fixture,id:string)=>(await getPromptComparison(f.project,owner,id)).comparison;
  const ledger=async(id:string)=>(await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1',[id])).rows[0];
- // Owner decision D3 removed the cap that used to refuse a later child. This uncertain sentinel is the real
- // replacement trigger: once the workspace holds n reservations, one uncertain row makes the next child meet
- // spendingGate's 409 inside the same transaction, so the rollback must also remove the sentinel.
- async function withUncertainSentinel<T>(workspace:string,n:number,action:()=>Promise<T>){
-  await pool.query(`CREATE FUNCTION prompt_execution_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-   IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-    INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,status,budget_month)
-    VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.connection_revision,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,'uncertain',NEW.budget_month);
+ // Exercise the real manual-pause gate after n reservations; rollback must remove every child and the pause.
+ async function withPauseSentinel<T>(workspace:string,n:number,action:()=>Promise<T>){
+  await pool.query(`CREATE FUNCTION prompt_execution_pause_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+   IF NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id)=TG_ARGV[1]::int THEN
+    UPDATE workspace_budget SET paused=true WHERE workspace_id=NEW.workspace_id;
    END IF; RETURN NULL; END $$`);
-  await pool.query(`CREATE TRIGGER prompt_execution_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION prompt_execution_sentinel('${workspace}','${n}')`);
-  try{return await action();}finally{await pool.query('DROP TRIGGER prompt_execution_sentinel ON provider_request');await pool.query('DROP FUNCTION prompt_execution_sentinel()');}
+  await pool.query(`CREATE TRIGGER prompt_execution_pause_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION prompt_execution_pause_sentinel('${workspace}','${n}')`);
+  try{return await action();}finally{await pool.query('DROP TRIGGER prompt_execution_pause_sentinel ON provider_request');await pool.query('DROP FUNCTION prompt_execution_pause_sentinel()');}
  }
  try{
   const f=await fixture(),freeBefore=free;assert.equal((await getPromptExecutions(f.project,viewer)).role,'viewer');assert.equal(free,freeBefore);assert.equal(paid,0);
@@ -102,7 +99,7 @@ export async function runPromptExecutionChecks(){
   const recoveredStart=await startPromptExecution(permissions.project,editor,{quoteId:permissionQuote.quote.id,requestKey:permissionKey});assert.equal(recoveredStart.role,'editor');assert.equal(recoveredStart.comparison.id,permissionStart.comparison.id);assert.equal(recoveredStart.comparison.canCancel,false);assert.equal(paid,2);
   console.log('PASS current-role cancellation metadata, immutable bounded authored preview and accepted-start recovery after quote expiry');
 
-  const budget=await fixture();await withUncertainSentinel(budget.workspace,1,()=>assert.rejects(start(budget),{status:409,code:'SPENDING_BUDGET'}));assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
+  const budget=await fixture();await withPauseSentinel(budget.workspace,1,()=>assert.rejects(start(budget),{status:409,code:'SPENDING_BUDGET'}));assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[budget.workspace])).rows[0].paused,false);
   const rollback=await fixture(),rq=await quote(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let insertedQueueId:string|undefined;boss.send=(async(...args:any[])=>{insertedQueueId=await (originalSend as any)(...args);throw new Error('Synthetic failure after queue insertion');}) as typeof boss.send;
   try{await assert.rejects(startPromptExecution(rollback.project,owner,{quoteId:rq.id,requestKey:randomUUID()}));}finally{boss.send=originalSend;}
   assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.ok(insertedQueueId);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[insertedQueueId])).rowCount,0);
@@ -152,7 +149,7 @@ export async function runPromptExecutionChecks(){
   mode='ok';const nextRun=await start(wallet);await executePromptComparison(nextRun.id,send);assert.deepEqual((await detail(wallet,nextRun.id)).runs.map((r:any)=>[r.status,r.chargeStatus]),[['completed','settled'],['completed','settled']]);assert.equal(paid,walletPaid+4);
   mode='refused_receipt';const receipted=await fixture(),receiptedRun=await start(receipted);const receiptedPaid=paid;await executePromptComparison(receiptedRun.id,send);const receiptedRuns=(await detail(receipted,receiptedRun.id)).runs;
   assert.equal(paid,receiptedPaid+1);assert.deepEqual(receiptedRuns.map((r:any)=>r.status),['uncertain','cancelled']);assert.ok(receiptedRuns[0].generationId);assert.equal((await ledger(receiptedRuns[0].id)).status,'uncertain');
-  mode='ok';await assert.rejects(start(receipted),{status:409,code:'SPENDING_BUDGET'});assert.equal(paid,receiptedPaid+1);
+  mode='ok';const receiptedIndependent=await start(receipted);assert.equal(receiptedIndependent.runs.length,2);assert.ok(receiptedIndependent.runs.every(run=>run.status==='queued'));await cancelPromptComparison(receipted.project,owner,receiptedIndependent.id,{});await executePromptComparison(receiptedRun.id,send);assert.deepEqual((await detail(receipted,receiptedRun.id)).runs.map(run=>run.status),['uncertain','cancelled']);assert.equal((await ledger(receiptedRuns[0].id)).actual_micros,null);assert.equal(paid,receiptedPaid+1);
   console.log('PASS OpenRouter credit refusal settles its child at $0 while the sibling and the next start proceed; a refusal carrying a generation header stays uncertain (D3)');
   // Owner decision D3(6): Start authorizes every child and keys one zero-retry job to each child; quote age
   // after Start, sibling order and one child's refusal stop no sibling, and the sweeper decides per child.
@@ -166,7 +163,7 @@ export async function runPromptExecutionChecks(){
   assert.deepEqual(orderedDone.runs.map((r:any)=>r.status),['completed','completed']);assert.equal(orderedDone.canCancel,false);assert.equal(paid,before+2);for(const r of orderedRun.runs)assert.equal(sent.filter(v=>v===r.id).length,1);
   const drifted=await fixture(),driftRun=await start(drifted);before=paid;priceModel=mini;try{await executePromptComparison(driftRun.id,send);}finally{priceModel=null;}
   const driftDone=await detail(drifted,driftRun.id);assert.deepEqual(driftDone.runs.map((r:any)=>[r.model,r.status,r.chargeStatus]),[[mini,'cancelled','cancelled'],[models[1],'completed','settled']]);
-  assert.equal(driftDone.runs[0].diagnostic,'Not dispatched because the endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.');assert.equal(paid,before+1);assert.ok(!sent.includes(driftRun.runs[0].id));
+  assert.equal(driftDone.runs[0].diagnostic,'Not dispatched because the endpoint, permissions, credentials, the provider-request pause changed.');assert.equal(paid,before+1);assert.ok(!sent.includes(driftRun.runs[0].id));
   // Start sent exactly one job per child: id and executionId equal the child, zero retries, 180 seconds, no comparison-keyed job.
   // Deleting the first child's job leaves that child jobless; the worker group below runs the second child's job.
   const swept=await fixture(),sweptRun=await start(swept),sweptChild=sweptRun.runs[1].id;before=paid;
@@ -178,8 +175,8 @@ export async function runPromptExecutionChecks(){
   console.log('PASS Start authorizes every child (D3): quote age after Start, sibling order and a price change on one model stop no sibling; the sweeper cancels only a jobless queued child');
 
   mode='ok';const uncertain=await fixture(),uncertainRun=await start(uncertain);mode='truncated';await executePromptComparison(uncertainRun.id,send);const unresolved=await detail(uncertain,uncertainRun.id),child=unresolved.runs[0];assert.equal(child.status,'uncertain');assert.ok(child.generationId);assert.equal(unresolved.runs[1].status,'cancelled');before=paid;await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);
-  // Owner decision D3: the uncertain child cancels its sibling and blocks new work through the ledger, without pausing.
-  assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,false);await saveBudget(uncertain.workspace,owner,{paused:false});await assert.rejects(start(uncertain),{status:409,code:'SPENDING_BUDGET'});
+  // An uncertain child cancels its comparison's siblings while an independent comparison can start.
+  assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,false);const independent=await start(uncertain);assert.ok(independent.runs.every(run=>run.status==='queued'));await cancelPromptComparison(uncertain.project,owner,independent.id,{});await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);assert.equal((await ledger(child.id)).status,'uncertain');assert.equal((await ledger(child.id)).actual_micros,null);
   await assert.rejects(reconcilePromptExecution(uncertain.project,editor,child.id,{},send),{status:404});
   for(const change of [{id:'gen-other'},{session_id:'foreign'},{external_user:'foreign'},{finish_reason:null},{total_cost:'0.01'}]){receiptChange=change;assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'inconclusive');assert.equal((await ledger(child.id)).status,'uncertain');}
   // Expiring copied input must not orphan an unresolved charge or restore payload on recovery.
@@ -335,8 +332,8 @@ export async function runPromptExecutionChecks(){
   assert.deepEqual(three.quote.routes.map(r=>r.model),selected.slice(0,3));
   for(const invalid of [[...selected,'other/fifth'],[...selected.slice(0,3),selected[0]]])await assert.rejects(quotePromptExecution(four.project,owner,{...fourInput,models:invalid},sendFour),{status:400});
   const fourQuote=(await quotePromptExecution(four.project,owner,fourInput,sendFour)).quote;assert.equal(fourQuote.estimateUsd,'0.081716');
-  // Owner decision D3: the uncertain sentinel after three reservations, not a cap, refuses the fourth child.
-  await withUncertainSentinel(four.workspace,3,()=>assert.rejects(startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:randomUUID()}),{status:409,code:'SPENDING_BUDGET'}));
+  // The real manual-pause gate after three reservations refuses the fourth child inside the transaction.
+  await withPauseSentinel(four.workspace,3,()=>assert.rejects(startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:randomUUID()}),{status:409,code:'SPENDING_BUDGET'}));assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[four.workspace])).rows[0].paused,false);
   for(const table of ['provider_request','prompt_comparison','prompt_execution'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE workspace_id=$1`,[four.workspace])).rows[0].n,0,'The fourth reservation rolls back all preceding children.');
   const fourKey=randomUUID(),fourStart=await startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:fourKey});
   assert.equal(fourStart.comparison.runs.length,4);assert.equal(fourStart.comparison.answerMode,'individual');
@@ -524,8 +521,8 @@ export async function runPromptExecutionChecks(){
   const revokedHit=await cacheQuote([selected[3]]);assert.equal(revokedHit.quote.cacheReused,true);await revokeProvider(cached.workspace,cacheOwner,cached.connectionId);await assert.rejects(cacheStart(revokedHit),{status:404});
   const cacheUnknown=await fixture(),unknownQuote=(await quotePromptExecution(cacheUnknown.project,owner,{...cacheUnknown.request,reuseCached:true},sendFour)).quote;
   const unknownCacheStart=await startPromptExecution(cacheUnknown.project,owner,{quoteId:unknownQuote.id,requestKey:randomUUID()});loseFour=true;await executePromptComparison(unknownCacheStart.comparison.id,sendFour);loseFour=false;
-  const noUnknownHit=await quotePromptExecution(cacheUnknown.project,owner,{...cacheUnknown.request,reuseCached:true},sendFour);assert.equal(noUnknownHit.quote.cacheReused,false);await assert.rejects(startPromptExecution(cacheUnknown.project,owner,{quoteId:noUnknownHit.quote.id,requestKey:randomUUID()}),{status:409});
-  assert.equal(fourPaid-cachePaidBefore,6);assert.deepEqual((await pool.query('SELECT status,count(*)::int AS n,sum(actual_micros)::text AS micros FROM provider_request WHERE workspace_id=$1 GROUP BY status ORDER BY status',[cacheUnknown.workspace])).rows,[{status:'cancelled',n:1,micros:null},{status:'uncertain',n:1,micros:null}]);
+  const noUnknownHit=await quotePromptExecution(cacheUnknown.project,owner,{...cacheUnknown.request,reuseCached:true},sendFour);assert.equal(noUnknownHit.quote.cacheReused,false);const independentUnknown=await startPromptExecution(cacheUnknown.project,owner,{quoteId:noUnknownHit.quote.id,requestKey:randomUUID()});assert.ok(independentUnknown.comparison.runs.every(run=>run.status==='queued'&&!run.reuse));await cancelPromptComparison(cacheUnknown.project,owner,independentUnknown.comparison.id,{});await executePromptComparison(unknownCacheStart.comparison.id,sendFour);
+  assert.equal(fourPaid-cachePaidBefore,6);assert.deepEqual((await pool.query('SELECT status,count(*)::int AS n,sum(actual_micros)::text AS micros FROM provider_request WHERE workspace_id=$1 GROUP BY status ORDER BY status',[cacheUnknown.workspace])).rows,[{status:'cancelled',n:3,micros:null},{status:'uncertain',n:1,micros:null}]);
   console.log('PASS pinned cache expiry after actual workspace wait refuses paid fallback, explicit fresh work, purge/current-role enforcement and separate source accounting');
  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
 }
