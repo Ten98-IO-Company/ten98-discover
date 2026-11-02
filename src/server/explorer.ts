@@ -220,7 +220,7 @@ async function readExplorer(projectId:string,userId:string,params:URLSearchParam
       ...(query.predicates?{predicateMethod:advancedPredicateMethod(query.predicates)}:{}),
       ...(sessionProperties?{sessionProperties}:{}),
       ...(geographyUsed?{geographyProvenance:(coverage.status==='unavailable'||membershipUnavailable?{source:'db-ip-city-lite',scope:'matching-report-events',databaseCount:null,oldestDatabaseBuild:null,newestDatabaseBuild:null}:row.geography_provenance) as ExplorerGeographyProvenance}:{}),
-      breakdown:(membershipUnavailable||(fields||propertyDetails)&&coverage.status==='unavailable'?{groups:[],totalGroups:null,returnedGroupEvents:null,truncated:false}:row.breakdown) as {groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean},
+      breakdown:(membershipUnavailable||coverage.status==='unavailable'?{groups:[],totalGroups:null,returnedGroupEvents:null,truncated:false}:row.breakdown) as {groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean},
       properties:(membershipUnavailable?{keys:[],truncated:false}:row.properties) as {keys:string[];truncated:boolean},numeric:query.groupBy === 'property' && coverage.status !== 'unavailable'&&!membershipUnavailable ? row.numeric as Numeric : null};
     let propertyReport:PropertyReport|undefined;
     if(propertyDetails){

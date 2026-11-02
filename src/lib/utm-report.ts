@@ -30,7 +30,7 @@ export function validUtmResult(value:unknown,params:URLSearchParams):value is Ex
   const filters=Object.fromEntries(utmFilterFields.filter(key=>params.has(key)).map(key=>[key,params.get(key)]));
   if(Object.keys(query.filters).length!==Object.keys(filters).length||Object.entries(filters).some(([key,expected])=>(query.filters as Record<string,unknown>)[key]!==expected))return false;
   if(!Array.isArray(breakdown.groups)||typeof breakdown.truncated!=='boolean')return false;
-  if(value.coverage.status==='unavailable')return Object.values(totals).length===7&&Object.values(totals).every(n=>n===null)&&breakdown.groups.length===0&&breakdown.totalGroups===0&&breakdown.returnedGroupEvents===0&&!breakdown.truncated;
+  if(value.coverage.status==='unavailable')return Object.values(totals).length===7&&Object.values(totals).every(n=>n===null)&&breakdown.groups.length===0&&breakdown.totalGroups===null&&breakdown.returnedGroupEvents===null&&!breakdown.truncated;
   if(!['complete','partial'].includes(String(value.coverage.status))||!count(totals.events)||!count(totals.pageViews)||totals.events!==totals.pageViews||totals.customEvents!==0||!count(totals.identifiedEvents)||totals.identifiedEvents>totals.events||!count(totals.unidentifiedEvents)||totals.identifiedEvents+totals.unidentifiedEvents!==totals.events)return false;
   if(!count(breakdown.totalGroups)||breakdown.totalGroups>totals.events||breakdown.groups.length!==Math.min(100,breakdown.totalGroups)||breakdown.truncated!==(breakdown.totalGroups>100)||!count(breakdown.returnedGroupEvents))return false;
   let events=0,identified=0,previous=Infinity;const seen=new Set<string>();

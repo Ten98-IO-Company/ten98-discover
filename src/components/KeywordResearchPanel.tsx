@@ -1,9 +1,10 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {DataTable,RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl,Tooltip} from '@ten98/ui';
+import {DataTable,RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl,Tooltip,Field,Input,Select,ReportToolbar} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
+import {emptyKeywordResultFilters,filterKeywordResults,type KeywordResultFilters} from '../lib/keyword-result-filters';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Role=WorkspaceRole;
@@ -458,12 +459,24 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
 
 function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;result:Result;marketName:string;canSave:boolean;disabled:boolean;onSave:(indexes:number[])=>void}){
   const [selected,setSelected]=useState<string[]>([]);
-  const rows=result.rows.map((row,sourceIndex)=>({...row,sourceIndex}));
+  const [filters,setFilters]=useState(emptyKeywordResultFilters),prefix=useId();
+  const {rows,errors}=filterKeywordResults(result.rows.map((row,sourceIndex)=>({...row,sourceIndex})),filters),invalid=Object.keys(errors).length>0;
+  const intents=[...new Set(result.rows.flatMap(row=>row.intent===null?[]:[row.intent]))].sort();
+  const hiddenSelected=selected.filter(key=>!rows.some(row=>String(row.sourceIndex)===key)).length;
+  const setFilter=(key:keyof KeywordResultFilters,value:string)=>setFilters(current=>({...current,[key]:value}));
+  const bounds=[['minVolume','Min monthly volume'],['maxVolume','Max monthly volume'],['minCpc','Min historical CPC (USD)'],['maxCpc','Max historical CPC (USD)'],['minDifficulty','Min organic difficulty'],['maxDifficulty','Max organic difficulty']] as const;
   return <div className="stack">
     {result.rows.length===0&&<p>No matching keyword data was returned. Unavailable data is not zero.</p>}
     <p className="hint">Source: {result.source} · retrieved {dt(result.retrievedAt)} · market {marketName}. Showing {result.rows.length}{result.totalCount!=null?' of '+result.totalCount:''} keywords{result.limited?' (bounded to the requested limit of '+run.request.limit+')':''}. Volumes may overlap between keywords and are not summed.</p>
-    {canSave&&result.rows.length>0&&<div className="row"><button className="btn ghost" disabled={disabled} onClick={()=>setSelected(rows.map(row=>String(row.sourceIndex)))}>Select all results</button><button className="btn ghost" disabled={disabled||!selected.length} onClick={()=>setSelected([])}>Clear selection</button><button className="btn primary" disabled={disabled||!selected.length} onClick={()=>onSave(selected.map(Number))}>Save {selected.length||''} selected keywords</button><Tooltip content="Search and sorting use saved results and make no provider requests. Selected keywords stay selected when hidden by search or pagination."><button type="button" className="btn ghost" aria-label="About result selection">?</button></Tooltip></div>}
-    <div role="region" aria-label="Keyword data table"><DataTable ariaLabel="Keyword research results" rows={rows} rowKey={row=>String(row.sourceIndex)} responsive="stack" pageSize={25} searchPlaceholder="Search retained keywords…" selectable={canSave} selectionLabel={row=>'Select research keyword '+row.keyword} selectionDisabled={disabled} selectedKeys={selected} onSelectionChange={setSelected} emptyTitle="No matching keyword results" emptyDescription="Unavailable data is not zero." sortLabel={header=>'Sort by '+header} columns={[
+    {result.rows.length>0&&<ReportToolbar label="Retained keyword filters" controls={<>
+      <Field label="Include keyword text" htmlFor={prefix+'include'}><Input id={prefix+'include'} maxLength={200} value={filters.include} onChange={event=>setFilter('include',event.target.value)} disabled={disabled}/></Field>
+      <Field label="Exclude keyword text" htmlFor={prefix+'exclude'}><Input id={prefix+'exclude'} maxLength={200} value={filters.exclude} onChange={event=>setFilter('exclude',event.target.value)} disabled={disabled}/></Field>
+      <Field label="Keyword intent" htmlFor={prefix+'intent'}><Select id={prefix+'intent'} value={filters.intent} onChange={event=>setFilter('intent',event.target.value)} disabled={disabled} options={[{value:'',label:'All intents'},...intents.map(intent=>({value:intent,label:intent}))]}/></Field>
+    </>} advancedLabel="Metric ranges" advanced={<div className="saved-keyword-filter-grid">{bounds.map(([key,label])=><Field key={key} label={label} htmlFor={prefix+key} error={errors[key]}><Input id={prefix+key} inputMode={key.includes('Volume')?'numeric':'decimal'} maxLength={80} value={filters[key]} onChange={event=>setFilter(key,event.target.value)} disabled={disabled}/></Field>)}<p className="hint">Blank means no limit. A range excludes unavailable values; zero is an observed value.</p></div>}
+      summary={<p role="status">{invalid?'Fix keyword filter bounds to show results.':`${rows.length} of ${result.rows.length} retained keywords match · before table search`}{selected.length>0&&<span>{` · ${selected.length} selected${hiddenSelected?` · ${hiddenSelected} hidden by keyword filters`:''}`}</span>}</p>}
+      actions={<button type="button" className="btn ghost" disabled={disabled} onClick={()=>setFilters(emptyKeywordResultFilters())}>Reset keyword filters</button>}/>}
+    {canSave&&result.rows.length>0&&<div className="row"><button className="btn ghost" disabled={disabled||invalid||!rows.length} onClick={()=>setSelected(current=>[...new Set([...current,...rows.map(row=>String(row.sourceIndex))])])}>Select all filtered results</button><button className="btn ghost" disabled={disabled||!selected.length} onClick={()=>setSelected([])}>Clear selection</button><button className="btn primary" disabled={disabled||!selected.length} onClick={()=>onSave(selected.map(Number))}>Save {selected.length||''} selected keywords</button><Tooltip content="Filters, search and sorting use saved results and make no provider requests. Select all filtered results adds every keyword matching the keyword filters, including other pages and rows hidden by table search. Selected keywords stay selected when hidden by filters, search or pagination."><button type="button" className="btn ghost" aria-label="About result selection">?</button></Tooltip></div>}
+    <div role="region" aria-label="Keyword data table"><DataTable ariaLabel="Keyword research results" rows={rows} rowKey={row=>String(row.sourceIndex)} responsive="stack" pageSize={25} searchPlaceholder="Search retained keywords…" selectable={canSave} selectionLabel={row=>'Select research keyword '+row.keyword} selectionDisabled={disabled} selectedKeys={selected} onSelectionChange={setSelected} emptyTitle={invalid?'Fix keyword filters':'No matching keyword results'} emptyDescription={invalid?'Correct the highlighted bounds or reset keyword filters.':'Adjust the keyword filters or table search. Unavailable data is not zero.'} sortLabel={header=>'Sort by '+header} columns={[
       {key:'keyword',header:'Keyword',rowHeader:true,wrap:true,minWidth:'md',render:r=><>{r.keyword}
             {(r.monthlySearches.length>0||r.intentUpdatedAt)&&<Disclosure summary="Monthly history" variant="plain">
               {r.monthlySearches.length>0?
