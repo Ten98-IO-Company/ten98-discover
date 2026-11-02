@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {Alert, BarList, Button, Card, DataTable, Inline, MetricCard, ReportToolbar, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
+import {Alert, BarList, Button, Card, DataTable, Inline, Input, MetricCard, ReportToolbar, Select, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
@@ -174,55 +174,55 @@ export function AIInsightsView(props: AIInsightsViewProps) {
             <ReportToolbar label="Answer analysis filters" advancedOpen={advancedOpen} onAdvancedOpenChange={setAdvancedOpen} controls={<>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'from'}>From</label>
-                <input id={prefix + 'from'} type="date" value={draft.from} disabled={draftOff} style={controlStyle}
+                <Input id={prefix + 'from'} type="date" value={draft.from} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('from', e.target.value); }} />
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'to'}>To</label>
-                <input id={prefix + 'to'} type="date" value={draft.to} disabled={draftOff} style={controlStyle}
+                <Input id={prefix + 'to'} type="date" value={draft.to} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('to', e.target.value); }} />
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'timezone'}>Timezone</label>
-                <input id={prefix + 'timezone'} type="text" value={draft.timeZone} disabled={draftOff} style={controlStyle}
+                <Input id={prefix + 'timezone'} type="text" value={draft.timeZone} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('timeZone', e.target.value); }} />
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'model'}>Model</label><Tooltip content={<>Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</>}><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About model options" disabled={busy}>?</Button></Tooltip></Inline>
-                <select id={prefix + 'model'} value={draft.model} disabled={draftOff} style={controlStyle}
+                <Select id={prefix + 'model'} value={draft.model} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('model', e.target.value); }}>
                   <option value="">All observed models</option>
                   {draft.model&&!props.modelOptions?.values.includes(draft.model)&&<option value={draft.model}>{draft.model} — selected, outside these options</option>}
                   {(props.modelOptions?.values??[]).map(model=><option key={model} value={model}>{model}</option>)}
-                </select>
+                </Select>
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'prompt'}>Prompt</label>
-                <select id={prefix + 'prompt'} value={draft.promptId} disabled={draftOff} style={controlStyle}
+                <Select id={prefix + 'prompt'} value={draft.promptId} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('promptId', e.target.value); }}>
                   <option value="">All prompts</option>
                   {promptOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
+                </Select>
               </div>
             </>} advanced={<>
               <div className="field" style={{ margin: 0 }}>
                 <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'tag'}>Current tag</label><Tooltip content="Matches current user tags; historical tags were not recorded."><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About current tags" disabled={busy}>?</Button></Tooltip></Inline>
-                <input id={prefix + 'tag'} type="text" value={draft.tag} disabled={draftOff} style={controlStyle}
+                <Input id={prefix + 'tag'} type="text" value={draft.tag} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('tag', e.target.value); }} />
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'matcher'}>Matching method</label><Tooltip content="Substring matching can include parts of unrelated words."><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About matching methods" disabled={busy}>?</Button></Tooltip></Inline>
-                <select id={prefix + 'matcher'} value={draft.matcher} disabled={draftOff} style={controlStyle}
+                <Select id={prefix + 'matcher'} value={draft.matcher} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('matcher', e.target.value); }}>
                   <option value="unicode-boundary-v1">Unicode word boundaries</option>
                   <option value="elmo-substring-v1">Elmo substring baseline</option>
-                </select>
+                </Select>
               </div>
 
             <div className="row" style={{ flexWrap: 'wrap', alignItems: 'flex-end', gap: 8 }}>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'prompt-search'}>Find prompt</label>
-                <input id={prefix + 'prompt-search'} type="search" value={promptSearch} disabled={draftOff} style={controlStyle}
+                <Input id={prefix + 'prompt-search'} type="search" value={promptSearch} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onPromptSearchChange(e.target.value); }} />
               </div>
               <button type="button" className="btn btn-secondary" style={controlStyle} disabled={draftOff}
@@ -250,7 +250,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
           {value: 'observed', label: 'Observed days', content: basis !== 'observed' ? null : <>
         <section className="card stack" aria-labelledby={prefix + 'trend'}>
           <div className="row between"><h3 id={prefix + 'trend'}>Daily trend</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'daily-data'); }}>View exact daily values</button></div>
-          <div className="ai-trend-controls"><div className="field"><label htmlFor={prefix + 'daily-entity'}>Daily entity</label><select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff) onDailyEntity(e.target.value); }}>{report.dailyEntities.map(entity => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</select></div><div className="field"><label htmlFor={prefix + 'trend-metric'}>Trend metric</label><select id={prefix + 'trend-metric'} value={trendMetric} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff && Object.hasOwn(metricLabels,e.target.value)) setTrendMetric(e.target.value as TrendMetric); }}>{Object.entries(metricLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></div></div>
+          <div className="ai-trend-controls"><div className="field"><label htmlFor={prefix + 'daily-entity'}>Daily entity</label><Select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff) onDailyEntity(e.target.value); }}>{report.dailyEntities.map(entity => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</Select></div><div className="field"><label htmlFor={prefix + 'trend-metric'}>Trend metric</label><Select id={prefix + 'trend-metric'} value={trendMetric} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff && Object.hasOwn(metricLabels,e.target.value)) setTrendMetric(e.target.value as TrendMetric); }}>{Object.entries(metricLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</Select></div></div>
           <DailyTrend report={report} metric={trendMetric} disabled={reportOff}/>
         </section>
         <section className="card stack" aria-labelledby={prefix + 'leaderboard'}>
