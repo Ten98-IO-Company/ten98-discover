@@ -37,7 +37,7 @@ try{
   await runKeyword(first.id);
   await panel.getByRole('button',{name:'Check status',exact:true}).click();
   const table=panel.getByRole('region',{name:'Keyword data table',exact:true});await table.waitFor();
-  const cells=await table.locator('tbody > tr').first().locator(':scope > td:not(:has(input[type=checkbox]))').allTextContents();
+  const cells=await table.locator('tbody > tr').first().locator(':scope > :is(th,td):not(:has(input[type=checkbox]))').allTextContents();
   assert.equal(cells[1],'0');assert.equal(cells[2],'Unavailable');assert.match(await panel.innerText(),/No data returned.*omitted fixture/);
   await panel.getByText('Request details',{exact:true}).click();
   assert.match(await panel.innerText(),/DataForSEO Labs \/ Google/);assert.ok((await panel.innerText()).includes(first.id));assert.equal(await panel.locator('.t98-cost-root').count(),0);
@@ -55,7 +55,7 @@ try{
   const retried=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
   await retry.click();const acceptedRetry=await retried;assert.equal(acceptedRetry.status(),202);
   const retriedRun=(await acceptedRetry.json()).run;assert.deepEqual(retriedRun.request.keywords,['lost acknowledgement fixture']);
-  await retry.waitFor({state:'hidden'});await table.locator(':scope > table > tbody > tr').filter({hasText:'lost acknowledgement fixture'}).waitFor();
+  await retry.waitFor({state:'hidden'});await table.locator('tbody > tr').filter({hasText:'lost acknowledgement fixture'}).waitFor();
   assert.equal(lost.bodies.length,2);assert.deepEqual(lost.bodies[0],lost.bodies[1]);await lost.dispose();
   assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'2');
   assert.equal((await providerCounts())['keyword-dispatch']-(initialCounts['keyword-dispatch']??0),2);
@@ -81,6 +81,7 @@ try{
     await accountMenu(page);
     assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());assert.equal(await page.getByText('Your session expired. Sign in again.',{exact:true}).count(),0);
     assert.equal(await page.getByText('Synthetic stale response.',{exact:true}).count(),0);
+    await page.keyboard.press('Escape');assert.equal(await page.getByRole('button',{name:'Account menu',exact:true}).getAttribute('aria-expanded'),'false');
   }
   stage='Region market selection retains exact preparation and result scope';
   const regionCounts=await providerCounts();
@@ -103,7 +104,7 @@ try{
       const finished=page.waitForResponse(response=>response.url().endsWith(B+'/runs/'+regionRun.id)&&response.request().method()==='GET');
       await panel.getByRole('button',{name:'Check status',exact:true}).click();const saved=(await (await finished).json()).run;
       assert.equal(saved.status,'completed');assert.equal(saved.request.locationCode,locationCode);assert.equal(saved.request.languageCode,languageCode);assert.equal(saved.result.rows[0].keyword,quoteBody.request.keywords[0]);
-      await table.locator(':scope > table > tbody > tr').filter({hasText:saved.result.rows[0].keyword}).waitFor();
+      await table.locator('tbody > tr').filter({hasText:saved.result.rows[0].keyword}).waitFor();
       assert.deepEqual(regionSession.errors,[]);assert.deepEqual(regionSession.outbound,[]);
     }finally{await regionSession.browser.close();}
   }

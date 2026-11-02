@@ -7,10 +7,11 @@ import {runKeyword} from './jobs.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
 fixtureGuard();
+const suffix=process.argv[2]??'';assert.ok(process.argv.length<=3&&(suffix===''||/^[a-z][a-z-]{0,19}$/.test(suffix)),'Optional argument: a fresh lowercase/hyphen phase suffix, maximum 20 characters.');
 
 const {pool}=getDatabase();let session,stage='initial';const cleanups=[];
 async function phase(label){
-  await session?.browser.close();const group=await createKeywordCase(label);session=await browserSession(group.owner);const {page}=session;
+  await session?.browser.close();const group=await createKeywordCase(label+(suffix?'-'+suffix:''));session=await browserSession(group.owner);const {page}=session;
   await page.goto(href(group,'keywords'),{waitUntil:'networkidle'});
   const panel=page.locator('section[aria-label="Keyword research"]');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
   return {group,page,panel,B:'/api/projects/'+group.main.id+'/keyword-research'};
@@ -28,7 +29,7 @@ async function start(page,panel,B,{double=false}={}){
 async function completed(page,panel,B,run){
   const response=page.waitForResponse(response=>response.url().endsWith(B+'/runs/'+run.id)&&response.request().method()==='GET');
   await panel.getByRole('button',{name:'Check status',exact:true}).click();const saved=(await (await response).json()).run;assert.equal(saved.id,run.id);
-  await panel.getByRole('region',{name:'Keyword data table',exact:true}).locator(':scope > table > tbody > tr').filter({hasText:saved.result.rows[0].keyword}).waitFor();
+  await panel.getByRole('region',{name:'Keyword data table',exact:true}).locator('tbody > tr').filter({hasText:saved.result.rows[0].keyword}).waitFor();
 }
 function noBrowserErrors(){assert.deepEqual(session.errors,[]);assert.deepEqual(session.outbound,[]);}
 
@@ -89,7 +90,7 @@ try{
       const retry=panel.getByRole('button',{name:'Retry same request',exact:true}),retried=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
       await retry.click();const response=await retried;assert.equal(response.status(),202);const accepted=(await response.json()).run;
       assert.deepEqual(accepted.request.keywords,['acknowledgement '+failure]);await retry.waitFor({state:'hidden'});
-      await panel.getByRole('region',{name:'Keyword data table',exact:true}).locator(':scope > table > tbody > tr').filter({hasText:'acknowledgement '+failure}).waitFor();
+      await panel.getByRole('region',{name:'Keyword data table',exact:true}).locator('tbody > tr').filter({hasText:'acknowledgement '+failure}).waitFor();
       assert.equal(lost.bodies.length,2);assert.deepEqual(lost.bodies[0],lost.bodies[1]);
       assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE quote_id=$1',[lost.bodies[0].preparationId])).rows[0].n,'1');
       await lost.dispose();await page.clock.setSystemTime(new Date());
@@ -102,8 +103,8 @@ try{
     const {group,page,panel,B}=await phase('reconcile');const before=await providerCounts();await overviewInputs(panel,'Known recovery fixture');
     const run=await start(page,panel,B);await runKeyword(run.id,'receipt-only');await panel.getByRole('button',{name:'Check status',exact:true}).click();
     await panel.getByText('Check original request (owner)',{exact:true}).click();await panel.getByRole('button',{name:'Check original request',exact:true}).click();
-    const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Reconciled ·/).waitFor();
-    await selected.getByText('Request details',{exact:true}).click();assert.match(await selected.innerText(),/original request was checked, but no result was recovered/);assert.ok((await selected.innerText()).includes(run.id));assert.equal(await selected.locator('.t98-cost-root').count(),0);
+    const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Failed ·/).waitFor();
+    await selected.getByText('Request details',{exact:true}).click();assert.match(await selected.innerText(),/original provider request was found, but its live result is unavailable/);assert.match(await selected.innerText(),/Provider request status: settled/);assert.ok((await selected.innerText()).includes(run.id));assert.equal(await selected.locator('.t98-cost-root').count(),0);
     // Request recovery does not change the manual emergency stop.
     assert.equal((await pool.query('SELECT COALESCE((SELECT paused FROM workspace_provider_control WHERE workspace_id=$1),false) AS paused',[group.workspace.id])).rows[0].paused,false);
     const after=await providerCounts();assert.equal(after['keyword-dispatch']-(before['keyword-dispatch']??0),1);assert.equal(after['keyword-reconcile']-(before['keyword-reconcile']??0),1);
