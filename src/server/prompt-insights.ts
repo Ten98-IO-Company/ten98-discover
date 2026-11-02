@@ -125,11 +125,17 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
  ${fromSql} ORDER BY c.created_at DESC,c.id DESC,e.position,e.id`,values)).rows;
  const identities=new Map<string,InsightIdentity>();
  if(comparison){
-  const captured=(await client.query(`SELECT e.id,q.prompt_id,q.version_id,e.route,v.text,${inputExpired} AS input_expired,
+  const captured=(await client.query(`SELECT e.id,q.prompt_id,q.version_id,q.request_version,e.route,v.text,${inputExpired} AS input_expired,
     CASE WHEN ${inputExpired} THEN NULL ELSE q.input END AS input,CASE WHEN ${inputExpired} THEN NULL ELSE q.messages END AS messages,p.user_tags
     ${fromSql.replace(' WHERE c.project_id', ' JOIN prompt_text_version v ON v.id=q.version_id AND v.prompt_id=q.prompt_id AND v.project_id=q.project_id WHERE c.project_id')}`,values)).rows;
   for(const row of captured){check();const identity:InsightIdentity={state:'unavailable',requestHash:null,maxCompletionTokens:null,providerName:null,isBranded:classifyPrompt(row.text,profile.name,p.origin,profile.aliases,row.user_tags).isBranded,promptPreview:(row.text as string).slice(0,160).replace(/[\uD800-\uDBFF]$/,'')};
-   if(!row.input_expired){const parsed=executionInput.safeParse(row.input);identity.state='invalid';
+   if(!row.input_expired){
+    let capturedInput:unknown=row.input;
+    // Historical approvals required this retired flag; inference identity does not.
+    if(row.request_version===0&&capturedInput&&typeof capturedInput==='object'&&!Array.isArray(capturedInput)&&Object.hasOwn(capturedInput,'fundedCredits')){
+     const {fundedCredits,...legacy}=capturedInput as Record<string,unknown>;capturedInput=fundedCredits===true?legacy:null;
+    }
+    const parsed=executionInput.safeParse(row.request_version===0||row.request_version===1?capturedInput:null);identity.state='invalid';
     if(parsed.success){const input=parsed.data,messages=[...(input.systemText?[{role:'system',content:input.systemText}]:[]),{role:'user',content:row.text}];
      const saved=z.array(z.object({role:z.enum(['system','user']),content:safeText.max(4000)}).strict()).min(1).max(2).safeParse(row.messages);
      if(saved.success&&input.promptId.toLowerCase()===row.prompt_id&&input.versionId.toLowerCase()===row.version_id&&openRouterRouteIdentity(row.route)&&input.models.includes(row.route.model)&&canonicalHash(messages)===canonicalHash(saved.data)){

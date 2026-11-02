@@ -8,7 +8,7 @@ import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {saveProvider} from '../src/server/providers.ts';
-import {compileRankPlan,rankGroupPayload,rankPlanTotal} from '../src/server/rank-execution-plan.ts';
+import {compileRankPlan,rankGroupPayload} from '../src/server/rank-execution-plan.ts';
 import {getRankMatrix,exportRankMatrix} from '../src/server/rank-matrix.ts';
 
 export async function runRankMatrixChecks(){
@@ -35,14 +35,14 @@ export async function runRankMatrixChecks(){
   type Fixture=Awaited<ReturnType<typeof fixture>>;
   async function run(f:Fixture,opt:{days?:number;position?:number;basis?:'organic'|'absolute';status?:'ranked'|'not_found'|'failed'|'pending';runStatus?:'completed'|'partial'|'failed'|'waiting';subset?:boolean;quote?:boolean;target?:Record<string,unknown>;keywords?:Keyword[];device?:'desktop'|'mobile';observed?:string}={}){
     const id=randomUUID(),when=at(opt.days??0),state=opt.status??'ranked',ranked=state==='ranked',measured=ranked||state==='not_found',status=opt.quote?'quoted':opt.runStatus??(state==='failed'?'failed':'completed');
-    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:opt.device??'desktop',keywords:opt.keywords??[f.keywords[0]],baseMicros:1000n});
-    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at,request_key,is_subset,created_at,started_at,completed_at)
-      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,$12,$13,$13::timestamptz+interval '5 minutes',$14,$15,$13,$16,$17)`,[id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,rankPlanTotal(plan).toString(),when,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:when,opt.quote||status==='waiting'?null:when]);
+    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:opt.device??'desktop',keywords:opt.keywords??[f.keywords[0]]});
+    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,request_version,expires_at,request_key,is_subset,created_at,started_at,completed_at)
+      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,1,$12::timestamptz+interval '5 minutes',$13,$14,$12,$15,$16)`,[id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,when,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:when,opt.quote||status==='waiting'?null:when]);
     if(opt.quote)return {id,plan};
     for(const [ordinal,group]of plan.groups.entries()){
       const dispatch=randomUUID(),payload=rankGroupPayload(plan,group);
-      await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,connection_revision,status,budget_month)
-        VALUES($1,$2,$3,$4,$5,'rank.queued',$6,$7,$7,1,'settled',date_trunc('month',now())::date)`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64),group.maximumMicros]);
+      await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,connection_revision,status)
+        VALUES($1,$2,$3,$4,$5,'rank.queued',$6,1,'settled')`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64)]);
       await pool.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase,dispatched_at,completed_at) VALUES($1,$2,$3,$4,$5,'queued',$6,$7,$8,'finished',$9,$9)`,[dispatch,f.workspace,f.project,id,ordinal,group.taskIds.length,JSON.stringify(payload),canonicalHash(payload),when]);
       await pool.query(`INSERT INTO rank_task(id,workspace_id,project_id,run_id,dispatch_id,keyword_id,keyword,match_case,device,result_status,position,rank_basis,absolute_position,ranking_url,checked_depth,returned_item_count,observed_at,retrieved_at,raw_evidence)
         SELECT t.id,$2,$3,$4,$5,t."keywordId",t.keyword,t."matchCase",t.device,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14
@@ -83,7 +83,7 @@ export async function runRankMatrixChecks(){
     const exported=await exportRankMatrix(csv.project,viewer,csv.tracker,{device:'desktop'});assert.equal(exported.rowCount,12);assert.equal(exported.filename,'rank-matrix.csv');assert.ok(exported.body.includes('"\'=HYPERLINK(""https://invalid.example"")"'));for(const value of ["'+SUM(1)","'@formula","'-1","'=x"])assert.ok(exported.body.includes(value));assert.ok(exported.body.includes('"""quoted"", term"'));assert.ok(exported.body.includes('"0","0"'));
     const expiredExport=await exportRankMatrix(e.project,viewer,e.tracker,{device:'desktop'});assert.ok(expiredExport.body.includes('"expired"'));assert.ok(!expiredExport.body.includes('synthetic-only'));assert.ok(!expiredExport.body.includes('raw_evidence'));
     const aborted=new AbortController();aborted.abort();await assert.rejects(exportRankMatrix(csv.project,viewer,csv.tracker,{device:'desktop'},aborted.signal),fail(499));await assert.rejects(exportRankMatrix(csv.project,viewer,csv.tracker,{device:'desktop',rows:[]}),fail(400));
-    console.log('PASS12/default26/max bounded columns, server-owned long-form CSV, formula/quote protection, retained zero coverage and abort/unknown-body rejection.');
+    console.log('PASS12/default26/max bounded columns, server-owned long-form CSV, formula/prepare protection, retained zero coverage and abort/unknown-body rejection.');
 
     const password=randomBytes(24).toString('base64url');await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),viewer,await hashPassword(password)]);
     const login=await handleApi(new Request(config.appUrl+'/api/auth/sign-in/email',{method:'POST',headers:{origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify({email:viewer+'@integration.test',password})}));assert.equal(login.status,200);

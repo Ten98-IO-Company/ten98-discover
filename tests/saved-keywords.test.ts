@@ -4,7 +4,7 @@ import {InputError} from '../src/server/validation.ts';
 import {normalizeSavedKeyword,savedKeywordRefreshable,normalizeSavedTags,tagColors,
   parseSavedKeywordSave,parseSavedKeywordTagChange,parseSavedKeywordRemove,parseSavedTagUpdate,parseSavedTagDelete,
   parseSavedKeywordFilters,parseSavedKeywordList,parseSavedKeywordSelection,parseSavedKeywordExport,
-  parseSavedKeywordRefreshQuote,parseSavedKeywordRefreshStart} from '../src/server/saved-keyword-input.ts';
+  parseSavedKeywordRefreshPreparation,parseSavedKeywordRefreshStart} from '../src/server/saved-keyword-input.ts';
 
 const a='badea601-d8f1-4ced-a178-b7523e4e3b80',b='d19cbf8c-d330-49de-a1ee-a7dd8080a86e';
 const base={requestId:a,revision:1};
@@ -95,13 +95,13 @@ test('list, export and refresh wrappers reject ambiguous selection or authority 
   assert.equal(parseSavedKeywordList({pageSize:250,cursor:'A_-012'}).cursor,'A_-012');
   assert.deepEqual(parseSavedKeywordSelection({type:'filtered',filters:{}}),{type:'filtered',filters});
   assert.deepEqual(parseSavedKeywordExport({selection:{type:'ids',keywordIds:[a,a]},format:'tsv'}),{selection:{type:'ids',keywordIds:[a]},format:'tsv'});
-  assert.deepEqual(parseSavedKeywordRefreshQuote({connectionId:b,selection:{type:'ids',keywordIds:[a]}}),{connectionId:b,selection:{type:'ids',keywordIds:[a]}});
-  assert.deepEqual(parseSavedKeywordRefreshStart({quoteId:a.toUpperCase(),requestKey:b}),{quoteId:a,requestKey:b});
+  assert.deepEqual(parseSavedKeywordRefreshPreparation({connectionId:b,selection:{type:'ids',keywordIds:[a]}}),{connectionId:b,selection:{type:'ids',keywordIds:[a]}});
+  assert.deepEqual(parseSavedKeywordRefreshStart({preparationId:a.toUpperCase(),requestKey:b}),{preparationId:a,requestKey:b});
   for(const raw of [{pageSize:25},{pageSize:'50'},{filters:undefined},{cursor:null},{cursor:''},{cursor:'ok\n'},{cursor:'a'.repeat(513)},{cursor:'a='},{query:{}}])rejected(()=>parseSavedKeywordList(raw));
   for(const raw of [{type:'all'},{type:'filtered'},{type:'filtered',filters:{},keywordIds:[a]},{type:'ids',keywordIds:[a],filters:{}},{type:'ids',keywordIds:[]}])rejected(()=>parseSavedKeywordSelection(raw));
   rejected(()=>parseSavedKeywordExport({selection:{type:'ids',keywordIds:[a]},format:'sheets'}));
-  rejected(()=>parseSavedKeywordRefreshQuote({connectionId:b,selection:{type:'ids',keywordIds:[a]},estimateUsd:'0'}));
-  rejected(()=>parseSavedKeywordRefreshStart({quoteId:a,requestKey:b,userId:a}));
+  rejected(()=>parseSavedKeywordRefreshPreparation({connectionId:b,selection:{type:'ids',keywordIds:[a]},estimateUsd:'0'}));
+  rejected(()=>parseSavedKeywordRefreshStart({preparationId:a,requestKey:b,userId:a}));
 });
 
 test('strict parser boundaries reject active, hidden and irregular objects without executing hooks',()=>{

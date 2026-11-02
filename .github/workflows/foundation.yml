@@ -343,3 +343,68 @@ jobs:
           fi
           node src/server/cli.ts diagnose worker
           pnpm test:integration
+
+  feature-browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.22.1'
+          package-manager-cache: false
+      - name: Install pinned browser tooling
+        id: browser-tooling
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          npm install --prefix "$RUNNER_TEMP/discover-browser-tools" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.64.1
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const lock=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/discover-browser-tools/package-lock.json','utf8'));
+          if(lock.packages['node_modules/playwright'].integrity!=='sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==')throw new Error('Unexpected Playwright archive identity');
+          NODE
+          "$RUNNER_TEMP/discover-browser-tools/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify retained keyword results
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_KEYWORD_COST_BROWSER: '1'
+        run: timeout 120s node tests/keyword-cost-library-browser.mjs
+      - name: Verify Explorer reports
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_EXPLORER_LIBRARY_BROWSER: '1'
+        run: timeout 120s node tests/explorer-library-browser.mjs
+      - name: Verify UTM reports
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_UTM_BROWSER: '1'
+        run: timeout 120s node tests/utm-report-browser.mjs
+      - name: Verify reopened domain polling
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_RESEARCH_POLLING_BROWSER: '1'
+          TEN98_DOMAIN_OVERVIEW_BROWSER: '1'
+        run: timeout 120s node tests/domain-overview-browser.mjs
+      - name: Verify reopened backlink polling
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_RESEARCH_POLLING_BROWSER: '1'
+          TEN98_BACKLINK_RESEARCH_BROWSER: '1'
+        run: timeout 120s node tests/backlink-research-browser.mjs

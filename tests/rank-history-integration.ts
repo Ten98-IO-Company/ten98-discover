@@ -10,7 +10,8 @@ import {createApiKey} from '../src/server/api-keys.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {saveProvider} from '../src/server/providers.ts';
 import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
-import {compileRankPlan,rankGroupPayload,rankPlanTotal} from '../src/server/rank-execution-plan.ts';
+import {rankRequestDiagnostic} from '../src/server/rank-serp-input.ts';
+import {compileRankPlan,rankGroupPayload} from '../src/server/rank-execution-plan.ts';
 import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from '../src/server/rank-history.ts';
 
 export async function runRankHistoryChecks(){
@@ -39,14 +40,14 @@ export async function runRankHistoryChecks(){
   type Options={device?:'desktop'|'mobile'|'both';status?:'ranked'|'not_found'|'failed'|'pending';position?:number;basis?:'organic'|'absolute';observed?:string;created?:string;started?:string;subset?:boolean;runStatus?:'completed'|'partial'|'failed'|'waiting';target?:Record<string,unknown>;quote?:boolean;keywords?:Keyword[]};
   async function run(f:Fixture,opt:Options={}){
     const id=randomUUID(),dispatch=randomUUID(),created=opt.created??at(0),device=opt.device??'desktop',state=opt.status??'ranked',keywords=opt.keywords??[f.keywords[0]];
-    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:device,keywords,baseMicros:1000n});
-    const estimate=rankPlanTotal(plan).toString(),status=opt.quote?'quoted':opt.runStatus??(state==='failed'?'failed':'completed');
-    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at,request_key,is_subset,created_at,started_at,completed_at)
-      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,$12,$13::timestamptz,$13::timestamptz+interval '5 minutes',$14,$15,$13,$16,$17)`,
-      [id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,estimate,created,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:opt.started??created,opt.quote||status==='waiting'?null:created]);
+    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:device,keywords});
+    const status=opt.quote?'quoted':opt.runStatus??(state==='failed'?'failed':'completed');
+    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,request_version,expires_at,request_key,is_subset,created_at,started_at,completed_at)
+      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,1,$12::timestamptz+interval '5 minutes',$13,$14,$12,$15,$16)`,
+      [id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,created,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:opt.started??created,opt.quote||status==='waiting'?null:created]);
     if(opt.quote)return {id,dispatch,tasks:[] as string[]};
-    await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,connection_revision,status,budget_month)
-      VALUES($1,$2,$3,$4,$5,'rank.queued',$6,$7,$7,1,'settled',date_trunc('month',now())::date)`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64),estimate]);
+    await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,connection_revision,status)
+      VALUES($1,$2,$3,$4,$5,'rank.queued',$6,1,'settled')`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64)]);
     const payload=rankGroupPayload(plan,plan.groups[0]);await pool.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase,dispatched_at,completed_at)
       VALUES($1,$2,$3,$4,0,'queued',$5,$6,$7,'finished',$8,$8)`,[dispatch,f.workspace,f.project,id,plan.tasks.length,JSON.stringify(payload),canonicalHash(payload),created]);
     const measured=state==='ranked'||state==='not_found',ranked=state==='ranked',position=opt.position??8;
@@ -111,12 +112,12 @@ export async function runRankHistoryChecks(){
     await pool.query('UPDATE rank_keyword SET pinned_at=now() WHERE id=$1',[kw.keywords[0].id]);assert.equal((await latest(kw,new URLSearchParams({pinned:'true'}))).rows.length,2);
     console.log('PASS microsecond keyset pages for runs/keywords/history, literal search, pins and filter/project-bound cursors');
 
-    const ledger=await fixture(['Costs']),charge=await run(ledger),quote=await run(ledger,{quote:true,created:at(1)});await pool.query("UPDATE rank_dispatch SET phase='uncertain' WHERE id=$1",[charge.dispatch]);
-    const list=await listRankRuns(ledger.project,viewer,ledger.tracker),summary=list.runs.find(r=>r.id===charge.id)!;assert.equal(summary.costStatus,'uncertain');assert.equal(summary.knownChargeUsd,'0.001000');assert.equal(list.runs.find(r=>r.id===quote.id)?.costStatus,'not_started');assert.equal(list.runs.find(r=>r.id===quote.id)?.quoteExpired,true);assert.ok(!JSON.stringify(list).includes('account_fingerprint'));assert.ok(!JSON.stringify(list).includes('tasks'));assert.equal(list.runs.length,2);
+    const ledger=await fixture(['Requests']),charge=await run(ledger),quote=await run(ledger,{quote:true,created:at(1)});await pool.query("UPDATE rank_dispatch SET phase='uncertain' WHERE id=$1",[charge.dispatch]);
+    const list=await listRankRuns(ledger.project,viewer,ledger.tracker),summary=list.runs.find(r=>r.id===charge.id)!;assert.equal(summary.requestStatus,'uncertain');assert.equal(Object.hasOwn(summary,'knownChargeUsd'),false);assert.equal(list.runs.find(r=>r.id===quote.id)?.requestStatus,'not_started');assert.equal(list.runs.find(r=>r.id===quote.id)?.preparationExpired,true);assert.ok(!JSON.stringify(list).includes('account_fingerprint'));assert.ok(!JSON.stringify(list).includes('tasks'));assert.equal(list.runs.length,2);
     for(const action of [()=>listRankRuns(f.project,outsider,f.tracker),()=>latest({...f,tracker:ledger.tracker}),()=>getRankKeywordHistory(f.project,viewer,f.tracker,ledger.keywords[0].id)])await assert.rejects(action(),fails(404));
     for(const params of [new URLSearchParams('device=desktop&device=mobile'),new URLSearchParams('search=%00'),new URLSearchParams('pinned=1'),new URLSearchParams('limit=2000')])await assert.rejects(latest(f,params),fails(400));
     const lock=await pool.connect();try{await lock.query('BEGIN');await lock.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[ledger.workspace]);let done=false;const pending=listRankRuns(ledger.project,viewer,ledger.tracker).then(()=>{done=true;throw new Error('Removed membership was reused.');},error=>{done=true;assert.ok(fails(404)(error));});await delay(50);assert.equal(done,false);await lock.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[ledger.workspace,viewer]);await lock.query('COMMIT');await pending;}finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();}
-    assert.equal(calls,0);console.log('PASS exact financial summaries, current viewer/tenant authority and role removal while waiting for workspace gate; zero provider calls');
+    assert.equal(calls,0);console.log('PASS exact request summaries, current viewer/tenant authority and role removal while waiting for workspace gate; zero provider calls');
 
     const password=randomBytes(24).toString('base64url');
     await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),viewer,await hashPassword(password)]);
@@ -146,22 +147,22 @@ export async function runRankHistoryChecks(){
     // Diagnostics restate cost and approval state: the worker's uncertain-charge text and a schedule skip on runs, a provider wallet refusal on a task.
     const uncertainText='The provider charge or result could not be confirmed. An owner must reconcile this check; it will not be sent again.',skipText='Skipped: paid work is paused or an earlier charge is uncertain. No paid request was sent.';
     await pool.query('UPDATE rank_run SET diagnostic=$2 WHERE id=$1',[expected[4].id,uncertainText]);await pool.query('UPDATE rank_run SET diagnostic=$2 WHERE id=$1',[expected[3].id,skipText]);
-    await pool.query('UPDATE rank_task SET diagnostic=$2 WHERE id=$1',[expected[4].tasks[0],dataforseoRefusalMessage.payment]);
+    await pool.query('UPDATE rank_task SET diagnostic=$2 WHERE id=$1',[expected[4].tasks[0],dataforseoRefusalMessage.provider]);
     for(const [suffix,read] of direct){
       const reply=await bearer(suffix);assert.equal(reply.status,200,suffix);const text=await reply.text(),body=JSON.parse(text);assert.equal(body.role,'owner');assert.deepEqual(undated(body),undated(await read()));
-      for(const secret of ['encrypted_credentials','account_fingerprint','synthetic-only','raw_evidence','estimateUsd','knownChargeUsd','costStatus','"diagnostic"',uncertainText,skipText,dataforseoRefusalMessage.payment])assert.ok(!text.includes(secret),suffix+' '+secret);
+      for(const secret of ['encrypted_credentials','account_fingerprint','synthetic-only','raw_evidence','estimateUsd','knownChargeUsd','costStatus','"diagnostic"',uncertainText,skipText,dataforseoRefusalMessage.provider])assert.ok(!text.includes(secret),suffix+' '+secret);
       assert.equal((await bearer(suffix,'POST')).status,403,suffix);
     }
     const keyRuns=await bearer('/runs').then(r=>r.json()),cookieRuns=await api('/runs').then(r=>r.json());assert.equal(keyRuns.runs.length,12);
-    assert.ok(cookieRuns.runs.every((r:any)=>/^\d+\.\d{6}$/.test(r.estimateUsd)&&/^\d+\.\d{6}$/.test(r.knownChargeUsd)&&r.costStatus==='final'));
-    assert.deepEqual(cookieRuns.runs.filter((r:any)=>r.diagnostic!==null).map((r:any)=>[r.id,r.diagnostic]),[[expected[4].id,uncertainText],[expected[3].id,skipText]]);
-    assert.deepEqual(cookieRuns.runs.map(({estimateUsd:_e,knownChargeUsd:_k,costStatus:_c,diagnostic:_d,...run}:any)=>run),keyRuns.runs);
+    assert.ok(cookieRuns.runs.every((r:any)=>r.requestStatus==='settled'&&!Object.hasOwn(r,'estimateUsd')&&!Object.hasOwn(r,'knownChargeUsd')));
+    assert.deepEqual(cookieRuns.runs.filter((r:any)=>r.diagnostic!==null).map((r:any)=>[r.id,r.diagnostic]),[[expected[4].id,rankRequestDiagnostic(uncertainText)],[expected[3].id,rankRequestDiagnostic(skipText)]]);
+    assert.deepEqual(cookieRuns.runs.map(({requestStatus:_r,diagnostic:_d,...run}:any)=>run),keyRuns.runs);
     // The cookie results and history keep the task diagnostic on every observation the key answer returns without it.
     const desktopRow=(value:any)=>value.rows.find((r:any)=>r.keywordId===b.keywords[0].id&&r.device==='desktop');
     const cookieLatest=desktopRow(await api('/results?device=desktop').then(r=>r.json())),keyLatest=desktopRow(await bearer('/results?device=desktop').then(r=>r.json()));
     const cookieHistory=await api('/keywords/'+b.keywords[0].id+'/history').then(r=>r.json()),keyHistory=await bearer('/keywords/'+b.keywords[0].id+'/history').then(r=>r.json());
     for(const [cookieObservation,keyObservation] of [[cookieLatest.latestAttempt,keyLatest.latestAttempt],[cookieLatest.latestObservation,keyLatest.latestObservation],[cookieHistory.observations[0],keyHistory.observations[0]]]){
-      assert.equal(cookieObservation.taskId,expected[4].tasks[0]);assert.equal(cookieObservation.diagnostic,dataforseoRefusalMessage.payment);
+      assert.equal(cookieObservation.taskId,expected[4].tasks[0]);assert.equal(cookieObservation.diagnostic,dataforseoRefusalMessage.provider);
       const {diagnostic:_d,...rest}=cookieObservation;assert.deepEqual(keyObservation,rest);assert.equal(Object.hasOwn(keyObservation,'diagnostic'),false);
     }
     assert.equal((await bearer('/runs?unknown=1')).status,400);assert.equal((await bearer('/runs','GET',{cookie})).status,400);

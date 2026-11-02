@@ -659,7 +659,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       <div className="row between">
         <div>
           <h2 ref={libraryHeading} tabIndex={-1}>Saved prompts</h2>
-          <p className="footnote">Saved prompts stay idle until you start a run. Template discovery is free; model suggestions use provider credits.</p>
+          <p className="footnote">Saved prompts stay idle until you start a run. Choose a template or generate suggestions using your saved provider connection.</p>
         </div>
         <div className="row">
           {canEdit && <button id="pl-discover-prompts" type="button" className="btn primary" onClick={() => openSuggestions(true)} disabled={busy || loading}>Discover prompts</button>}

@@ -80,6 +80,15 @@ export async function runPromptComparisonChecks(){
   const serialized=JSON.stringify(r);for(const secret of ['key_fingerprint','request_actor','input_hash','promptPrice'])assert.ok(!serialized.includes(secret));
   console.log('PASS equal-cell means differ from pooled counts, signed citation delta, exact drilldowns and tenant/member scope');
 
+  const versions=await fixture(),versionRows=await seed(versions,[{text:'Acme'},{text:'Acme',side:'previous'}]);
+  await pool.query("UPDATE prompt_execution_quote SET request_version=1,input=input-'fundedCredits' WHERE id=$1",[versionRows[0].id]);
+  const compatible=await get(versions);assert.equal(compatible.status,'comparable');assert.equal(compatible.cellCount,1);assert.equal(compatible.current.usable,1);assert.equal(compatible.previous.usable,1);
+  const invalidVersions=await seed(versions,[{text:'Acme'},{text:'Acme'},{text:'Acme'}]);
+  await pool.query("UPDATE prompt_execution_quote SET input=jsonb_set(input,'{fundedCredits}','false'::jsonb) WHERE id=$1",[invalidVersions[0].id]);
+  await pool.query('UPDATE prompt_execution_quote SET request_version=1 WHERE id=$1',[invalidVersions[1].id]);
+  await pool.query("UPDATE prompt_execution_quote SET request_version=1,input=(input-'fundedCredits')||'{\"unexpected\":true}'::jsonb WHERE id=$1",[invalidVersions[2].id]);
+  const strictVersions=await get(versions);assert.equal(strictVersions.current.identityInvalid,3);assert.equal(strictVersions.current.usable,1);assert.equal(strictVersions.previous.usable,1);assert.equal(strictVersions.cellCount,1);manifest(strictVersions);
+  console.log('PASS legacy and request-only captured identity compare without billing fields; invalid legacy flag and current obsolete/unknown fields stay excluded');
   const threshold=await fixture();await seed(threshold,[...Array.from({length:9},()=>({text:'Other'})),{status:'queued',completed:null},...Array.from({length:9},()=>({text:'Acme',side:'previous' as const})),{status:'failed',side:'previous'}]);
   let tr=await get(threshold);assert.equal(tr.status,'comparable');assert.deepEqual(tr.metrics[0].current,fraction('0'));assert.deepEqual(tr.metrics[0].delta,fraction('-1'));
   await seed(threshold,[{status:'failed'}]);tr=await get(threshold);assert.equal(tr.status,'incomplete');assert.equal(tr.metrics[0].delta,null);assert.deepEqual(tr.metrics[0].current,fraction('0'));assert.equal(tr.current.coverage.attempted,11);

@@ -3,7 +3,7 @@ import {Disclosure} from '@ten98/ui';
 
 export type ScheduleForm = { interval:'daily'|'weekly'|'monthly'; timezone:string; hour:string; minute:string; weekday:string; consent:boolean };
 export type ScheduleInfo = { enabled:boolean; approvalStale:boolean; interval:'manual'|'daily'|'weekly'|'monthly'; timezone:string|null; hour:number|null; minute:number|null; weekday:number|null; nextDueAt:string|null; approval:null|{id:string;approvedAt:string|null;approvedByUserId:string;connectionId:string;connectionName?:string}; staleReasons:string[] };
-export type ScheduleQuote = { id:string; targetText:string; taskCount:number; estimateUsd:string; expiresAt:string; expired:boolean };
+export type ScheduleQuote = { id:string; targetText:string; taskCount:number; expiresAt:string; expired:boolean };
 export type SchedulePreview = { capturedAt:string; timezone:string; occurrences:{utc:string;local:string;offsetSeconds:number}[] };
 export type RankScheduleViewProps = {
  idPrefix:string; backLabel?:string; trackerName:string; schedule:ScheduleInfo|null; quote:ScheduleQuote|null; preview:SchedulePreview|null;
@@ -97,32 +97,30 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
      )}
      {canManage ? (
       <>
-       <p className="hint" id={idPrefix + 'disable-hint'}>Disabling stops future scheduled requests, including work not yet sent. Requests already sent and their charges remain.</p>
+       <p className="hint" id={idPrefix + 'disable-hint'}>Disabling stops future scheduled requests, including work not yet sent. Requests already sent retain their original status.</p>
        <button type="button" className="btn" onClick={onDisable} disabled={!canDisable || locked || working} aria-describedby={idPrefix + 'disable-hint'}>Disable schedule</button>
       </>
      ) : (
-      <p className="hint">Only workspace owners can approve or disable recurring spending.</p>
+      <p className="hint">Only workspace owners can approve or disable recurring requests.</p>
      )}
     </section>
    )}
    {ownerReady && !quote && (
     <section className="card stack" aria-labelledby={idPrefix + 'quote-heading'}>
-     <h3 id={idPrefix + 'quote-heading'}>Full queued quote</h3>
-     <p className="hint">A full queued quote is required to approve or renew a schedule. Viewing this screen starts no check.</p>
-     <button type="button" className="btn primary" onClick={onPrepareQuote} disabled={locked || busy}>Prepare full queued quote</button>
+     <h3 id={idPrefix + 'quote-heading'}>Rank check settings</h3>
+     <p className="hint">Choose the connection and keywords for this schedule.</p>
+     <button type="button" className="btn primary" onClick={onPrepareQuote} disabled={locked || busy}>Choose check settings</button>
     </section>
    )}
    {ownerReady && quote && (
     <>
      <section className="card stack" aria-labelledby={idPrefix + 'quote-heading'}>
-      <h3 id={idPrefix + 'quote-heading'}>Full queued quote</h3>
-      <p>Quoted maximum: <strong>{quote.estimateUsd + ' USD'}</strong></p>
+      <h3 id={idPrefix + 'quote-heading'}>Rank check settings</h3>
       <p>{quote.targetText}</p>
-      <p className="hint">{quote.taskCount + ' keyword/device checks · Expires ' + quote.expiresAt + ' UTC'}</p>
       {quote.expired && (
        <>
-        <p className="alert" role="alert">This quote expired. Prepare another full queued quote.</p>
-        <button type="button" className="btn" onClick={onPrepareQuote} disabled={locked || busy}>Prepare full queued quote</button>
+        <p className="alert" role="alert">These check settings expired. Choose them again to continue.</p>
+        <button type="button" className="btn" onClick={onPrepareQuote} disabled={locked || busy}>Choose check settings</button>
        </>
       )}
      </section>
@@ -200,10 +198,10 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
       <label htmlFor={idPrefix + 'consent'} style={{display:'flex',alignItems:'flex-start',gap:'var(--space-2)',minHeight:'var(--control-touch)',margin:0,paddingBlock:'var(--space-2)'}}>
        <input id={idPrefix + 'consent'} type="checkbox" checked={form.consent} disabled={locked || busy || quote.expired || conflict} style={{flexShrink:0}}
         onChange={(event) => onChange({ ...form, consent:event.target.checked })} />
-       <span>I approve recurring provider charges at each occurrence's current price.</span>
+       <span>I approve recurring checks for this saved tracker until paused or its approval changes.</span>
       </label>
-      <p className="hint" id={idPrefix + 'approve-hint'}>Each occurrence still requires current owner approval and unchanged tracked scope, with paid work unpaused and no uncertain charges. Saving approval does not run a check immediately.</p>
-      <button type="button" className="btn primary" onClick={onApprove} disabled={!canApprove || locked || busy} aria-describedby={idPrefix + 'approve-hint'}>Approve recurring spend</button>
+      <p className="hint" id={idPrefix + 'approve-hint'}>Future runs use this saved scope . This tracker waits while its own check is active or unresolved. The workspace emergency pause still applies. Enabling the schedule does not run a check immediately.</p>
+      <button type="button" className="btn primary" onClick={onApprove} disabled={!canApprove || locked || busy} aria-describedby={idPrefix + 'approve-hint'}>Approve schedule</button>
      </form>
     </>
    )}

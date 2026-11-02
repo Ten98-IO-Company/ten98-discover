@@ -7,7 +7,7 @@ import {FoundationError} from '../src/server/auth.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {saveProvider} from '../src/server/providers.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
-import {compileRankPlan,rankGroupPayload,rankPlanTotal,type RankPlan} from '../src/server/rank-execution-plan.ts';
+import {compileRankPlan,rankGroupPayload,type RankPlan} from '../src/server/rank-execution-plan.ts';
 import {getRankDistribution,type RankDistribution} from '../src/server/rank-distribution.ts';
 
 /** Opt-in only: provision and migrate a NEW loopback fixture externally. Never
@@ -39,15 +39,15 @@ export async function runRankDistributionChecks(){
   type Options={devices?:'desktop'|'mobile'|'both';keywords?:Keyword[];target?:Partial<RankPlan['target']>;created?:string;started?:string;subset?:boolean;quote?:boolean;runStatus?:'completed'|'partial'|'failed'|'waiting';observation?:Observation|((keyword:Keyword,device:'desktop'|'mobile')=>Observation)};
   async function run(f:Fixture,opt:Options={}){
     const id=randomUUID(),created=opt.created??at(0),keywords=opt.keywords??f.keywords;
-    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:opt.devices??'desktop',keywords,baseMicros:1000n});
+    const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1,...opt.target},devices:opt.devices??'desktop',keywords});
     const status=opt.quote?'quoted':opt.runStatus??'completed';
-    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at,request_key,is_subset,created_at,started_at,completed_at)
-      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,$12,$13::timestamptz,$13::timestamptz+interval '5 minutes',$14,$15,$13,$16,$17)`,
-      [id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,rankPlanTotal(plan).toString(),created,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:opt.started??created,opt.quote||status==='waiting'?null:created]);
+    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,request_version,expires_at,request_key,is_subset,created_at,started_at,completed_at)
+      VALUES($1,$2,$3,$4,$5,'manual','queued',$6,1,1,$7,1,$8,'Synthetic',$9,$10,$11,1,$12::timestamptz+interval '5 minutes',$13,$14,$12,$15,$16)`,
+      [id,f.workspace,f.project,f.tracker,owner,status,f.connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,created,opt.quote?null:randomUUID(),opt.subset??false,opt.quote?null:opt.started??created,opt.quote||status==='waiting'?null:created]);
     if(!opt.quote)for(const [ordinal,group]of plan.groups.entries()){
       const dispatch=randomUUID(),payload=rankGroupPayload(plan,group);
-      await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,connection_revision,status,budget_month)
-        VALUES($1,$2,$3,$4,$5,'rank.queued',$6,$7,$7,1,'settled',date_trunc('month',now())::date)`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64),group.maximumMicros]);
+      await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,connection_revision,status)
+        VALUES($1,$2,$3,$4,$5,'rank.queued',$6,1,'settled')`,[dispatch,f.workspace,f.connection,owner,randomUUID(),'b'.repeat(64)]);
       await pool.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase,dispatched_at,completed_at)
         VALUES($1,$2,$3,$4,$5,'queued',$6,$7,$8,'finished',$9,$9)`,[dispatch,f.workspace,f.project,id,ordinal,group.taskIds.length,JSON.stringify(payload),canonicalHash(payload),created]);
       const taskIds=new Set(group.taskIds),rows=plan.tasks.filter(task=>taskIds.has(task.id)).map(task=>{

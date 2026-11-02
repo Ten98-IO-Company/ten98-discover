@@ -5,15 +5,15 @@ import {join} from 'node:path';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase,migrationSources,assertSchema} from '../src/server/db.ts';
 import {stopJobs} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,assertCredentialKeys} from '../src/server/providers.ts';
+import {saveProvider,saveProviderRequestControls,assertCredentialKeys} from '../src/server/providers.ts';
 import {getProviderAccountIdentityKey,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from '../src/server/provider-account-identity.ts';
 import {encryptCredentials} from '../src/server/credential-vault.ts';
 import {readKeywordAccount} from '../src/server/dataforseo-keywords.ts';
-import {quoteKeywordResearch,executeKeywordResearch,reconcileKeywordResearch} from '../src/server/keyword-research.ts';
-import {quoteSavedKeywordRefresh,startSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
+import {prepareKeywordResearch,executeKeywordResearch,recoverKeywordResearch} from '../src/server/keyword-research.ts';
+import {prepareSavedKeywordRefresh,startSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
 import {keywordAccountEndpoint,keywordReconcileEndpoint,keywordEndpoints,keywordPayload,type KeywordRequest} from '../src/server/keyword-research-input.ts';
-import {aiSearchProfileId,aiSearchPriceEvidence} from '../src/lib/ai-search.ts';
+import {aiSearchProfileId} from '../src/lib/ai-search.ts';
 
 // Five invocations, each with a different initially empty owned database:
 // TEN98_IDENTITY_TEST_CASE=legacy|deferred|rank|upgrade22|ai_search node --env-file=<private env> tests/provider-account-identity-integration.ts
@@ -29,10 +29,10 @@ const original={auth:process.env.AUTH_SECRET,keys:process.env.CREDENTIAL_KEYS,ac
 const {pool}=getDatabase();let stage='initial safety check',unexpected=0,paid=0,accountCalls=0,metadataCalls=0;
 globalThis.fetch=async()=>{unexpected++;throw new Error('External traffic is forbidden in identity acceptance.');};
 const account='synthetic-account@identity.integration.test';let returnedAccount=account,reconcileItems:unknown[]=[];
-const free=(result:unknown[])=>Response.json({status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result}]});
+const free=(result:unknown[])=>Response.json({status_code:20000,tasks_count:1,tasks:[{status_code:20000,result}]});
 const send:typeof fetch=async(target,init)=>{
   assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
-  if(target===keywordAccountEndpoint){accountCalls++;const prices={priority_normal:[{cost_type:'per_request',cost:0.012},{cost_type:'per_result',cost:0.00012}]};return free([{login:returnedAccount,price:{dataforseo_labs:{keyword_overview:{live:prices}}}}]);}
+  if(target===keywordAccountEndpoint){accountCalls++;return free([{login:returnedAccount}]);}
   if(target===keywordReconcileEndpoint){metadataCalls++;return free(reconcileItems);}
   assert.equal(target,keywordEndpoints.overview);paid++;throw new Error('Synthetic response lost after dispatch.');
 };
@@ -53,7 +53,7 @@ async function fixture():Promise<Fixture>{
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace,owner]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Identity fixture','https://identity.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
   const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic identity account',credentials:{login:account,password:'synthetic-never-live'}})).connection.id;
-  await saveBudget(workspace,owner,{paused:false});
+  if((await pool.query("SELECT to_regclass('public.workspace_provider_control') AS relation")).rows[0].relation)await saveProviderRequestControls(workspace,owner,{paused:false});
   await pool.query('INSERT INTO keyword_market_catalog(workspace_id,markets) VALUES($1,$2)',[workspace,JSON.stringify([{locationCode:2840,locationName:'United States',languageCode:'en',languageName:'English'}])]);
   return {owner,workspace,project,connection,request:{connectionId:connection,mode:'overview',keywords:['identity'],locationCode:2840,languageCode:'en',limit:100}};
 }
@@ -84,14 +84,14 @@ async function rejectMissingCapsule(){
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0075');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0076');
   if(scenario==='ai_search'){
     stage='AI-only modern reference after fresh install';cli('migrate',0);await assertSchema();
-    const stable=await getProviderAccountIdentityKey(2),f=await fixture(),prompt=randomUUID(),version=randomUUID(),price=aiSearchPriceEvidence(),seed=await pool.connect();
+    const stable=await getProviderAccountIdentityKey(2),f=await fixture(),prompt=randomUUID(),version=randomUUID(),seed=await pool.connect();
     try{await seed.query('BEGIN');await seed.query('INSERT INTO project_prompt(id,project_id,current_version_id)VALUES($1,$2,$3)',[prompt,f.project,version]);
       await seed.query("INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by)VALUES($1,$2,$3,1,'Identity fixture','identity fixture',$4)",[version,f.project,prompt,f.owner]);
-      await seed.query(`INSERT INTO ai_search_quote(id,workspace_id,project_id,user_id,request_id,prompt_id,version_id,connection_id,connection_revision,account_fingerprint,account_fingerprint_version,input_hash,profile_id,price_version,price_mode,price_source,price_checked_on,estimate_micros,input,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,2,$10,$11,$12,$13,$14,$15,4000,'{"fixture":true}',clock_timestamp()+interval '5 minutes')`,[randomUUID(),f.workspace,f.project,f.owner,randomUUID(),prompt,version,f.connection,'a'.repeat(64),'b'.repeat(64),aiSearchProfileId,price.version,price.mode,price.sourceUrl,price.checkedOn]);
+      await seed.query(`INSERT INTO ai_search_quote(id,workspace_id,project_id,user_id,request_id,prompt_id,version_id,connection_id,connection_revision,account_fingerprint,account_fingerprint_version,input_hash,profile_id,request_version,input,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,2,$10,$11,1,'{"fixture":true}',clock_timestamp()+interval '5 minutes')`,[randomUUID(),f.workspace,f.project,f.owner,randomUUID(),prompt,version,f.connection,'a'.repeat(64),'b'.repeat(64),aiSearchProfileId]);
       await seed.query('COMMIT');
     }finally{await seed.query('ROLLBACK').catch(()=>{});seed.release();}
     for(const table of ['keyword_quote','saved_keyword_refresh_plan','rank_run','rank_config','provider_request'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Isolate the AI-only recovery reference.');
@@ -110,7 +110,7 @@ try{
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Deferred identity','https://identity.integration.test',$3)",[project,workspace,randomUUID()]);
     await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Metadata only')",[connection,workspace]);
     await pool.query('INSERT INTO keyword_market_catalog(workspace_id,markets) VALUES($1,$2)',[workspace,JSON.stringify([{locationCode:2840,languageCode:'en'}])]);
-    await assert.rejects(quoteKeywordResearch(project,owner,{connectionId:connection,mode:'overview',keywords:['identity'],locationCode:2840,languageCode:'en',limit:100},send),failed(503));assert.equal(accountCalls,0);assert.equal(await capsule(),null);
+    await assert.rejects(prepareKeywordResearch(project,owner,{connectionId:connection,mode:'overview',keywords:['identity'],locationCode:2840,languageCode:'en',limit:100},send),failed(503));assert.equal(accountCalls,0);assert.equal(await capsule(),null);
     console.log('PASS fresh no-vault installation remains usable and cannot quote or persist identity keys');
     stage='concurrent deferred initialization';initialVault();const keys=await Promise.all(Array.from({length:12},()=>getProviderAccountIdentityKey(2)));assert.ok(keys.every(key=>key===keys[0]));assert.equal(Buffer.from(keys[0],'base64').length,32);const before=digest(await capsule());
     process.env.AUTH_SECRET=randomBytes(32).toString('hex');assert.equal(await getProviderAccountIdentityKey(2),keys[0]);assert.equal(digest(await capsule()),before);await assertProviderAccountIdentityReadable();
@@ -125,12 +125,12 @@ try{
     // Clear only this synthetic inactive approval to isolate the rank-run branch.
     await pool.query('UPDATE rank_config SET approval_account_fingerprint=NULL WHERE id=$1',[rankConfig]);
     assert.equal((await pool.query('SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL LIMIT 1')).rowCount,0);
-    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at)
-      VALUES($1,$2,$3,$4,$5,'manual','live','quoted',1,1,$6,1,$7,'Synthetic only','{}',$7,1,10000,clock_timestamp(),clock_timestamp()+interval '5 minutes')`,[randomUUID(),rank.workspace,rank.project,rankConfig,rank.owner,rank.connection,'d'.repeat(64)]);
+    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,request_version,expires_at)
+      VALUES($1,$2,$3,$4,$5,'manual','live','quoted',1,1,$6,1,$7,'Synthetic only','{}',$7,1,1,clock_timestamp()+interval '5 minutes')`,[randomUUID(),rank.workspace,rank.project,rankConfig,rank.owner,rank.connection,'d'.repeat(64)]);
     await rejectMissingCapsule();assert.equal(await getProviderAccountIdentityKey(2),keys[0]);
     console.log('PASS approval-only and rank-only references independently block key/readiness/rekey replacement; no-op migrate does not repair missing keys');
     }else{
-    stage='modern-only missing capsule fails closed';const modern=await fixture();await quoteKeywordResearch(modern.project,modern.owner,modern.request,send);
+    stage='modern-only missing capsule fails closed';const modern=await fixture();await prepareKeywordResearch(modern.project,modern.owner,modern.request,send);
     assert.ok((await pool.query('SELECT account_fingerprint_version FROM keyword_quote')).rows.every(row=>row.account_fingerprint_version===2));const savedCapsule=await capsule();await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
     try{await assert.rejects(getProviderAccountIdentityKey(2),failed(503));await assert.rejects(assertProviderAccountIdentityReadable(),failed(503));assert.equal(await capsule(),null);}
     finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[savedCapsule]);}
@@ -161,7 +161,7 @@ try{
     finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[priorEnvelope]);}
     stage='0023 preserves existing capsule across login-secret rotation';cli('migrate',0);await assertSchema();
     assert.equal(digest(await capsule()),digest(storedEnvelope));assert.equal(await getProviderAccountIdentityKey(1),original.auth);assert.equal(await getProviderAccountIdentityKey(2),priorStable);
-    assert.equal(digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows),quotesBefore);
+    const migratedQuotes=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows.map(({data})=>{assert.equal(data.request_version,0);const {request_version:_version,...historical}=data;return {data:historical};});assert.equal(digest(migratedQuotes),quotesBefore);
     cli('migrate',0);assert.equal(digest(await capsule()),digest(storedEnvelope));
     console.log('PASS existing0022 capsule preservation,0023 missing-vault/legacy-key rollback, no legacy recapture and idempotent migration');
   }else{
@@ -176,25 +176,25 @@ try{
     const encrypted=JSON.stringify(await capsule());assert.ok(!encrypted.includes(original.auth!)&&!encrypted.includes(stable));const firstCapsule=digest(await capsule());cli('migrate',0);assert.equal(digest(await capsule()),firstCapsule);
     console.log('PASS pre0022 hash preservation, missing-vault upgrade rollback and encrypted idempotent capture');
 
-    stage='rotate login secret and recover legacy charge';process.env.AUTH_SECRET=randomBytes(32).toString('hex');await assertProviderAccountIdentityReadable();assert.equal(await getProviderAccountIdentityKey(1),original.auth);assert.equal(await getProviderAccountIdentityKey(2),stable);
-    reconcileItems=[{id:correct.reference,url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(f.request,correct.run),status:'20000',cost:0.01212}];
-    returnedAccount='wrong-account@identity.integration.test';const prior=digest(await charge(correct.run)),metadataBefore=metadataCalls;assert.equal((await reconcileKeywordResearch(f.project,f.owner,correct.run,{connectionId:f.connection},send)).reconciliation.status,'inconclusive');assert.equal(digest(await charge(correct.run)),prior);assert.equal(metadataCalls,metadataBefore);
-    returnedAccount=account;assert.equal((await reconcileKeywordResearch(f.project,f.owner,correct.run,{connectionId:f.connection},send)).reconciliation.status,'matched');assert.deepEqual(await charge(correct.run),{status:'settled',actual_micros:'12120',provider_reference:correct.reference});assert.equal(paid,0);
-    reconcileItems=[{id:orphan.reference,url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(lost.request,orphan.run),status:'20000',cost:0.01212}];const orphanBefore=digest(await charge(orphan.run));assert.equal((await reconcileKeywordResearch(lost.project,lost.owner,orphan.run,{connectionId:lost.connection},send)).reconciliation.status,'inconclusive');assert.equal(digest(await charge(orphan.run)),orphanBefore);assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[orphan.quote])).rows[0].account_fingerprint,orphan.fingerprint);
-    console.log('PASS rotated login secret recovers proven legacy charges; wrong account and already-lost legacy secret fail closed');
+    stage='rotate login secret and recover legacy request';process.env.AUTH_SECRET=randomBytes(32).toString('hex');await assertProviderAccountIdentityReadable();assert.equal(await getProviderAccountIdentityKey(1),original.auth);assert.equal(await getProviderAccountIdentityKey(2),stable);
+    reconcileItems=[{id:correct.reference,url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(f.request,correct.run),status:'20000'}];
+    returnedAccount='wrong-account@identity.integration.test';const prior=digest(await charge(correct.run)),metadataBefore=metadataCalls;assert.equal((await recoverKeywordResearch(f.project,f.owner,correct.run,{connectionId:f.connection},send)).recovery.status,'inconclusive');assert.equal(digest(await charge(correct.run)),prior);assert.equal(metadataCalls,metadataBefore);
+    returnedAccount=account;assert.equal((await recoverKeywordResearch(f.project,f.owner,correct.run,{connectionId:f.connection},send)).recovery.status,'matched');assert.deepEqual(await charge(correct.run),{status:'settled',actual_micros:null,provider_reference:correct.reference});assert.equal(paid,0);
+    reconcileItems=[{id:orphan.reference,url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(lost.request,orphan.run),status:'20000'}];const orphanBefore=digest(await charge(orphan.run));assert.equal((await recoverKeywordResearch(lost.project,lost.owner,orphan.run,{connectionId:lost.connection},send)).recovery.status,'inconclusive');assert.equal(digest(await charge(orphan.run)),orphanBefore);assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[orphan.quote])).rows[0].account_fingerprint,orphan.fingerprint);
+    console.log('PASS rotated login secret recovers proven legacy requests; wrong account and already-lost legacy secret fail closed');
 
-    stage='new stable identity quote and saved refresh';const modern=await fixture();const quoted=(await quoteKeywordResearch(modern.project,modern.owner,modern.request,send)).quote;
+    stage='new stable identity quote and saved refresh';const modern=await fixture();const quoted=(await prepareKeywordResearch(modern.project,modern.owner,modern.request,send)).preparation;
     const modernBefore=(await pool.query('SELECT account_fingerprint,account_fingerprint_version FROM keyword_quote WHERE id=$1',[quoted.id])).rows[0];assert.equal(modernBefore.account_fingerprint_version,2);
     const saved=await saveSavedKeywords(modern.project,modern.owner,{requestId:randomUUID(),revision:1,source:{type:'manual',keywords:['identity'],locationCode:2840,languageCode:'en'}});
-    const plan=(await quoteSavedKeywordRefresh(modern.project,modern.owner,{connectionId:modern.connection,selection:{type:'ids',keywordIds:saved.ids}},send)).quote;
+    const plan=(await prepareSavedKeywordRefresh(modern.project,modern.owner,{connectionId:modern.connection,selection:{type:'ids',keywordIds:saved.ids}},send)).preparation;
     assert.equal((await pool.query('SELECT account_fingerprint_version FROM saved_keyword_refresh_plan WHERE id=$1',[plan.id])).rows[0].account_fingerprint_version,2);
     assert.ok((await pool.query('SELECT account_fingerprint_version FROM keyword_quote WHERE saved_refresh_plan_id=$1',[plan.id])).rows.every(row=>row.account_fingerprint_version===2));
-    const started=(await startSavedKeywordRefresh(modern.project,modern.owner,{quoteId:plan.id,requestKey:randomUUID()})).plan,child=started.children[0];assert.ok(child.runId);
-    process.env.AUTH_SECRET=randomBytes(32).toString('hex');const after=(await quoteKeywordResearch(modern.project,modern.owner,modern.request,send)).quote;assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[after.id])).rows[0].account_fingerprint,modernBefore.account_fingerprint);
+    const started=(await startSavedKeywordRefresh(modern.project,modern.owner,{preparationId:plan.id,requestKey:randomUUID()})).plan,child=started.children[0];assert.ok(child.runId);
+    process.env.AUTH_SECRET=randomBytes(32).toString('hex');const after=(await prepareKeywordResearch(modern.project,modern.owner,modern.request,send)).preparation;assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[after.id])).rows[0].account_fingerprint,modernBefore.account_fingerprint);
     await executeKeywordResearch(child.runId!,send);assert.equal(paid,1);assert.equal((await charge(child.runId!)).status,'uncertain');
-    reconcileItems=[{id:'synthetic-modern-task',url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(child.request,child.runId!),status:'20000',cost:0.01212}];
-    assert.equal((await reconcileKeywordResearch(modern.project,modern.owner,child.runId!,{connectionId:modern.connection},send)).reconciliation.status,'matched');assert.equal(paid,1,'Reconciliation must not issue a second paid request.');
-    console.log('PASS version2 parent and child bindings survive rotation through dispatch and uncertain-charge recovery');
+    reconcileItems=[{id:'synthetic-modern-task',url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(child.request,child.runId!),status:'20000'}];
+    assert.equal((await recoverKeywordResearch(modern.project,modern.owner,child.runId!,{connectionId:modern.connection},send)).recovery.status,'matched');assert.equal(paid,1,'Reconciliation must not issue a second provider request.');
+    console.log('PASS version2 parent and child bindings survive rotation through dispatch and unknown-request recovery');
 
     stage='missing identity capsule cannot be guessed';const savedCapsule=await capsule();await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
     try{await assert.rejects(getProviderAccountIdentityKey(2),failed(503));await assert.rejects(assertProviderAccountIdentityReadable(),failed(503));await assert.rejects(rotateProviderAccountIdentityEncryption(),failed(503));assert.equal(await capsule(),null);}
@@ -205,7 +205,7 @@ try{
     await assert.rejects(getProviderAccountIdentityKey(2),failed(503));await assert.rejects(assertProviderAccountIdentityReadable(),failed(503));await assert.rejects(rotateProviderAccountIdentityEncryption(),failed(503));assert.equal(digest(await capsule()),beforeFailure);
     stage='keyring rotation preserves both identity versions';process.env.CREDENTIAL_KEYS=JSON.stringify({...JSON.parse(original.keys!),replacement});cli('rekey',0);
     assert.equal((await capsule()).keyId,'replacement');assert.notEqual(digest(await capsule()),beforeFailure);process.env.CREDENTIAL_KEYS=JSON.stringify({replacement});await assertProviderAccountIdentityReadable();await assertCredentialKeys();assert.equal(await getProviderAccountIdentityKey(1),original.auth);assert.equal(await getProviderAccountIdentityKey(2),stable);
-    const requoted=(await quoteKeywordResearch(modern.project,modern.owner,modern.request,send)).quote;assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[requoted.id])).rows[0].account_fingerprint,modernBefore.account_fingerprint);
+    const requoted=(await prepareKeywordResearch(modern.project,modern.owner,modern.request,send)).preparation;assert.equal((await pool.query('SELECT account_fingerprint FROM keyword_quote WHERE id=$1',[requoted.id])).rows[0].account_fingerprint,modernBefore.account_fingerprint);
     console.log('PASS missing old key fails without mutation; actual CLI rekey preserves legacy and stable identity');
   }
   assert.equal(unexpected,0);console.log('PASS identity acceptance completed without real provider traffic');

@@ -112,7 +112,8 @@ test('complete catalog keeps every country, resolves unordered parents, and page
 test('catalog corruption or truncation fails wholly rather than trusting an incomplete location hierarchy',()=>{
   const valid=[...countries,...locals];
   for(const rows of [[],[...valid,countries[0]],[countries[0],{...locals[0],location_code_parent:100},{...locals[1],location_code_parent:21132}],[...countries,{...locals[0],location_code_parent:2826}],[{...countries[0],country_iso_code:'US\n'}],[{...countries[0],location_code:2147483648}],[{...countries[0],location_name:'bad\0'}],[{...countries[0],location_name:'\ud800'}],[...valid,{...countries[0],location_code:999}]])assert.throws(()=>parseRankLocations(envelope(rankSerpEndpoints.locations,rows)));
-  for(const change of ['count','charged','path','tasks'] as const){const value=envelope(rankSerpEndpoints.locations,valid);if(change==='count')value.body.tasks[0].result_count++;if(change==='charged')value.body.cost=0.000001;if(change==='path')value.body.tasks[0].path=['v3','serp','bing','locations'];if(change==='tasks')value.body.tasks_count=2;assert.throws(()=>parseRankLocations(value));}
+  for(const change of ['count','path','tasks'] as const){const value=envelope(rankSerpEndpoints.locations,valid);if(change==='count')value.body.tasks[0].result_count++;if(change==='path')value.body.tasks[0].path=['v3','serp','bing','locations'];if(change==='tasks')value.body.tasks_count=2;assert.throws(()=>parseRankLocations(value));}
+  for(const cost of [undefined,null,'unreadable',-1]){const value:any=envelope(rankSerpEndpoints.locations,valid);value.body.cost=cost;value.body.tasks[0].cost=cost;assert.equal(parseRankLocations(value).locations.length,valid.length);}
   const joined=envelope(rankSerpEndpoints.locations,valid);joined.body.tasks[0].path=['v3/serp','google','locations'];assert.throws(()=>parseRankLocations(joined));
   for(const rows of [[],[...languages,languages[0]],[{language_code:'en\n',language_name:'English'}],[{language_code:'en',language_name:'\ud800'}]])assert.throws(()=>parseRankLanguages(envelope(rankSerpEndpoints.languages,rows)));
 });
@@ -141,8 +142,9 @@ test('ISO grouping accepts missing ancestry with an actual Country or Region roo
 
 test('rank account uses the shared version2 identity and returns no login or wallet metadata',()=>{
   const response=envelope(keywordAccountEndpoint,[{login:credentials.login,price:{serp:{synthetic:true}},wallet:{unrelated:'private'}}]),binding={key:'synthetic-identity-key-'.repeat(3),version:2 as const};
-  const parsed=parseRankAccount(response,binding);assert.equal(parsed.fingerprint,parseKeywordAccount(response,undefined,binding).fingerprint);assert.deepEqual(Object.keys(parsed).sort(),['fingerprint','price']);assert.ok(!JSON.stringify(parsed).includes(credentials.login));
-  assert.throws(()=>parseRankAccount(envelope(keywordAccountEndpoint,[{login:credentials.login}]),binding));
+  const parsed=parseRankAccount(response,binding);assert.equal(parsed.fingerprint,parseKeywordAccount(response,undefined,binding).fingerprint);assert.deepEqual(Object.keys(parsed),['fingerprint']);assert.ok(!JSON.stringify(parsed).includes(credentials.login));
+  assert.deepEqual(parseRankAccount(envelope(keywordAccountEndpoint,[{login:credentials.login}]),binding),parsed);
+  assert.throws(()=>parseRankAccount(envelope(keywordAccountEndpoint,[{}]),binding));
 });
 
 test('rank paid batches are explicit, bounded and unique; payload extras never reach provider',async()=>{

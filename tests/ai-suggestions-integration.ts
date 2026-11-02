@@ -6,15 +6,21 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {getAuth} from '../src/server/auth.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveProviderRequestControls,revokeProvider} from '../src/server/providers.ts';
 import {updateProjectContext} from '../src/server/project-context.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {createPrompts,listPrompts,updatePrompt} from '../src/server/prompts.ts';
-import {quoteAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from '../src/server/ai-suggestions.ts';
-import {executeAiSuggestion,reconcileAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
+import {prepareAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from '../src/server/ai-suggestions.ts';
+import {executeAiSuggestion,recoverAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
 import {suggestionProfiles,suggestionQuoteInput} from '../src/server/ai-suggestion-input.ts';
+
+function assertNoApiMoney(value:unknown):void{
+ if(!value||typeof value!=='object')return;
+ const forbidden=new Set(['cost','price','actual_micros','estimate_micros','estimateUsd','actualUsd','estimateMicros','actualMicros','chargeStatus','spendingPaused','maximumUsd','perTask','perItem','priceAsOf','priceSource','promptPrice','completionPrice','requestPrice','max_price','maxSpendUsd','fundedCredits']);
+ for(const[key,item]of Object.entries(value)){assert.equal(forbidden.has(key),false,'Unexpected API financial field: '+key);assertNoApiMoney(item);}
+}
 
 export async function runSuggestionChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_AI_SUGGESTIONS_TEST,'1');
@@ -27,87 +33,87 @@ export async function runSuggestionChecks(){
  const owner=randomUUID(),editor=randomUUID(),viewer=randomUUID(),foreign=randomUUID(),password=randomBytes(24).toString('hex');
  for(const user of [owner,editor,viewer,foreign])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Suggestion fixture\',$2)',[user,`${user}@suggestions.integration.test`]);
  await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
- let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'unknown'|'empty'='ok',changedPrice=false;
+ let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'unknown'|'empty'='ok',changedCapacity=false;
  let afterPaid:(()=>Promise<void>)|null=null;const receipts=new Map<string,any>();
  const send:typeof fetch=async(address,init)=>{
   const url=String(address);assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
   if(url==='https://openrouter.ai/api/v1/models?output_modalities=text&offset=0&limit=500'){free++;const data=suggestionProfiles.map(p=>p.model).map(model=>({id:model,canonical_slug:model,name:model,architecture:{input_modalities:['text'],output_modalities:['text']},context_length:128000,top_provider:{max_completion_tokens:16384},supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:'0.00000015',completion:'0.0000006',request:'0'}}));return Response.json({data,total_count:data.length,links:{next:null}});}
   if(url==='https://openrouter.ai/api/v1/key'){free++;return Response.json({data:{is_free_tier:false,is_management_key:false}});}
-  if(url.endsWith('/endpoints')){free++;const model=new URL(url).pathname.slice('/api/v1/models/'.length,-'/endpoints'.length);assert.ok(suggestionProfiles.some(p=>p.model===model));return Response.json({data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:changedPrice?'0.00000016':'0.00000015',completion:'0.0000006',discount:0}}]}});}
+  if(url.endsWith('/endpoints')){free++;const model=new URL(url).pathname.slice('/api/v1/models/'.length,-'/endpoints'.length);assert.ok(suggestionProfiles.some(p=>p.model===model));return Response.json({data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:changedCapacity?1024:16384,supported_parameters:['max_tokens','response_format','structured_outputs']}]}});}
   if(url.startsWith('https://openrouter.ai/api/v1/generation?id=')){free++;const data=receipts.get(new URL(url).searchParams.get('id')!);assert.ok(data);return Response.json({data});}
   assert.equal(url,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');paid++;
   const body=JSON.parse(String(init?.body));assert.equal(body.response_format.json_schema.strict,true);assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.allow_fallbacks,false);assert.equal(body.tools,undefined);assert.deepEqual(body.plugins,[{id:'context-compression',enabled:false}]);
   if(afterPaid)await afterPaid();if(mode==='unknown')throw new Error('Synthetic lost response');
-  const id='gen-'+randomUUID(),created=Math.floor(Date.now()/1000);receipts.set(id,{id,model:body.model,provider_name:'OpenAI',session_id:body.session_id,external_user:body.user,created_at:new Date(created*1000).toISOString(),finish_reason:'stop',is_byok:false,total_cost:0.000012345});
+  const id='gen-'+randomUUID(),created=Math.floor(Date.now()/1000);receipts.set(id,{id,model:body.model,provider_name:'OpenAI',session_id:body.session_id,external_user:body.user,created_at:new Date(created*1000).toISOString(),finish_reason:'stop',tokens_prompt:12,tokens_completion:20});
   if(mode==='lost')return new Response('{broken',{headers:{'x-generation-id':id}});
   const content=mode==='invalid'?'not JSON':JSON.stringify({version:1,limitation:mode==='empty'?'insufficient_context':'none',prompts:mode==='empty'?[]:[{text:'Which grinder is easy to clean?',tags:['Care'],rationale:'Useful for the saved coffee topic.',evidenceIds:['profile']},{text:'Which grinder works for a small kitchen?',tags:[],rationale:'A distinct topic question.',evidenceIds:['profile']}]});
-  return Response.json({id,created,model:body.model,provider:'OpenAI',usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content}}]},{headers:{'x-generation-id':id}});
+  return Response.json({id,created,model:body.model,provider:'OpenAI',usage:{prompt_tokens:12,completion_tokens:20},choices:[{finish_reason:'stop',message:{content}}]},{headers:{'x-generation-id':id}});
  };
  async function fixture(){
   const workspace=randomUUID(),project=randomUUID();await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Suggestion fixture')",[workspace]);
   for(const [user,role] of [[owner,'owner'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[workspace,user,role]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Coffee','https://coffee.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
   const conn=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic',credentials:{apiKey:'synthetic-only-'+project}})).connection;
-  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[conn.id]);await saveBudget(workspace,owner,{paused:false});
-  return {workspace,project,connectionId:conn.id,input:{requestId:randomUUID(),connectionId:conn.id,contextRevision:1,profileId:'benchmark-mini-v1' as const,benchmark:true as const,fundedCredits:true as const,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]}};
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[conn.id]);await saveProviderRequestControls(workspace,owner,{paused:false});
+  return {workspace,project,connectionId:conn.id,input:{requestId:randomUUID(),connectionId:conn.id,contextRevision:1,profileId:'benchmark-mini-v1' as const,benchmark:true as const,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]}};
  }
  type Fixture=Awaited<ReturnType<typeof fixture>>;
- const quote=async(f:Fixture)=>(await quoteAiSuggestions(f.project,owner,f.input,send)).quote;
- const start=async(f:Fixture)=>(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:(await quote(f)).id})).run;
+ const preparation=async(f:Fixture)=>(await prepareAiSuggestions(f.project,owner,f.input,send)).preparation;
+ const start=async(f:Fixture)=>(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),preparationId:(await preparation(f)).id})).run;
  const detail=async(f:Fixture,id:string)=>(await getAiSuggestion(f.project,owner,id)).run;
  const expireQuote=async(id:string)=>pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '6 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[id]);
  const acceptance=(run:Awaited<ReturnType<typeof detail>>)=>({requestId:randomUUID(),expectedProposalRevision:run.proposalRevision,expectedContextRevision:run.acceptance!.contextRevision,expectedTopicLibraryHash:run.acceptance!.topicLibraryHash,selections:run.proposal!.prompts.map(p=>({candidateId:p.id,text:p.text,tags:p.tags}))});
  try{
-  const f=await fixture();for(const user of [editor,viewer,foreign])await assert.rejects(quoteAiSuggestions(f.project,user,f.input,send));assert.equal(free,0);
-  const q=await quote(f);assert.equal(q.estimateUsd,'0.020429');const before=free;assert.equal((await quote(f)).id,q.id);assert.equal(free,before);
-  await assert.rejects(quoteAiSuggestions(f.project,owner,{...f.input,topic:'Different'},send),{status:409});
-  const startBody={requestId:randomUUID(),quoteId:q.id};const [a,b]=await Promise.all([startAiSuggestions(f.project,owner,startBody),startAiSuggestions(f.project,owner,startBody)]);assert.equal(a.run.id,b.run.id);
-  await Promise.all([executeAiSuggestion(a.run.id,send),executeAiSuggestion(a.run.id,send)]);assert.equal(paid,1);const done=await detail(f,a.run.id);assert.equal(done.status,'completed');assert.equal(done.actualUsd,'0.000013');assert.equal(done.proposal!.prompts.length,2);
+  const f=await fixture();for(const user of [editor,viewer,foreign])await assert.rejects(prepareAiSuggestions(f.project,user,f.input,send));assert.equal(free,0);
+  const q=await preparation(f);assertNoApiMoney(q);const before=free;assert.equal((await preparation(f)).id,q.id);assert.equal(free,before);
+  await assert.rejects(prepareAiSuggestions(f.project,owner,{...f.input,topic:'Different'},send),{status:409});
+  const startBody={requestId:randomUUID(),preparationId:q.id};const [a,b]=await Promise.all([startAiSuggestions(f.project,owner,startBody),startAiSuggestions(f.project,owner,startBody)]);assert.equal(a.run.id,b.run.id);
+  await Promise.all([executeAiSuggestion(a.run.id,send),executeAiSuggestion(a.run.id,send)]);assert.equal(paid,1);const done=await detail(f,a.run.id);assert.equal(done.status,'completed');assertNoApiMoney(done);assert.equal(done.proposal!.prompts.length,2);const requestEvidence=(await pool.query('SELECT evidence FROM ai_suggestion_run WHERE id=$1',[done.id])).rows[0].evidence;assert.deepEqual([requestEvidence.promptTokens,requestEvidence.completionTokens],[12,20]);assertNoApiMoney(requestEvidence);
   const save=acceptance(done),accepted=await acceptAiSuggestions(f.project,owner,done.id,save);assert.equal(accepted.acknowledgement.accepted.length,2);
   const authored=await listPrompts(f.project,owner,new URLSearchParams());assert.equal(authored.items.length,2);assert.ok(authored.items.every(p=>!p.enabled));
   await revokeProvider(f.workspace,owner,f.connectionId);await pool.query("UPDATE ai_suggestion_quote SET expires_at=created_at+interval '1 second',created_at=clock_timestamp()-interval '1 hour' WHERE id=$1",[q.id]);
-  assert.equal((await startAiSuggestions(f.project,owner,startBody)).run.id,done.id);assert.equal((await quote(f)).id,q.id);
+  assert.equal((await startAiSuggestions(f.project,owner,startBody)).run.id,done.id);assert.equal((await preparation(f)).id,q.id);
   assert.deepEqual((await acceptAiSuggestions(f.project,owner,done.id,save)).acknowledgement,accepted.acknowledgement);assert.equal(paid,1);
   await assert.rejects(acceptAiSuggestions(f.project,editor,done.id,save),{status:409});await assert.rejects(getAiSuggestion((await fixture()).project,owner,done.id),{status:404});
-  assert.equal((await getAiSuggestions(f.project,viewer)).defaults.economy,null);console.log('PASS scoped benchmark authority, quote/start/accept replay, concurrent worker fencing and disabled prompt creation');
+  assert.equal((await getAiSuggestions(f.project,viewer)).defaults.economy,null);console.log('PASS scoped benchmark authority, preparation/start/accept replay, concurrent worker fencing and disabled prompt creation');
 
-  const rollback=await fixture(),rq=await quote(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let queuedId:string|undefined;
+  const rollback=await fixture(),rq=await preparation(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let queuedId:string|undefined;
   boss.send=(async(...args:any[])=>{queuedId=await (originalSend as any)(...args);throw new Error('Synthetic queue rollback');}) as typeof boss.send;
-  try{await assert.rejects(startAiSuggestions(rollback.project,owner,{requestId:randomUUID(),quoteId:rq.id}));}finally{boss.send=originalSend;}
+  try{await assert.rejects(startAiSuggestions(rollback.project,owner,{requestId:randomUUID(),preparationId:rq.id}));}finally{boss.send=originalSend;}
   assert.ok(queuedId);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[queuedId])).rowCount,0);
   // Owner decision D3: the removed workspace cap is replaced by the owner's manual pause.
-  const budget=await fixture(),budgetQuote=await quote(budget),jobsBefore=(await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n;await saveBudget(budget.workspace,owner,{paused:true});
-  await assert.rejects(startAiSuggestions(budget.project,owner,{requestId:randomUUID(),quoteId:budgetQuote.id}),{status:409,code:'SPENDING_BUDGET'});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n,jobsBefore);
-  // Owner decision D3: no per-request ceiling. A quote naming one is refused before any receipt or provider read, and the reservation is the verified estimate.
-  const cap=await fixture(),capFree=free;await assert.rejects(quoteAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'1'},send),{status:400});assert.equal(free,capFree);assert.equal((await pool.query('SELECT count(*)::int AS n FROM ai_suggestion_quote WHERE project_id=$1',[cap.project])).rows[0].n,0);
-  const capQuote=await quote(cap),capRun=(await startAiSuggestions(cap.project,owner,{requestId:randomUUID(),quoteId:capQuote.id})).run;assert.equal(capRun.estimateUsd,capQuote.estimateUsd);assert.equal((await pool.query('SELECT estimate_micros FROM provider_request WHERE id=$1',[capRun.id])).rows[0].estimate_micros,'20429');await cancelAiSuggestion(cap.project,owner,capRun.id,{requestId:randomUUID()});
+  const budget=await fixture(),budgetQuote=await preparation(budget),jobsBefore=(await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n;await saveProviderRequestControls(budget.workspace,owner,{paused:true});
+  await assert.rejects(startAiSuggestions(budget.project,owner,{requestId:randomUUID(),preparationId:budgetQuote.id}),{status:409,code:'PROVIDER_REQUESTS_PAUSED'});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n,jobsBefore);
+  // Owner decision D3: no per-request ceiling. A preparation naming one is refused before any receipt or provider read, and the reservation is the verified estimate.
+  const cap=await fixture(),capFree=free;await assert.rejects(prepareAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'1'},send),{status:400});assert.equal(free,capFree);assert.equal((await pool.query('SELECT count(*)::int AS n FROM ai_suggestion_quote WHERE project_id=$1',[cap.project])).rows[0].n,0);
+  const capQuote=await preparation(cap),capRun=(await startAiSuggestions(cap.project,owner,{requestId:randomUUID(),preparationId:capQuote.id})).run;assertNoApiMoney(capRun);assert.equal((await pool.query('SELECT estimate_micros FROM provider_request WHERE id=$1',[capRun.id])).rows[0].estimate_micros,null);await cancelAiSuggestion(cap.project,owner,capRun.id,{requestId:randomUUID()});
   const busy=await fixture(),first=await start(busy);busy.input.requestId=randomUUID();await assert.rejects(start(busy),{status:409});await cancelAiSuggestion(busy.project,owner,first.id,{requestId:randomUUID()});
-  // Owner decision D3: a run queued from a pre-D3 quote stores the removed ceiling in its captured input; the worker strips it and dispatches exactly once.
-  const preD3=await fixture(),preD3Run=await start(preD3),preD3Paid=paid;await pool.query(`UPDATE ai_suggestion_quote SET input=input||'{"maxSpendUsd":"1"}'::jsonb WHERE id=$1`,[preD3Run.quoteId]);
-  const preD3Input=(await pool.query('SELECT input FROM ai_suggestion_quote WHERE id=$1',[preD3Run.quoteId])).rows[0].input;assert.equal(preD3Input.maxSpendUsd,'1');assert.equal(suggestionQuoteInput.safeParse(preD3Input).success,false,'The stored pre-D3 input needs the worker strip.');
-  await Promise.all([executeAiSuggestion(preD3Run.id,send),executeAiSuggestion(preD3Run.id,send)]);await executeAiSuggestion(preD3Run.id,send);assert.equal(paid,preD3Paid+1);const preD3Done=await detail(preD3,preD3Run.id);assert.equal(preD3Done.status,'completed');assert.equal(preD3Done.chargeStatus,'settled');assert.equal(preD3Done.actualUsd,'0.000013');assert.equal(preD3Done.proposal!.prompts.length,2);
-  console.log('PASS queue rollback, manual pause, removed ceiling field (D3) with the estimate reserved, one active project request, and a pre-D3 queued input dispatching once');
+  // Owner decision D3: a run queued from a pre-D3 preparation stores the removed ceiling in its captured input; the worker strips it and dispatches exactly once.
+  const preD3=await fixture(),preD3Run=await start(preD3),preD3Paid=paid;await pool.query(`UPDATE ai_suggestion_quote SET request_version=0,input=input||'{"fundedCredits":true,"maxSpendUsd":"1"}'::jsonb WHERE id=$1`,[preD3Run.preparationId]);
+  const preD3Input=(await pool.query('SELECT input FROM ai_suggestion_quote WHERE id=$1',[preD3Run.preparationId])).rows[0].input;assert.equal(preD3Input.maxSpendUsd,'1');assert.equal(suggestionQuoteInput.safeParse(preD3Input).success,false,'Legacy input cannot authorize a new dispatch.');
+  await Promise.all([executeAiSuggestion(preD3Run.id,send),executeAiSuggestion(preD3Run.id,send)]);await executeAiSuggestion(preD3Run.id,send);assert.equal(paid,preD3Paid);const preD3Done=await detail(preD3,preD3Run.id);assert.equal(preD3Done.status,'cancelled');assert.equal(preD3Done.requestStatus,'cancelled');assertNoApiMoney(preD3Done);assert.equal(preD3Done.proposal,null);
+  console.log('PASS queue rollback, manual pause, removed ceiling field (D3) with NULL expense columns, one active project request, and a legacy queued input cancelled before dispatch');
 
   const baseline=paid;
-  for(const kind of ['role','context','library','price','connection','cancel'] as const){
+  for(const kind of ['role','context','library','capacity','connection','cancel'] as const){
    const f=await fixture(),run=await start(f);
    if(kind==='role')await pool.query("UPDATE membership SET role='editor' WHERE workspace_id=$1 AND user_id=$2",[f.workspace,owner]);
    if(kind==='context')await updateProjectContext(f.project,owner,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'Changed'}]});
    if(kind==='library')await createPrompts(f.project,owner,{requestId:randomUUID(),prompts:[{text:'New concurrent question',topic:'Coffee'}]});
-   if(kind==='price')changedPrice=true;if(kind==='connection')await revokeProvider(f.workspace,owner,f.connectionId);if(kind==='cancel')await cancelAiSuggestion(f.project,owner,run.id,{requestId:randomUUID()});
-   await executeAiSuggestion(run.id,send);changedPrice=false;assert.equal(paid,baseline);assert.equal((await detail(f,run.id)).status,'cancelled',kind);
+   if(kind==='capacity')changedCapacity=true;if(kind==='connection')await revokeProvider(f.workspace,owner,f.connectionId);if(kind==='cancel')await cancelAiSuggestion(f.project,owner,run.id,{requestId:randomUUID()});
+   await executeAiSuggestion(run.id,send);changedCapacity=false;assert.equal(paid,baseline);assert.equal((await detail(f,run.id)).status,'cancelled',kind);
   }
   const held=await fixture(),heldRun=await start(held);let ready!:()=>void,release!:()=>void;const atPreflight=new Promise<void>(r=>ready=r),gate=new Promise<void>(r=>release=r);
   const waiting=executeAiSuggestion(heldRun.id,async(...args)=>{if(String(args[0]).endsWith('/endpoints')){ready();await gate;}return send(...args);});await atPreflight;
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[held.workspace,owner]);release();await waiting;assert.equal(paid,baseline);assert.equal((await detail(held,heldRun.id)).status,'cancelled');
   const charged=await fixture(),chargedRun=await start(charged);afterPaid=async()=>{await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[charged.workspace,owner]);};
-  await executeAiSuggestion(chargedRun.id,send);afterPaid=null;const charge=(await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[chargedRun.id])).rows[0];assert.deepEqual(charge,{status:'settled',actual_micros:'13'});
-  console.log('PASS preflight and locked dispatch rechecks, held-read demotion, and financial settlement after role revocation');
+  await executeAiSuggestion(chargedRun.id,send);afterPaid=null;const charge=(await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[chargedRun.id])).rows[0];assert.deepEqual(charge,{status:'settled',actual_micros:null});
+  console.log('PASS preflight and locked dispatch rechecks, held-read demotion, and request settlement after role revocation');
 
   for(const phase of ['queued','preflight','final update'] as const){
    const f=await fixture(),run=await start(f);const paidBefore:number=paid,freeBefore:number=free;
-   if(phase==='queued'){await expireQuote(run.quoteId);await executeAiSuggestion(run.id,send);}
-   if(phase==='preflight')await executeAiSuggestion(run.id,async(...args)=>{if(String(args[0]).endsWith('/endpoints'))await expireQuote(run.quoteId);return send(...args);});
+   if(phase==='queued'){await expireQuote(run.preparationId);await executeAiSuggestion(run.id,send);}
+   if(phase==='preflight')await executeAiSuggestion(run.id,async(...args)=>{if(String(args[0]).endsWith('/endpoints'))await expireQuote(run.preparationId);return send(...args);});
    if(phase==='final update'){
     let ready!:()=>void,release!:()=>void;const atUpdate=new Promise<void>(r=>ready=r),gate=new Promise<void>(r=>release=r);
     const queries=new Map<PoolClient,PoolClient['query']>();
@@ -124,27 +130,27 @@ export async function runSuggestionChecks(){
     try{
      await Promise.race([atUpdate,new Promise<never>((_,reject)=>{setTimeout(()=>reject(new Error('Final dispatch update was not reached.')),5000).unref();})]);
      assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[run.id])).rows[0].status,'reserved');
-     await expireQuote(run.quoteId);release();await waiting;
+     await expireQuote(run.preparationId);release();await waiting;
     }finally{release();try{await waiting;}finally{pool.off('acquire',acquire);for(const [client,query] of queries)client.query=query;}}
    }
    assert.equal(paid,paidBefore,phase);assert.equal(free,freeBefore+(phase==='queued'?0:2),phase);
    const cancelled=(await pool.query(`SELECT r.status,p.status AS charge_status,r.dispatched_at,r.generation_id,p.actual_micros,p.provider_reference
     FROM ai_suggestion_run r JOIN provider_request p ON p.id=r.id WHERE r.id=$1`,[run.id])).rows[0];
    assert.deepEqual(cancelled,{status:'cancelled',charge_status:'cancelled',dispatched_at:null,generation_id:null,actual_micros:null,provider_reference:null},phase);
-   assert.match((await detail(f,run.id)).diagnostic!,/quote expiry/);
+   assert.match((await detail(f,run.id)).diagnostic!,/preparation expiry/);
   }
   const sentExpiry=await fixture(),sentExpiryRun=await start(sentExpiry),beforeSentExpiry=paid;
-  afterPaid=async()=>{await expireQuote(sentExpiryRun.quoteId);};
+  afterPaid=async()=>{await expireQuote(sentExpiryRun.preparationId);};
   try{await executeAiSuggestion(sentExpiryRun.id,send);}finally{afterPaid=null;}
-  const sentExpired=await detail(sentExpiry,sentExpiryRun.id);assert.equal(paid,beforeSentExpiry+1);assert.equal(sentExpired.status,'completed');assert.equal(sentExpired.chargeStatus,'settled');assert.equal(sentExpired.actualUsd,'0.000013');assert.equal(sentExpired.proposal!.prompts.length,2);assert.equal(sentExpired.inputExpired,false);assert.equal(sentExpired.resultExpired,false);
-  console.log('PASS expired queued/preflight/final authorization cancels without dispatch, and expiry after POST preserves known charge and proposal');
+  const sentExpired=await detail(sentExpiry,sentExpiryRun.id);assert.equal(paid,beforeSentExpiry+1);assert.equal(sentExpired.status,'completed');assert.equal(sentExpired.requestStatus,'settled');assertNoApiMoney(sentExpired);assert.equal(sentExpired.proposal!.prompts.length,2);assert.equal(sentExpired.inputExpired,false);assert.equal(sentExpired.resultExpired,false);
+  console.log('PASS expired queued/preflight/final authorization cancels without dispatch, and expiry after POST preserves known request outcome and proposal');
 
-  for(const variant of ['invalid','empty'] as const){const f=await fixture(),run=await start(f);mode=variant;await executeAiSuggestion(run.id,send);mode='ok';const row=await detail(f,run.id);assert.equal(row.chargeStatus,'settled');assert.equal(row.actualUsd,'0.000013');assert.equal(row.status,variant==='invalid'?'failed':'completed');if(variant==='empty')assert.deepEqual(row.proposal!.prompts,[]);else assert.equal(row.proposal,null);assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);}
-  const lost=await fixture(),lostRun=await start(lost);mode='lost';const paidBefore=paid;await executeAiSuggestion(lostRun.id,send);mode='ok';await expireQuote(lostRun.quoteId);const lostFree=free;await executeAiSuggestion(lostRun.id,send);assert.equal(free,lostFree);assert.equal(paid,paidBefore+1);assert.equal((await detail(lost,lostRun.id)).chargeStatus,'uncertain');
-  const recovery={requestId:randomUUID()},recovered=await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);assert.equal(recovered.run.chargeStatus,'settled');assert.equal(recovered.run.actualUsd,'0.000013');assert.equal(recovered.run.proposal,null);const freeBefore=free;await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);await executeAiSuggestion(lostRun.id,send);assert.equal(free,freeBefore);assert.equal(paid,paidBefore+1);
+  for(const variant of ['invalid','empty'] as const){const f=await fixture(),run=await start(f);mode=variant;await executeAiSuggestion(run.id,send);mode='ok';const row=await detail(f,run.id);assert.equal(row.requestStatus,'settled');assertNoApiMoney(row);assert.equal(row.status,variant==='invalid'?'failed':'completed');if(variant==='empty')assert.deepEqual(row.proposal!.prompts,[]);else assert.equal(row.proposal,null);assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);}
+  const lost=await fixture(),lostRun=await start(lost);mode='lost';const paidBefore=paid;await executeAiSuggestion(lostRun.id,send);mode='ok';await expireQuote(lostRun.preparationId);const lostFree=free;await executeAiSuggestion(lostRun.id,send);assert.equal(free,lostFree);assert.equal(paid,paidBefore+1);assert.equal((await detail(lost,lostRun.id)).requestStatus,'uncertain');
+  const recovery={requestId:randomUUID()},recovered=await recoverAiSuggestion(lost.project,owner,lostRun.id,recovery,send);assert.equal(recovered.run.requestStatus,'settled');assertNoApiMoney(recovered.run);assert.equal(recovered.run.proposal,null);const freeBefore=free;await recoverAiSuggestion(lost.project,owner,lostRun.id,recovery,send);await executeAiSuggestion(lostRun.id,send);assert.equal(free,freeBefore);assert.equal(paid,paidBefore+1);
   const crashed=await fixture(),crashRun=await start(crashed);await pool.query("UPDATE ai_suggestion_run SET status='running',lease_owner=$2,lease_expires_at=clock_timestamp()-interval '1 second',dispatched_at=clock_timestamp()-interval '3 minutes' WHERE id=$1",[crashRun.id,randomUUID()]);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[crashRun.id]);
-  await reconcileAiSuggestionJobs();await executeAiSuggestion(crashRun.id,send);assert.equal((await detail(crashed,crashRun.id)).chargeStatus,'uncertain');assert.equal(paid,paidBefore+1);
-  console.log('PASS known charge with invalid/empty proposal, durable lost-response recovery, and crash never re-POSTs');
+  await reconcileAiSuggestionJobs();await executeAiSuggestion(crashRun.id,send);assert.equal((await detail(crashed,crashRun.id)).requestStatus,'uncertain');assert.equal(paid,paidBefore+1);
+  console.log('PASS known request outcome with invalid/empty proposal, durable lost-response recovery, and crash never re-POSTs');
 
   const cas=await fixture(),casRun=await start(cas);await executeAiSuggestion(casRun.id,send);const stale=await detail(cas,casRun.id),staleSave=acceptance(stale);
   await updateProjectContext(cas.project,owner,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'New authored identity'}]});await assert.rejects(acceptAiSuggestions(cas.project,owner,casRun.id,staleSave),{status:409});
@@ -155,8 +161,8 @@ export async function runSuggestionChecks(){
   const again=acceptance(await detail(cas,casRun.id));again.selections=again.selections.slice(0,1);await assert.rejects(acceptAiSuggestions(cas.project,owner,casRun.id,again),{status:409});
   console.log('PASS current-context CAS review, exact global duplicate rollback and one acceptance per candidate');
 
-  const exclusions=await fixture(),excludedQuote=(await quoteAiSuggestions(exclusions.project,owner,{...exclusions.input,excludedPrompts:['Excluded grinder guide?']},send)).quote;
-  const exclusionsRun=(await startAiSuggestions(exclusions.project,owner,{requestId:randomUUID(),quoteId:excludedQuote.id})).run;await executeAiSuggestion(exclusionsRun.id,send);
+  const exclusions=await fixture(),excludedQuote=(await prepareAiSuggestions(exclusions.project,owner,{...exclusions.input,excludedPrompts:['Excluded grinder guide?']},send)).preparation;
+  const exclusionsRun=(await startAiSuggestions(exclusions.project,owner,{requestId:randomUUID(),preparationId:excludedQuote.id})).run;await executeAiSuggestion(exclusionsRun.id,send);
   const beforeLibrary=acceptance(await detail(exclusions,exclusionsRun.id));
   const library=(await createPrompts(exclusions.project,owner,{requestId:randomUUID(),prompts:[{text:'Initial office question',topic:'Coffee'}]})).items[0];
   await updatePrompt(exclusions.project,owner,library.id,{requestId:randomUUID(),revision:library.revision,text:'Which grinder fits an office?'});
@@ -196,25 +202,25 @@ export async function runSuggestionChecks(){
   console.log('PASS pre-policy Unicode acceptance receipts replay under fresh authorization without regeneration or reinsertion');
   const beforeCandidates=paid;
   for(const profile of suggestionProfiles.slice(2)){
-   const f=await fixture(),oldQuote=await quote(f),candidateInput={...f.input,requestId:randomUUID(),profileId:profile.id};
-   await assert.rejects(quoteAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send),{status:409},'Changed model cannot reuse an existing quote receipt');
-   const q=(await quoteAiSuggestions(f.project,owner,candidateInput,send)).quote;assert.notEqual(q.id,oldQuote.id);assert.equal(q.input!.profileId,profile.id);assert.equal(q.route.model,profile.model);assert.equal(q.estimateUsd,'0.020429');
-   assert.equal((await quote(f)).route.model,'openai/gpt-4o-mini');assert.equal((await getAiSuggestions(f.project,owner)).runs.length,0,'Model discovery and quotation do not generate or reserve');
-   const started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:q.id})).run;await executeAiSuggestion(started.id,send);
-   const result=await detail(f,started.id);assert.equal(result.model,profile.model);assert.equal(result.status,'completed');assert.equal(result.actualUsd,'0.000013');assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);
+   const f=await fixture(),oldQuote=await preparation(f),candidateInput={...f.input,requestId:randomUUID(),profileId:profile.id};
+   await assert.rejects(prepareAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send),{status:409},'Changed model cannot reuse an existing preparation receipt');
+   const q=(await prepareAiSuggestions(f.project,owner,candidateInput,send)).preparation;assert.notEqual(q.id,oldQuote.id);assert.equal(q.input!.profileId,profile.id);assert.equal(q.route.model,profile.model);assertNoApiMoney(q);
+   assert.equal((await preparation(f)).route.model,'openai/gpt-4o-mini');assert.equal((await getAiSuggestions(f.project,owner)).runs.length,0,'Model discovery and quotation do not generate or reserve');
+   const started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),preparationId:q.id})).run;await executeAiSuggestion(started.id,send);
+   const result=await detail(f,started.id);assert.equal(result.model,profile.model);assert.equal(result.status,'completed');assertNoApiMoney(result);assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);
    assert.equal((await pool.query('SELECT route FROM ai_suggestion_quote WHERE id=$1',[oldQuote.id])).rows[0].route.model,'openai/gpt-4o-mini');
   }
-  assert.equal(paid,beforeCandidates+2);const choices=await getAiSuggestions(cas.project,viewer);assert.deepEqual(choices.profiles.map(p=>[p.id,p.model]),[...suggestionProfiles.map(p=>[p.id,p.model]),['catalog-text-schema-v1',null]]);assert.deepEqual(choices.profiles.filter(p=>p.id==='catalog-text-schema-v1'),[{id:'catalog-text-schema-v1',model:null,label:'Choose a model — evaluation only',admission:'benchmark'}]);assert.deepEqual(choices.defaults,{economy:null,balanced:null});assert.equal(choices.canQuote,false);
+  assert.equal(paid,beforeCandidates+2);const choices=await getAiSuggestions(cas.project,viewer);assert.deepEqual(choices.profiles.map(p=>[p.id,p.model]),[...suggestionProfiles.map(p=>[p.id,p.model]),['catalog-text-schema-v1',null]]);assert.deepEqual(choices.profiles.filter(p=>p.id==='catalog-text-schema-v1'),[{id:'catalog-text-schema-v1',model:null,label:'Choose a model — evaluation only',admission:'benchmark'}]);assert.deepEqual(choices.defaults,{economy:null,balanced:null});assert.equal(choices.canPrepare,false);
   console.log('PASS candidate-only metadata, permanent old receipts, fresh immutable model quotes and exact candidate dispatch');
 
   for(const profile of suggestionProfiles.slice(2)){
-   const f=await fixture(),q=(await quoteAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send)).quote,started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:q.id})).run;const prior:number=paid;
-   changedPrice=true;await executeAiSuggestion(started.id,send);changedPrice=false;assert.equal(paid,prior);assert.equal((await detail(f,started.id)).status,'cancelled');
+   const f=await fixture(),q=(await prepareAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send)).preparation,started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),preparationId:q.id})).run;const prior:number=paid;
+   changedCapacity=true;await executeAiSuggestion(started.id,send);changedCapacity=false;assert.equal(paid,prior);assert.equal((await detail(f,started.id)).status,'cancelled');
   }
-  console.log('PASS fresh candidate route changes cancel before completion without fallback or new quote');
+  console.log('PASS fresh candidate route changes cancel before completion without fallback or new preparation');
 
   const retained=await fixture(),retainedRun=await start(retained);await executeAiSuggestion(retainedRun.id,send);const originalProposal=(await detail(retained,retainedRun.id)).proposal!;
-  await pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '91 days' WHERE id=$1",[retainedRun.quoteId]);
+  await pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '91 days' WHERE id=$1",[retainedRun.preparationId]);
   const expired=await detail(retained,retainedRun.id);assert.equal(expired.snapshot,null);assert.equal(expired.proposal,null);assert.equal(expired.resultExpired,true);
   const cleaned=await runRetentionBatch(retained.project);assert.equal(cleaned!.expiredSuggestionResults,1);assert.equal(cleaned!.expiredSuggestionInputs,1);
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retained.workspace]);await executeAiSuggestion(retainedRun.id,send);const masked=await detail(retained,retainedRun.id);assert.equal(masked.proposal,null);assert.equal(masked.snapshot,null);
@@ -228,13 +234,18 @@ export async function runSuggestionChecks(){
   const api=await fixture(),login=await getAuth().handler(new Request(config.appUrl+'/api/auth/sign-in/email',{method:'POST',headers:{'content-type':'application/json',origin:config.appUrl},body:JSON.stringify({email:`${owner}@suggestions.integration.test`,password})}));assert.equal(login.status,200);
   const cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; '),base=`${config.appUrl}/api/projects/${api.project}/ai-suggestions`;
   const request=(path='',method='GET',body?:unknown,origin=config.appUrl)=>new Request(base+path,{method,headers:{cookie,origin,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
-  assert.equal((await handleApi(new Request(base))).status,401);assert.equal((await handleApi(request('/quote','POST',api.input,'https://foreign.test'))).status,403);assert.equal((await handleApi(request('?unknown=x'))).status,400);assert.equal((await handleApi(request('','PUT'))).status,405);
-  const sentBefore=paid;globalThis.fetch=send;const apiQuote=await handleApi(request('/quote','POST',api.input));assert.equal(apiQuote.status,200);const quoteBody=await apiQuote.json();assert.equal(paid,sentBefore);
-  const apiStart=await handleApi(request('/runs','POST',{requestId:randomUUID(),quoteId:quoteBody.quote.id}));assert.equal(apiStart.status,202);const started=await apiStart.json();
+  assert.equal((await handleApi(new Request(base))).status,401);assert.equal((await handleApi(request('/prepare','POST',api.input,'https://foreign.test'))).status,403);assert.equal((await handleApi(request('?unknown=x'))).status,400);assert.equal((await handleApi(request('','PUT'))).status,405);
+  const sentBefore=paid;globalThis.fetch=send;const apiQuote=await handleApi(request('/prepare','POST',api.input));assert.equal(apiQuote.status,200);const quoteBody=await apiQuote.json();assert.equal(paid,sentBefore);
+  const apiStart=await handleApi(request('/runs','POST',{requestId:randomUUID(),preparationId:quoteBody.preparation.id}));assert.equal(apiStart.status,202);const started=await apiStart.json();
   await startWorker();const until=Date.now()+15000;while(Date.now()<until){if((await detail(api,started.run.id)).status==='completed')break;await new Promise(r=>setTimeout(r,100));}
   assert.equal((await detail(api,started.run.id)).status,'completed');assert.equal(paid,sentBefore+1);await stopJobs();globalThis.fetch=async()=>{outbound++;throw new Error('External provider traffic forbidden.');};
   console.log('PASS real cookie/Origin/method/query API and production worker handler with contained provider transport');
   assert.equal(outbound,0);
+
+  const fixtureUsers=[owner,editor,viewer],requestRows=(await pool.query('SELECT estimate_micros,actual_micros FROM provider_request WHERE user_id=ANY($1::text[])',[fixtureUsers])).rows;
+  for(const row of requestRows){assert.equal(row.estimate_micros,null);assert.equal(row.actual_micros,null);}
+  const trackerRows=(await pool.query('SELECT maximum_micros FROM prompt_tracker WHERE workspace_id IN(SELECT workspace_id FROM membership WHERE user_id=ANY($1::text[]))',[fixtureUsers])).rows;
+  for(const row of trackerRows)assert.equal(row.maximum_micros,null);
  }finally{globalThis.fetch=original;await stopJobs();await closeDatabase();}
 }
 if(import.meta.url===new URL(process.argv[1]??'', 'file:').href||process.argv[1]?.endsWith('ai-suggestions-integration.ts'))await runSuggestionChecks();

@@ -45,40 +45,40 @@ import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { handleSesFeedback, sesFeedbackPath } from './ses-feedback.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
-import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
+import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveProviderRequestControls, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
-import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
-import {getDomainResearch,getDomainResearchRun,exportDomainResearchRun,refreshDomainResearchMarkets,quoteDomainResearch,startDomainResearch,cancelDomainResearch,reconcileDomainResearch} from './domain-research.ts';
+import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,prepareKeywordResearch,startKeywordResearch,cancelKeywordResearch,recoverKeywordResearch} from './keyword-research.ts';
+import {getDomainResearch,getDomainResearchRun,exportDomainResearchRun,refreshDomainResearchMarkets,prepareDomainResearch,startDomainResearch,cancelDomainResearch,recoverDomainResearch} from './domain-research.ts';
 import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
-import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
+import {getRankRun,prepareRankCheck,startRankCheck} from './rank-execution.ts';
 import {cancelRankRun} from './rank-worker.ts';
-import {reconcileRankCheck} from './rank-reconciliation.ts';
+import {recoverRankCheck} from './rank-reconciliation.ts';
 import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
 import {getRankSchedule,previewRankSchedule,approveRankSchedule,disableRankSchedule} from './rank-scheduling.ts';
 import {getRankDistribution} from './rank-distribution.ts';
 import {getRankMatrix,exportRankMatrix} from './rank-matrix.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
-import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
+import {prepareSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,recoverSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
-import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,preparePromptExecution,startPromptExecution,cancelPromptComparison,recoverPromptExecution} from './prompt-execution.ts';
 import {getPromptTrackers,getPromptTracker,createPromptTracker,approvePromptTracker,pausePromptTracker,runPromptTrackerNow,setPromptTrackerArchived} from './prompt-recurring.ts';
-import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
-import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
+import {getAiSuggestions,getAiSuggestion,prepareAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
+import {recoverAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
-import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
+import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,prepareAiSearch,startAiSearch,cancelAiSearch,recoverAiSearch} from './ai-search.ts';
 import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
-import {getContentSupport,getContentSupportRun,quoteContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
-import {reconcileContentSupport} from './ai-content-support-worker.ts';
+import {getContentSupport,getContentSupportRun,prepareContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
+import {recoverContentSupport} from './ai-content-support-worker.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -663,7 +663,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const suggestionRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-suggestions(?:/(quote|runs)(?:/(${id})(?:/(cancel|reconcile|accept))?)?)?$`,'i'));
+    const suggestionRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-suggestions(?:/(prepare|runs)(?:/(${id})(?:/(cancel|recover|accept))?)?)?$`,'i'));
     if(suggestionRoute){
       const [,projectId,action,runId,operation]=suggestionRoute;
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`ai-suggestions:${user.id}`,60);
@@ -672,12 +672,12 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&action==='runs'&&runId&&!operation)return json(await getAiSuggestion(projectId,user.id,runId));
       if(request.method==='POST'){
         await limit(`ai-suggestions-write:${user.id}`,10);
-        const input=await readJson(request,action==='quote'?262144:operation==='accept'?131072:2048);
-        if(action==='quote'&&!runId)return json(await quoteAiSuggestions(projectId,user.id,input));
+        const input=await readJson(request,action==='prepare'?262144:operation==='accept'?131072:2048);
+        if(action==='prepare'&&!runId)return json(await prepareAiSuggestions(projectId,user.id,input));
         if(action==='runs'&&!runId)return json(await startAiSuggestions(projectId,user.id,input),202);
         if(action==='runs'&&runId&&operation==='cancel')return json(await cancelAiSuggestion(projectId,user.id,runId,input));
         if(action==='runs'&&runId&&operation==='accept')return json(await acceptAiSuggestions(projectId,user.id,runId,input));
-        if(action==='runs'&&runId&&operation==='reconcile'){await limit(`ai-suggestions-reconcile:${projectId}`,3);return json(await reconcileAiSuggestion(projectId,user.id,runId,input));}
+        if(action==='runs'&&runId&&operation==='recover'){await limit(`ai-suggestions-recover:${projectId}`,3);return json(await recoverAiSuggestion(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }
@@ -698,7 +698,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile|summary|citations))?)?)?$`,'i'));
+    const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(prepare|comparisons|runs)(?:/(${id})(?:/(cancel|recover|summary|citations))?)?)?$`,'i'));
     if(executionRoute){
       const [,projectId,action,runId,runAction]=executionRoute;
       const citationRead=request.method==='GET'&&action==='runs'&&!!runId&&runAction==='citations';
@@ -713,17 +713,17 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='POST'){
         await limit(`execution-write:${user.id}`,10);
         const input=await readJson(request,32768);
-        if(!runId&&action==='quote')return json(await quotePromptExecution(projectId,user.id,input));
+        if(!runId&&action==='prepare')return json(await preparePromptExecution(projectId,user.id,input));
         if(!runId&&action==='comparisons')return json(await startPromptExecution(projectId,user.id,input),202);
         if(action==='comparisons'&&runId&&runAction==='cancel')return json(await cancelPromptComparison(projectId,user.id,runId,input));
-        if(action==='runs'&&runId&&runAction==='reconcile'){
-          await limit(`execution-reconcile:${projectId}`,3);
-          return json(await reconcilePromptExecution(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&runAction==='recover'){
+          await limit(`execution-recover:${projectId}`,3);
+          return json(await recoverPromptExecution(projectId,user.id,runId,input));
         }
       }
       return json({error:'Method not allowed.'},405);
     }
-    const savedKeywordRoute=path.match(new RegExp(`^/api/projects/(${id})/saved-keywords(?:/(list|bulk-tags|remove|export|refresh-quote|refreshes|tags)(?:/(list|${id})(?:/(update|delete|cancel|reconcile))?)?)?$`,'i'));
+    const savedKeywordRoute=path.match(new RegExp(`^/api/projects/(${id})/saved-keywords(?:/(list|bulk-tags|remove|export|refresh-prepare|refreshes|tags)(?:/(list|${id})(?:/(update|delete|cancel|recover))?)?)?$`,'i'));
     if(savedKeywordRoute){
       if(url.search)throw new FoundationError(400,'Saved keyword requests do not accept query parameters.');
       const [,projectId,action,targetId,operation]=savedKeywordRoute;
@@ -742,7 +742,7 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='list')return json(await listSavedKeywords(projectId,user.id,input,apiToken??undefined));
           if(action==='bulk-tags')return json(await changeSavedKeywordTags(projectId,user.id,input));
           if(action==='remove')return json(await removeSavedKeywords(projectId,user.id,input));
-          if(action==='refresh-quote'){await limit(`saved-keyword-quote:${user.id}`,10);return json(await quoteSavedKeywordRefresh(projectId,user.id,input));}
+          if(action==='refresh-prepare'){await limit(`saved-keyword-quote:${user.id}`,10);return json(await prepareSavedKeywordRefresh(projectId,user.id,input));}
           if(action==='refreshes')return json(await startSavedKeywordRefresh(projectId,user.id,input),202);
           if(action==='export'){
             const result=await exportSavedKeywords(projectId,user.id,input,request.signal);
@@ -756,12 +756,12 @@ export async function handleApi(request: Request): Promise<Response> {
         }
         if(action==='refreshes'&&targetId){
           if(operation==='cancel')return json(await cancelSavedKeywordRefresh(projectId,user.id,targetId,input));
-          if(operation==='reconcile'){await limit(`saved-keyword-reconcile:${projectId}`,3);return json(await reconcileSavedKeywordRefresh(projectId,user.id,targetId,input));}
+          if(operation==='recover'){await limit(`saved-keyword-reconcile:${projectId}`,3);return json(await recoverSavedKeywordRefresh(projectId,user.id,targetId,input));}
         }
       }
       return json({error:'Method not allowed.'},405);
     }
-    const rankCheckRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-checks/(${id})(?:/(start|cancel|reconcile))?$`,'i'));
+    const rankCheckRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-checks/(${id})(?:/(start|cancel|recover))?$`,'i'));
     if(rankCheckRoute){
       const [,projectId,runId,action]=rankCheckRoute;
       if(url.searchParams.size)throw new FoundationError(400,'Rank check actions do not accept query parameters.');
@@ -773,7 +773,7 @@ export async function handleApi(request: Request): Promise<Response> {
         const input=await readJson(request,8192);
         if(action==='start')return json(await startRankCheck(projectId,user.id,runId,input),202);
         if(action==='cancel')return json(await cancelRankRun(projectId,user.id,runId,input));
-        if(action==='reconcile'){await limit(`rank-reconcile:${projectId}`,3);return json(await reconcileRankCheck(projectId,user.id,runId,input));}
+        if(action==='recover'){await limit(`rank-recover:${projectId}`,3);return json(await recoverRankCheck(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }
@@ -818,7 +818,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(action==='results')return json(await getLatestRankResults(projectId,user.id,trackerId,url.searchParams,apiToken??undefined));
       return json(await getRankKeywordHistory(projectId,user.id,trackerId,keywordId,url.searchParams,apiToken??undefined));
     }
-    const rankRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers(?:/(catalog|locations|${id})(?:/(update|archive|keywords|quote)(?:/(add|remove|pin))?)?)?$`,'i'));
+    const rankRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers(?:/(catalog|locations|${id})(?:/(update|archive|keywords|prepare)(?:/(add|remove|pin))?)?)?$`,'i'));
     if(rankRoute){
       const [,projectId,target,action,keywordAction]=rankRoute;
       await projectAccess(projectId,user.id,request.method!=='GET'||target==='locations');
@@ -833,19 +833,19 @@ export async function handleApi(request: Request): Promise<Response> {
         if(url.searchParams.size)throw new FoundationError(400,'Put tracker changes in the request body.');
         await limit(`rank-write:${user.id}`,30);
         // Up to2,000 bounded raw terms (including JSON Unicode escapes), or IDs.
-        const input=await readJson(request,action==='keywords'?(keywordAction==='add'?2_621_440:131_072):action==='quote'?262_144:8192);
+        const input=await readJson(request,action==='keywords'?(keywordAction==='add'?2_621_440:131_072):action==='prepare'?262_144:8192);
         if(!target)return json(await createRankTracker(projectId,user.id,input));
         if(target==='catalog'&&!action){await limit(`rank-catalog:${user.id}`,30);return json(await getRankCatalog(projectId,user.id,input));}
         if(target!=='catalog'&&target!=='locations'){
           if(action==='update'&&!keywordAction)return json(await updateRankTracker(projectId,user.id,target,input));
           if(action==='archive'&&!keywordAction)return json(await archiveRankTracker(projectId,user.id,target,input));
-          if(action==='quote'&&!keywordAction){await limit(`rank-quote:${user.id}`,10);return json(await quoteRankCheck(projectId,user.id,target,input));}
+          if(action==='prepare'&&!keywordAction){await limit(`rank-prepare:${user.id}`,10);return json(await prepareRankCheck(projectId,user.id,target,input));}
           if(action==='keywords'&&keywordAction)return json(await changeRankKeywords(projectId,user.id,target,keywordAction as 'add'|'remove'|'pin',input));
         }
       }
       return json({error:'Method not allowed.'},405);
     }
-    const contentSupportRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-content-support(?:/(quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
+    const contentSupportRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-content-support(?:/(prepare|runs)(?:/(${id})(?:/(cancel|recover|export))?)?)?$`,'i'));
     if(contentSupportRoute){
       const [,projectId,action,runId,operation]=contentSupportRoute;
       await projectAccess(projectId,user.id,false);await limit(`ai-content-support:${user.id}`,30);
@@ -858,10 +858,10 @@ export async function handleApi(request: Request): Promise<Response> {
         if(url.search)throw new FoundationError(400,'This assessment action does not accept query parameters.');
         if(operation==='export'&&runId)return await exportContentSupport(projectId,user.id,runId,await readJson(request,2048),request.signal);
         await limit(`ai-content-support-write:${user.id}`,10);
-        if(action==='quote'&&!runId)return json(await quoteContentSupport(projectId,user.id,await readJson(request,32768)));
+        if(action==='prepare'&&!runId)return json(await prepareContentSupport(projectId,user.id,await readJson(request,32768)));
         if(action==='runs'&&!runId)return json(await startContentSupport(projectId,user.id,await readJson(request,2048)),202);
         if(action==='runs'&&runId&&operation==='cancel')return json(await cancelContentSupport(projectId,user.id,runId,await readJson(request,2048)));
-        if(action==='runs'&&runId&&operation==='reconcile'){await limit(`ai-content-support-reconcile:${projectId}`,3);return json(await reconcileContentSupport(projectId,user.id,runId,await readJson(request,2048)));}
+        if(action==='runs'&&runId&&operation==='recover'){await limit(`ai-content-support-recover:${projectId}`,3);return json(await recoverContentSupport(projectId,user.id,runId,await readJson(request,2048)));}
       }
       return json({error:'Method not allowed.'},405);
     }
@@ -885,7 +885,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')!=='0')throw new FoundationError(400,'Search capture reads do not accept a body.');
       await limit(`ai-search:${user.id}`,30);return json(await getAiSearchAnalysis(aiAnalysisRoute[1],user.id,url.searchParams));
     }
-    const aiSearchRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search(?:/(catalog/refresh|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    const aiSearchRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search(?:/(catalog/refresh|prepare|runs)(?:/(${id})(?:/(cancel|recover))?)?)?$`,'i'));
     if(aiSearchRoute){
       const[,projectId,action,runId,runAction]=aiSearchRoute;
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`ai-search:${user.id}`,30);
@@ -898,14 +898,14 @@ export async function handleApi(request: Request): Promise<Response> {
         if(url.search)throw new FoundationError(400,'Search capture actions do not accept query parameters.');
         await limit(`ai-search-write:${user.id}`,10);const input=await readJson(request,4096);
         if(action==='catalog/refresh'&&!runId){await limit(`ai-search-catalog:${projectId}`,3);return json(await refreshAiSearchCatalog(projectId,user.id,input));}
-        if(action==='quote'&&!runId)return json(await quoteAiSearch(projectId,user.id,input));
+        if(action==='prepare'&&!runId)return json(await prepareAiSearch(projectId,user.id,input));
         if(action==='runs'&&!runId){const result=await startAiSearch(projectId,user.id,input);return json(result,result.replayed?200:202);}
         if(action==='runs'&&runId&&runAction==='cancel')return json(await cancelAiSearch(projectId,user.id,runId,input));
-        if(action==='runs'&&runId&&runAction==='reconcile'){await limit(`ai-search-reconcile:${projectId}`,3);return json(await reconcileAiSearch(projectId,user.id,runId,input));}
+        if(action==='runs'&&runId&&runAction==='recover'){await limit(`ai-search-recover:${projectId}`,3);return json(await recoverAiSearch(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }
-    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
+    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|prepare|runs)(?:/(${id})(?:/(cancel|recover|export))?)?)?$`,'i'));
     if(domainResearchRoute){
       const [,projectId,action,runId,runAction]=domainResearchRoute;
       if(url.search)throw new FoundationError(400,'Domain research does not accept query parameters.');
@@ -916,14 +916,14 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='POST'){
         await limit(`domain-research-write:${user.id}`,10);const input=await readJson(request,8192);
         if(!runId&&action==='catalog')return json(await refreshDomainResearchMarkets(projectId,user.id,input));
-        if(!runId&&action==='quote')return json(await quoteDomainResearch(projectId,user.id,input));
+        if(!runId&&action==='prepare')return json(await prepareDomainResearch(projectId,user.id,input));
         if(!runId&&action==='runs')return json(await startDomainResearch(projectId,user.id,input),202);
         if(action==='runs'&&runId&&runAction==='cancel')return json(await cancelDomainResearch(projectId,user.id,runId,input));
-        if(action==='runs'&&runId&&runAction==='reconcile'){await limit(`domain-research-reconcile:${projectId}`,3);return json(await reconcileDomainResearch(projectId,user.id,runId,input));}
+        if(action==='runs'&&runId&&runAction==='recover'){await limit(`domain-research-recover:${projectId}`,3);return json(await recoverDomainResearch(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }
-    const keywordRoute=path.match(new RegExp(`^/api/projects/(${id})/keyword-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    const keywordRoute=path.match(new RegExp(`^/api/projects/(${id})/keyword-research(?:/(catalog|prepare|runs)(?:/(${id})(?:/(cancel|recover))?)?)?$`,'i'));
     if(keywordRoute){
       const [,projectId,action,runId,runAction]=keywordRoute;
       await projectAccess(projectId,user.id,request.method!=='GET');
@@ -934,12 +934,12 @@ export async function handleApi(request: Request): Promise<Response> {
         await limit(`keyword-write:${user.id}`,10);
         const input=await readJson(request);
         if(!runId&&action==='catalog')return json(await refreshKeywordMarkets(projectId,user.id,input));
-        if(!runId&&action==='quote')return json(await quoteKeywordResearch(projectId,user.id,input));
+        if(!runId&&action==='prepare')return json(await prepareKeywordResearch(projectId,user.id,input));
         if(!runId&&action==='runs')return json(await startKeywordResearch(projectId,user.id,input),202);
         if(action==='runs'&&runId&&runAction==='cancel')return json(await cancelKeywordResearch(projectId,user.id,runId,input));
-        if(action==='runs'&&runId&&runAction==='reconcile'){
-          await limit(`keyword-reconcile:${projectId}`,3);
-          return json(await reconcileKeywordResearch(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&runAction==='recover'){
+          await limit(`keyword-recover:${projectId}`,3);
+          return json(await recoverKeywordResearch(projectId,user.id,runId,input));
         }
       }
       return json({error:'Method not allowed.'},405);
@@ -1049,7 +1049,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({ error: 'Method not allowed.' }, 405);
     }
-    let management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers|budget)$`, 'i'));
+    let management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers|provider-requests/control)$`, 'i'));
     if (management) {
       const workspaceId = management[1];
       await limit(`settings:${user.id}`, 60);
@@ -1059,7 +1059,7 @@ export async function handleApi(request: Request): Promise<Response> {
         const input = await readJson(request);
         if (management[2] === 'api-keys') return json(await createApiKey(workspaceId, user.id, input), 201);
         if (management[2] === 'providers') return json(await saveProvider(workspaceId, user.id, input), 201);
-        if (management[2] === 'budget') { await saveBudget(workspaceId, user.id, input); return json({ ok: true }); }
+        if (management[2] === 'provider-requests/control') { await saveProviderRequestControls(workspaceId, user.id, input); return json({ ok: true }); }
       }
     }
     management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers)/(${id})/(revoke|update|check)$`, 'i'));

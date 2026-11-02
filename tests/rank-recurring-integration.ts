@@ -4,9 +4,9 @@ import {FoundationError} from '../src/server/auth.ts';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,startWorker,stopJobs} from '../src/server/jobs.ts';
-import {saveBudget,saveProvider} from '../src/server/providers.ts';
+import {saveProviderRequestControls,saveProvider} from '../src/server/providers.ts';
 import {getRankTracker,changeRankKeywords,updateRankTracker} from '../src/server/rank-tracking.ts';
-import {quoteRankCheck,getRankRun,rankQueue} from '../src/server/rank-execution.ts';
+import {prepareRankCheck,getRankRun,rankQueue} from '../src/server/rank-execution.ts';
 import {listRankRuns} from '../src/server/rank-history.ts';
 import {approveRankSchedule,disableRankSchedule,getRankSchedule} from '../src/server/rank-scheduling.ts';
 import {claimDueRankOccurrence,assertRankRecurringAuthority} from '../src/server/rank-recurring.ts';
@@ -43,11 +43,11 @@ export async function runRankRecurringChecks(){
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Recurring acceptance')",[f.workspace]);
     for(const [user,role]of [[owner,'owner'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,user,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Recurring acceptance','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
-    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic recurring account',credentials:{login:'recurring@integration.test',password:'never-live'}})).connection.id;await saveBudget(f.workspace,owner,{paused:false});
+    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic recurring account',credentials:{login:'recurring@integration.test',password:'never-live'}})).connection.id;await saveProviderRequestControls(f.workspace,owner,{paused:false});
     await pool.query("INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages) VALUES($1,$2,$3,'Recurring acceptance','example.com',2840,'US','Country',2840,'US','en','English',clock_timestamp(),'desktop',100,1)",[f.tracker,f.workspace,f.project]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:Array.from({length:count},(_,i)=>'C++ %20 '+i),matchCase:true});
-    const t=(await getRankTracker(f.project,owner,f.tracker)).tracker,q=await quoteRankCheck(f.project,owner,f.tracker,{requestId:randomUUID(),connectionId:f.connection,revision:t.revision,keywordsRevision:t.keywordsRevision,method:'queued'},net.send);assert.ok(q);f.quote=q.run.id;
-    await approveRankSchedule(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,quoteId:f.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});return f;
+    const t=(await getRankTracker(f.project,owner,f.tracker)).tracker,q=await prepareRankCheck(f.project,owner,f.tracker,{requestId:randomUUID(),connectionId:f.connection,revision:t.revision,keywordsRevision:t.keywordsRevision,method:'queued'},net.send);assert.ok(q);f.quote=q.run.id;
+    await approveRankSchedule(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,preparationId:f.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});return f;
   }
   type Fixture=Awaited<ReturnType<typeof fixture>>;
   const raw=(f:Fixture)=>pool.query('SELECT * FROM rank_config WHERE id=$1',[f.tracker]).then(r=>r.rows[0]);
@@ -68,37 +68,35 @@ export async function runRankRecurringChecks(){
 
     for(const failure of ['exception','conflict','budget'] as const){
       const n=transport(),x=await fixture(n,101);await due(x);const before=(await raw(x)).next_due_at.toISOString(),beforeJobs=(await pool.query('SELECT count(*)::int AS n FROM pgboss.job')).rows[0].n,send=boss.send;let sends=0;
-      // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first group's reservation (N=1),
-      // so the second group meets the real ledger gate (409 SPENDING_BUDGET) and the savepoint rolls back every child, sentinel included.
+      // Pause after the first group so the real manual-pause gate rolls back every child and the pause.
       const ledgerHash=async()=>(await pool.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(p) ORDER BY id),'[]'::jsonb)::text) AS h FROM provider_request p")).rows[0].h as string,ledgerBefore=await ledgerHash();
       if(failure==='budget'){await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-          INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
-          VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+        IF NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id)=TG_ARGV[1]::int THEN
+          UPDATE workspace_provider_control SET paused=true WHERE workspace_id=NEW.workspace_id;
         END IF; RETURN NULL; END $$`);await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${x.workspace}','1')`);}
       const dropSentinel=async()=>{await pool.query('DROP TRIGGER IF EXISTS d3_sentinel ON provider_request');await pool.query('DROP FUNCTION IF EXISTS d3_sentinel()');};
       boss.send=(async(...args:Parameters<typeof send>)=>{const result=await send.apply(boss,args);sends++;if(sends===2)throw failure==='conflict'?new FoundationError(409,'Synthetic invariant conflict.'):new Error('Synthetic post-queue failure.');return result;}) as typeof send;
       try{if(failure==='budget'){const skipped=await claimDueRankOccurrence(n.send);assert.equal(skipped.status,'skipped');assert.equal(sends,1);assert.deepEqual(await counts(x),{runs:1,ledger:0,dispatch:0,tasks:0});assert.ok((await raw(x)).next_due_at>new Date());
-          assert.equal(await ledgerHash(),ledgerBefore);assert.equal((await raw(x)).last_skip_reason,'Skipped: paid work is paused or an earlier charge is uncertain. No paid request was sent.');
+          assert.equal(await ledgerHash(),ledgerBefore);assert.equal((await pool.query('SELECT paused FROM workspace_provider_control WHERE workspace_id=$1',[x.workspace])).rows[0].paused,false);assert.equal((await raw(x)).last_skip_reason,'Skipped: provider requests are paused. No request was sent.');
           await dropSentinel();boss.send=send;await due(x);assert.equal((await claimDueRankOccurrence(n.send)).status,'started');assert.deepEqual(await counts(x),{runs:2,ledger:2,dispatch:2,tasks:101});assert.equal(n.state.paid,0);}
         else{await assert.rejects(claimDueRankOccurrence(n.send),failure==='conflict'?rejected(409):/Synthetic post-queue failure/);assert.equal(sends,2);assert.deepEqual(await counts(x),{runs:0,ledger:0,dispatch:0,tasks:0});assert.equal((await raw(x)).next_due_at.toISOString(),before);}}
       finally{boss.send=send;await dropSentinel();await disable(x);}assert.equal((await pool.query('SELECT count(*)::int AS n FROM pgboss.job')).rows[0].n,beforeJobs+(failure==='budget'?2:0),'Only the post-trigger budget claim keeps its two queued groups.');
     }
-    console.log('PASS real queue insert rollback, invariant409 propagation and all-child rollback through the real uncertain-charge gate before one durable skip (D3)');
+    console.log('PASS real queue insert rollback, invariant409 propagation and all-child rollback through the real manual-pause gate before one durable skip');
 
     for(const why of ['provider','account','paused','overlap'] as const){
       const n=transport(),x=await fixture(n,2);if(why==='overlap'){await due(x);assert.equal((await claimDueRankOccurrence(n.send)).status,'started');}
-      const when=await due(x),calls=n.state.free;if(why==='account')n.state.account='different@integration.test';if(why==='paused')await saveBudget(x.workspace,owner,{paused:true});
+      const when=await due(x),calls=n.state.free;if(why==='account')n.state.account='different@integration.test';if(why==='paused')await saveProviderRequestControls(x.workspace,owner,{paused:true});
       const result=await claimDueRankOccurrence(why==='provider'?async()=>{throw new Error('Synthetic unavailable response.');}:n.send);assert.equal(result.status,'skipped');const skipped=JSON.parse(JSON.stringify((await getRankRun(x.project,viewer,result.runId!)).run));
-      assert.equal(skipped.status,'skipped');assert.equal(skipped.taskCount,0);assert.equal(skipped.estimateUsd,'0.000000');assert.equal(skipped.canStart,false);assert.equal(skipped.priceAsOf,null);assert.equal(skipped.scheduledFor,new Date(when).toISOString());assert.deepEqual(skipped.tasks,[]);assert.deepEqual(skipped.quotedTasks,[]);assert.deepEqual(skipped.dispatches,[]);assert.equal(skipped.costStatus,'not_started');assert.equal(n.state.paid,0);if(why==='overlap')assert.equal(n.state.free,calls);
-      const summary=(await listRankRuns(x.project,viewer,x.tracker,new URLSearchParams())).runs.find(r=>r.id===result.runId);assert.ok(summary);assert.equal(summary.scheduledFor,new Date(when).toISOString());assert.equal(summary.taskCount,0);assert.equal(summary.estimateUsd,'0.000000');
+      assert.equal(skipped.status,'skipped');assert.equal(skipped.taskCount,0);assert.equal(Object.hasOwn(skipped,'estimateUsd'),false);assert.equal(skipped.canStart,false);assert.equal(Object.hasOwn(skipped,'priceAsOf'),false);assert.equal(skipped.scheduledFor,new Date(when).toISOString());assert.deepEqual(skipped.tasks,[]);assert.deepEqual(skipped.preparedTasks,[]);assert.deepEqual(skipped.dispatches,[]);assert.equal(skipped.requestStatus,'not_started');assert.equal(n.state.paid,0);if(why==='overlap')assert.equal(n.state.free,calls);
+      const summary=(await listRankRuns(x.project,viewer,x.tracker,new URLSearchParams())).runs.find(r=>r.id===result.runId);assert.ok(summary);assert.equal(summary.scheduledFor,new Date(when).toISOString());assert.equal(summary.taskCount,0);assert.equal(Object.hasOwn(summary,'estimateUsd'),false);
       assert.equal((await raw(x)).schedule_enabled,why!=='account');if(why!=='account')await disable(x);
     }
-    // Owner decision D3: no standing per-check ceiling. A dearer current price no longer skips; the occurrence starts at that price with every child reserved.
-    const dear=transport(),d=await fixture(dear,2),approvedTotal=BigInt((await raw(d)).approval_max_micros);await due(d);dear.state.base=.002;const dearer=await claimDueRankOccurrence(dear.send);assert.equal(dearer.status,'started');
-    const dearRun=(await pool.query('SELECT estimate_micros FROM rank_run WHERE id=$1',[dearer.runId])).rows[0],dearReserved=(await pool.query("SELECT sum(estimate_micros)::text AS total FROM provider_request WHERE workspace_id=$1 AND status='reserved'",[d.workspace])).rows[0].total;
-    assert.ok(BigInt(dearRun.estimate_micros)>approvedTotal,'The current plan exceeds the approved quote total.');assert.equal(dearReserved,dearRun.estimate_micros);assert.deepEqual(await counts(d),{runs:1,ledger:1,dispatch:1,tasks:2});assert.equal(dear.state.paid,0);await disable(d);
-    console.log('PASS unavailable account, account change, paused budget and overlap produce honest zero-child skipped receipts; a dearer current price starts with every child reserved (D3)');
+    // Account billing metadata is irrelevant to a current, fully authorized occurrence.
+    const dear=transport(),d=await fixture(dear,2);assert.equal((await raw(d)).approval_max_micros,null);await due(d);dear.state.base=.002;const dearer=await claimDueRankOccurrence(dear.send);assert.equal(dearer.status,'started');
+    const requestRows=(await pool.query('SELECT estimate_micros,actual_micros FROM provider_request WHERE workspace_id=$1',[d.workspace])).rows;
+    assert.ok(requestRows.length>0&&requestRows.every(row=>row.estimate_micros===null&&row.actual_micros===null));assert.equal((await pool.query('SELECT estimate_micros FROM rank_run WHERE id=$1',[dearer.runId])).rows[0].estimate_micros,null);assert.deepEqual(await counts(d),{runs:1,ledger:1,dispatch:1,tasks:2});assert.equal(dear.state.paid,0);await disable(d);
+    console.log('PASS unavailable account, account change, manual pause and overlap produce zero-child skipped receipts; billing metadata has no effect and new financial fields remain NULL');
 
     for(const mutation of ['role','credentials','definition','disable_reapprove','metadata'] as const){
       const n=transport(),x=await fixture(n),gate=latch();await due(x);n.state.accountHook=gate.hold;const pending=claimDueRankOccurrence(n.send);await reached(gate.entered);
@@ -106,7 +104,7 @@ export async function runRankRecurringChecks(){
         if(mutation==='role')await setRole(x,'editor');
         if(mutation==='credentials')await saveProvider(x.workspace,owner,{name:'Changed synthetic connection',credentials:{login:'recurring@integration.test',password:'different-never-live'}},x.connection);
         if(mutation==='definition'){const detail=await getRankTracker(x.project,owner,x.tracker),removed=await changeRankKeywords(x.project,owner,x.tracker,'remove',{requestId:randomUUID(),revision:detail.tracker.authoredRevision,keywordIds:[detail.keywords[0].id]});await changeRankKeywords(x.project,owner,x.tracker,'add',{requestId:randomUUID(),revision:removed.tracker.authoredRevision,keywords:[detail.keywords[0].keyword],matchCase:true});}
-        if(mutation==='disable_reapprove'){await disable(x);await approveRankSchedule(x.project,owner,x.tracker,{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,quoteId:x.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});}
+        if(mutation==='disable_reapprove'){await disable(x);await approveRankSchedule(x.project,owner,x.tracker,{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,preparationId:x.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});}
         if(mutation==='metadata'){const {tracker:t,keywords}=await getRankTracker(x.project,owner,x.tracker);await updateRankTracker(x.project,owner,x.tracker,{requestId:randomUUID(),revision:t.authoredRevision,name:'Metadata only',devices:t.devices,depth:t.depth,maxCrawlPages:t.maxCrawlPages});await changeRankKeywords(x.project,owner,x.tracker,'pin',{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,keywordIds:[keywords[0].id],pinned:true});}
       }finally{gate.release();}const result=await pending;assert.equal(result.status,mutation==='metadata'?'started':['role','credentials'].includes(mutation)?'skipped':'superseded');assert.equal((await counts(x)).ledger,mutation==='metadata'?1:0);if(mutation==='role')await setRole(x,'owner');await disable(x);
     }
@@ -121,11 +119,11 @@ export async function runRankRecurringChecks(){
     console.log('PASS standing approval revocation at both paid gates cancels untouched work while incurred charge/free collection survive');
 
     const forged=transport(),g=await fixture(forged);await due(g);const forgedRun=await claimDueRankOccurrence(forged.send),first=(await dispatches(forgedRun.runId!))[0],c=await pool.connect();
-    try{await c.query('BEGIN');await c.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[g.workspace]);await c.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[g.project]);const row=await rankDispatchSnapshot(c,first);assert.ok(row);const plan=readRankPlan(row.run_request,row.run_hash);await assertRankRecurringAuthority(c,row,plan);for(const patch of [{approval_id:randomUUID()},{user_id:viewer},{account_fingerprint:'a'.repeat(64)},{approval_snapshot:{...(row.approval_snapshot as object),maximumMicros:'999999'}}])await assert.rejects(assertRankRecurringAuthority(c,{...row,...patch},plan),rejected(409));}finally{await c.query('ROLLBACK');c.release();}
+    try{await c.query('BEGIN');await c.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[g.workspace]);await c.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[g.project]);const row=await rankDispatchSnapshot(c,first);assert.ok(row);const plan=readRankPlan(row.run_request,row.run_hash);await assertRankRecurringAuthority(c,row,plan);for(const patch of [{approval_id:randomUUID()},{user_id:viewer},{account_fingerprint:'a'.repeat(64)},{approval_snapshot:{...(row.approval_snapshot as object),requestHash:'f'.repeat(64)}}])await assert.rejects(assertRankRecurringAuthority(c,{...row,...patch},plan),rejected(409));}finally{await c.query('ROLLBACK');c.release();}
     const authSecret=process.env.AUTH_SECRET;process.env.AUTH_SECRET=randomUUID()+randomUUID();try{await executeRankDispatch(first,forged.send);assert.equal(forged.state.paid,1);}finally{if(authSecret===undefined)delete process.env.AUTH_SECRET;else process.env.AUTH_SECRET=authSecret;}await disable(g);await pollRankDispatch(first,undefined,forged.send);await pollRankDispatch(first,undefined,forged.send);
     const lost=transport(),u=await fixture(lost);await due(u);const lostRun=await claimDueRankOccurrence(lost.send);lost.state.lost=true;const lostId=(await dispatches(lostRun.runId!))[0];await executeRankDispatch(lostId,lost.send);await executeRankDispatch(lostId,lost.send);assert.equal(lost.state.paid,1);
-    // Owner decision D3: the ambiguous charge pauses nothing; the uncertain ledger row alone skips the next occurrence as 'budget'.
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[u.workspace])).rows[0].paused,false);assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[lostId])).rows[0].status,'uncertain');await due(u);assert.equal((await claimDueRankOccurrence(lost.send)).status,'skipped');assert.equal((await raw(u)).last_skip_reason,'Skipped: paid work is paused or an earlier charge is uncertain. No paid request was sent.');assert.equal(lost.state.paid,1);await disable(u);
+    // The next occurrence is independent; cancel only its new run while preserving the original unknown charge.
+    assert.equal((await pool.query('SELECT paused FROM workspace_provider_control WHERE workspace_id=$1',[u.workspace])).rows[0].paused,false);assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[lostId])).rows[0].status,'uncertain');await due(u);const independent=await claimDueRankOccurrence(lost.send);assert.equal(independent.status,'started');assert.notEqual(independent.runId,lostRun.runId);assert.equal((await raw(u)).last_skip_reason,null);await cancelRankRun(u.project,owner,independent.runId!,{requestId:randomUUID()});for(const id of await dispatches(independent.runId!))await executeRankDispatch(id,lost.send);await executeRankDispatch(lostId,lost.send);assert.deepEqual((await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[lostId])).rows[0],{status:'uncertain',actual_micros:null});assert.equal(lost.state.paid,1);await disable(u);
     console.log('PASS immutable approval/actor/account snapshot guards, stable identity across AUTH_SECRET rotation, and no paid retry after ambiguous charge');
 
     // Retire only this suite's earlier pending jobs before testing the real worker.

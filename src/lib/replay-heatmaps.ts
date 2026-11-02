@@ -45,6 +45,16 @@ export const heatmapBackgroundReference=z.object({captureId:z.uuid(),recordingId
 export function heatmapPlane(g:z.infer<typeof heatmapGeometry>){return{basis:g.basis,direction:g.direction,pageWidth:g.pageWidth,pageHeight:g.pageHeight,viewportWidth:g.viewportWidth,viewportHeight:g.viewportHeight};}
 export function heatmapDepth(g:z.infer<typeof heatmapGeometry>,scrollY:number){return Math.min(100,100*(scrollY+g.viewportHeight)/g.pageHeight);}
 export type HeatmapQuery={from:string;to:string;mode:'pages'|'geometries'|'click'|'scroll';origin?:string;path?:string;geometry?:string;cursor?:string};
+export function heatmapQueryString(value:HeatmapQuery){const params=new URLSearchParams({from:value.from,to:value.to,mode:value.mode});for(const key of ['origin','path','geometry','cursor'] as const){const item=value[key];if(item!==undefined)params.set(key,item);}return params.toString();}
+export function heatmapStageNavigation(value:HeatmapQuery,workspaceId:string,projectId:string){
+ const dates={from:value.from,to:value.to},page=value.origin!==undefined&&value.path!==undefined,map=value.mode==='click'||value.mode==='scroll';
+ const stages:{id:string;label:string;query:HeatmapQuery|null;current:boolean;disabledReason?:string}[]=[
+  {id:'pages',label:'Pages',query:{...dates,mode:'pages'},current:value.mode==='pages'},
+  {id:'layouts',label:'Layouts',query:page?{...dates,mode:'geometries',origin:value.origin,path:value.path}:null,current:value.mode==='geometries',disabledReason:page?undefined:'Choose a captured page first.'},
+  {id:'heatmap',label:'Heatmap',query:map?{...dates,mode:value.mode,origin:value.origin,path:value.path,geometry:value.geometry}:null,current:map,disabledReason:map?undefined:'Choose one captured layout first.'}
+ ];
+ return stages.map(stage=>({...stage,disabled:stage.query===null,href:stage.query?'/?'+new URLSearchParams({workspace:workspaceId,project:projectId,view:'heatmaps',heatmapQuery:heatmapQueryString(stage.query)}).toString():'#'}));
+}
 export function replayHeatmapParams(raw:URLSearchParams|string):URLSearchParams{
  if(typeof raw!=='string')return raw;
  if(raw.length>6144)throw Error('The replay or heatmap link is too long.');

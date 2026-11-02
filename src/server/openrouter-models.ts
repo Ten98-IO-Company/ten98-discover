@@ -2,7 +2,6 @@ import {createHash} from 'node:crypto';
 import {openRouterFetch,readResponseText} from '@ten98/runtime';
 import {z} from 'zod';
 import {openRouterModelId,openRouterMetadataBytes,type OpenRouterCatalog,type OpenRouterCatalogModel} from '../lib/openrouter-models.ts';
-import {decimal,decimalText} from './openrouter-input.ts';
 import {FoundationError} from './auth.ts';
 import {withContentProject} from './project-context.ts';
 
@@ -14,35 +13,24 @@ const invalid=()=>new Error('Unsupported model catalog.');
 export function boundedOpenRouterMetadata<T>(value:T):T{
  if(Buffer.byteLength(JSON.stringify(value))>openRouterMetadataBytes)throw new FoundationError(413,'The model metadata exceeds the complete response limit.');return value;
 }
-function price(v:unknown):string|null{try{return typeof v==='string'?decimalText(v):null;}catch{return null;}}
 export function modelCatalogRow(raw:unknown,today=new Date().toISOString().slice(0,10)):OpenRouterCatalogModel{
  const name=object(raw)&&typeof raw.name==='string'?raw.name.replace(/^ +| +$/g,''):null;
  if(!object(raw)||!openRouterModelId(raw.id)||!openRouterModelId(raw.canonical_slug)||!bounded(name,256))throw invalid();
- const pricing=object(raw.pricing)?raw.pricing:{},parameters=Array.isArray(raw.supported_parameters)&&raw.supported_parameters.length<=100&&raw.supported_parameters.every((p:unknown)=>bounded(p,80))?raw.supported_parameters:null;
- const promptPrice=price(pricing.prompt),completionPrice=price(pricing.completion),requestPrice=price(pricing.request===undefined?'0':pricing.request);
+ const parameters=Array.isArray(raw.supported_parameters)&&raw.supported_parameters.length<=100&&raw.supported_parameters.every((p:unknown)=>bounded(p,80))?raw.supported_parameters:null;
  let reason:string|null=null;
  const architecture=raw.architecture,contextLength=capacity(raw.context_length),maxCompletionTokens=capacity(raw.top_provider?.max_completion_tokens);
  const expirationDate=raw.expiration_date===undefined||raw.expiration_date===null?null:typeof raw.expiration_date==='string'&&/^\d{4}-\d\d-\d\d$/.test(raw.expiration_date)&&Number.isFinite(Date.parse(raw.expiration_date))&&new Date(raw.expiration_date).toISOString().slice(0,10)===raw.expiration_date?raw.expiration_date:null;
  if(raw.expiration_date!=null&&expirationDate===null)reason='The retirement date could not be verified.';
  if(!object(architecture)||!Array.isArray(architecture.input_modalities)||!architecture.input_modalities.includes('text')||!Array.isArray(architecture.output_modalities)||architecture.output_modalities.length!==1||architecture.output_modalities[0]!=='text')reason='Only text-input, text-output profiles are supported.';
  if(!contextLength||!maxCompletionTokens||!parameters||!parameters.some((p:string)=>p==='max_tokens'||p==='max_completion_tokens'))reason='Finite context and output limits could not be verified.';
- if((raw.reasoning!=null&&(!object(raw.reasoning)||raw.reasoning.mandatory!==false||raw.reasoning.default_enabled!==false))||parameters?.includes('reasoning')&&(!object(raw.reasoning)||raw.reasoning.mandatory!==false||raw.reasoning.default_enabled!==false))reason='Reasoning billing is not supported by this profile.';
- if(promptPrice===null||completionPrice===null||requestPrice===null)reason='Published token or request prices could not be verified.';
- const allowed=['prompt','completion','request','image','input_cache_read','input_cache_write','web_search','internal_reasoning'];
- for(const [key,value]of Object.entries(pricing)){
-  if(key==='discount'){if(value!==0)reason='Discount-dependent billing is not supported.';continue;}
-  if(!allowed.includes(key)||price(value)===null){reason='Conditional or unknown pricing is not supported.';continue;}
-  if(['input_cache_write','web_search','internal_reasoning'].includes(key)&&decimal(value as string).coefficient!==0n)reason='This profile cannot safely bound the additional charge.';
- }
- if(promptPrice!==null&&pricing.input_cache_read!==undefined){const a=decimal(promptPrice),b=price(pricing.input_cache_read);if(b!==null){const d=decimal(b),s=Math.max(a.scale,d.scale);if(d.coefficient*10n**BigInt(s-d.scale)>a.coefficient*10n**BigInt(s-a.scale))reason='Cache-read pricing exceeds the uncached input price.';}}
- if(promptPrice!==null&&completionPrice!==null&&requestPrice!==null&&[promptPrice,completionPrice,requestPrice].every(p=>decimal(p).coefficient===0n))reason='Free routes need a separate zero-reservation accounting profile.';
+ if((raw.reasoning!=null&&(!object(raw.reasoning)||raw.reasoning.mandatory!==false||raw.reasoning.default_enabled!==false))||parameters?.includes('reasoning')&&(!object(raw.reasoning)||raw.reasoning.mandatory!==false||raw.reasoning.default_enabled!==false))reason='Automatic reasoning is not supported by this profile.';
  if(raw.id.startsWith('openrouter/')||/:(?:online|nitro|floor)$/.test(raw.id))reason='Automatic model or routing aliases are not supported.';
  if(expirationDate!==null&&expirationDate<=today)reason='This model is retired or scheduled to retire today.';
- return {id:raw.id,canonicalSlug:raw.canonical_slug,name,contextLength,maxCompletionTokens,promptPrice,completionPrice,requestPrice,
+ return {id:raw.id,canonicalSlug:raw.canonical_slug,name,contextLength,maxCompletionTokens,
   structuredOutput:!!parameters&&['structured_outputs','response_format'].every(p=>parameters.includes(p)),expirationDate,admission:reason?'unsupported':'candidate',reason};
 }
 // ponytail: one bounded public snapshot per process; replicas may differ until refresh.
-// Quotes verify live endpoint prices independently; use shared caching only if measured load needs it.
+// Preparation verifies live endpoint capabilities independently.
 let cached:{models:OpenRouterCatalogModel[];fetchedAt:string;revision:string}|null=null,failed=false,inFlight:Promise<void>|null=null;
 export function cachedOpenRouterModels(now=Date.now()):OpenRouterCatalog{
  return {version:'openrouter-text-catalog-v1',status:cached?(failed||now-Date.parse(cached.fetchedAt)>=openRouterCatalogLimits.ttlMs?'stale':'fresh'):'unavailable',

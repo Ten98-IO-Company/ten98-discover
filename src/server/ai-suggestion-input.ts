@@ -15,7 +15,7 @@ const unique=<T>(values:T[])=>new Set(values).size===values.length;
 const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
 const suggestionTags=z.array(text(80,1)).max(3).pipe(tags);
 const suggestionQuoteFields=z.object({requestId:z.uuid(),connectionId:z.uuid(),contextRevision:revision,
- benchmark:z.literal(true),fundedCredits:z.literal(true),
+ benchmark:z.literal(true),
  topic:text(100,1),country:text(80,1),language:text(80,1),
  sectionKeys:z.array(z.enum(sectionKeys)).max(4).refine(unique),competitorIds:z.array(z.uuid()).max(10).refine(unique),
  excludedPrompts:z.array(text(2000,1)).max(20)}).strict();
@@ -24,7 +24,7 @@ export const suggestionQuoteInput=z.union([
  suggestionQuoteFields.extend({profileId:z.literal('catalog-text-schema-v1'),model:z.string().refine(openRouterModelId)}).strict(),
 ]);
 export type SuggestionInput=z.infer<typeof suggestionQuoteInput>;
-export const suggestionStartInput=z.object({requestId:z.uuid(),quoteId:z.uuid()}).strict();
+export const suggestionStartInput=z.object({requestId:z.uuid(),preparationId:z.uuid()}).strict();
 export const suggestionActionInput=z.object({requestId:z.uuid()}).strict();
 export const suggestionAcceptInput=z.object({requestId:z.uuid(),expectedProposalRevision:revision,expectedContextRevision:revision,expectedTopicLibraryHash:hex,
  selections:z.array(z.object({candidateId:z.uuid(),text:text(2000,1),tags:suggestionTags}).strict()).min(1).max(5).refine(v=>unique(v.map(r=>r.candidateId)))}).strict();

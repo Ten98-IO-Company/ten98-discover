@@ -1231,13 +1231,13 @@ SOFTWARE.
 
 ## Current ten98 shared packages
 
-The current manifest pins `@ten98/ui` 0.30.0 (`vendor/ten98-ui-0.30.0.tgz`, SHA-256 `3d3812059130b8dcb85fd3b36080ef9df45e55fb698c9238ea1d9f895ae6515a`) and `@ten98/runtime` 0.20.0 (`vendor/ten98-runtime-0.20.0.tgz`, SHA-256 `d2f8bf2abda99f400dc0b58909d077ca2c5664bd622f061aea4b1c14bbe92659`). Both are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+The current manifest pins the qualified `@ten98/ui` 0.31.1 development candidate (`vendor/ten98-ui-0.31.1.tgz`, SHA-256 `576fedf64e5aecbf9d7509d436b25515c65e5066d4865dad44a2e457a3c90f1d`, canonical source commit `ac029168f1fe9af7e187fc4d8d059e17053c32b9`) and `@ten98/runtime` 0.20.0 (`vendor/ten98-runtime-0.20.0.tgz`, SHA-256 `d2f8bf2abda99f400dc0b58909d077ca2c5664bd622f061aea4b1c14bbe92659`). The frozen UI candidate retains the shared ReportToolbar and fixes wrapped SectionNav labels at narrow widths and enlarged text; it is not a published design-system release. Both packages are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
 
 Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
 
 ### Inter typeface — SIL Open Font License 1.1
 
-`@ten98/ui` 0.30.0 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
+`@ten98/ui` 0.31.1 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
 
 ```text
 Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
@@ -1392,3 +1392,7 @@ The immutable archive is `vendor/ten98-ui-0.3.9.tgz`, SHA-256 `a69d149767871ca2b
 ### Shared UI candidate 0.3.10
 
 The earlier dependency was the immutable development candidate `vendor/ten98-ui-0.3.10.tgz`, SHA-256 `a356965b7c0e19b718cb8c9334d1aca3f67cb4c2ed97885295e8485c0841f280`, from Ten98 design-system commit `9a94e7f78dc9c2029204f6cd8ccf32c4affdcb13`. Prior archives remain unchanged. This MIT patch adds an optional standard `aria-label` to ReportPanel so its accessible region name can differ from the visible title. Only the reporting JavaScript module and its declaration change; styles, runtime dependencies, exports and peer requirements are unchanged. Packaged review material is Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this candidate.
+
+## Test-only browser tooling
+
+The feature-browser CI job installs Playwright 1.64.1 and its exact playwright-core 1.64.1 dependency from the official npm registry into the ephemeral runner tools directory. Playwright is licensed under Apache-2.0; source commit `cfe490d941f992655948eee8fd4fd94e1c4234bf`, repository and license: https://github.com/microsoft/playwright/tree/cfe490d941f992655948eee8fd4fd94e1c4234bf. The Playwright archive integrity is `sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==`. The paired official installer supplies Chromium and runner system dependencies. These tools exercise isolated synthetic fixtures; they are not application runtime dependencies or included in the production image. No Playwright implementation is copied into product source.

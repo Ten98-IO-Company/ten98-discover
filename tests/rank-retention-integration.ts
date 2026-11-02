@@ -5,9 +5,9 @@ import type {PoolClient} from 'pg';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {stopJobs} from '../src/server/jobs.ts';
-import {saveBudget,saveProvider} from '../src/server/providers.ts';
+import {saveProviderRequestControls,saveProvider} from '../src/server/providers.ts';
 import {changeRankKeywords} from '../src/server/rank-tracking.ts';
-import {quoteRankCheck,startRankCheck,getRankRun} from '../src/server/rank-execution.ts';
+import {prepareRankCheck,startRankCheck,getRankRun} from '../src/server/rank-execution.ts';
 import {expireRankData,previewRankRetention} from '../src/server/rank-retention.ts';
 import {getRetention,previewRetention,saveRetention,runRetentionBatch} from '../src/server/retention.ts';
 import {keywordAccountEndpoint} from '../src/server/keyword-research-input.ts';
@@ -21,14 +21,14 @@ export async function runRankRetentionChecks(){
   const owner=randomUUID(),viewer=randomUUID(),cutoff=new Date('2026-01-01T00:00:00Z'),early=new Date('2000-01-01T00:00:00Z'),later=new Date('2026-01-02T00:00:00Z');
   const rawOnly={rawCutoff:cutoff,derivedCutoff:early},both={rawCutoff:cutoff,derivedCutoff:cutoff};
   const originalFetch=globalThis.fetch;let unexpected=0;globalThis.fetch=async()=>{unexpected++;throw new Error('External calls are forbidden in retention acceptance.');};
-  const send:typeof fetch=async(input,init)=>{assert.equal(input,keywordAccountEndpoint);assert.equal(init?.method,'GET');const price=[{cost_type:'per_request',cost:0.001}];return Response.json({status_code:20000,cost:0,tasks_count:1,tasks_error:0,tasks:[{status_code:20000,cost:0,path:['v3','appendix','user_data'],result_count:1,result:[{login:'rank-retention@integration.test',price:{serp:{live:{advanced:{priority_normal:price}},task_post:{priority_normal:price},task_get:{advanced:{priority_normal:[{cost_type:'per_request',cost:0}]}}}}}]}]});};
+  const send:typeof fetch=async(input,init)=>{assert.equal(input,keywordAccountEndpoint);assert.equal(init?.method,'GET');return Response.json({status_code:20000,tasks_count:1,tasks_error:0,tasks:[{status_code:20000,path:['v3','appendix','user_data'],result_count:1,result:[{login:'rank-retention@integration.test'}]}]});};
   async function fixture(count=1,devices:'desktop'|'both'='desktop'){
     const f={workspace:randomUUID(),project:randomUUID(),tracker:randomUUID(),connection:''};
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Rank retention fixture')",[f.workspace]);
     for(const [uid,role]of [[owner,'owner'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,uid,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Rank retention','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
     f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic account',credentials:{login:'rank-retention@integration.test',password:'synthetic-only'}})).connection.id;
-    await saveBudget(f.workspace,owner,{paused:false});
+    await saveProviderRequestControls(f.workspace,owner,{paused:false});
     await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
       VALUES($1,$2,$3,'Rank retention','example.com',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),$4,100,1)`,[f.tracker,f.workspace,f.project,devices]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:Array.from({length:count},(_,i)=>'Retained term '+i),matchCase:true});
@@ -37,14 +37,14 @@ export async function runRankRetentionChecks(){
   type Fixture=Awaited<ReturnType<typeof fixture>>;
   async function receipt(f:Fixture,started=true){
     const c=(await pool.query('SELECT revision,keywords_revision FROM rank_config WHERE id=$1',[f.tracker])).rows[0],quoteKey=randomUUID();
-    const quoted=await quoteRankCheck(f.project,owner,f.tracker,{requestId:quoteKey,connectionId:f.connection,revision:c.revision,keywordsRevision:c.keywords_revision,method:'queued'},send);assert.ok(quoted);
+    const quoted=await prepareRankCheck(f.project,owner,f.tracker,{requestId:quoteKey,connectionId:f.connection,revision:c.revision,keywordsRevision:c.keywords_revision,method:'queued'},send);assert.ok(quoted);
     const key=randomUUID(),id=quoted.run.id;
     if(started){await startRankCheck(f.project,owner,id,{requestId:key});
-      await pool.query("UPDATE provider_request SET status='settled',actual_micros=estimate_micros WHERE id IN(SELECT id FROM rank_dispatch WHERE run_id=$1)",[id]);
-      await pool.query("UPDATE rank_dispatch SET phase='finished',dispatched_at=clock_timestamp(),completed_at=clock_timestamp(),charge_evidence='{\"receipt\":true}' WHERE run_id=$1",[id]);
+      await pool.query("UPDATE provider_request SET status='settled' WHERE id IN(SELECT id FROM rank_dispatch WHERE run_id=$1)",[id]);
+      await pool.query("UPDATE rank_dispatch SET phase='finished',dispatched_at=clock_timestamp(),completed_at=clock_timestamp(),request_evidence='{\"receipt\":true}' WHERE run_id=$1",[id]);
       await pool.query(`UPDATE rank_task SET result_status='ranked',provider_task_id=id::text,provider_status=20000,position=1,rank_basis='organic',absolute_position=2,
         ranking_url='https://example.com/ranked',serp_features='["organic"]',checked_depth=10,returned_item_count=10,observed_at=clock_timestamp(),retrieved_at=clock_timestamp(),
-        provisional_micros=1000,final_micros=1000,final_charge_at=clock_timestamp(),charge_evidence='{"receipt":true}',raw_evidence='{"synthetic":"provider evidence"}' WHERE run_id=$1`,[id]);
+        request_evidence='{"receipt":true}',raw_evidence='{"synthetic":"provider evidence"}' WHERE run_id=$1`,[id]);
       await pool.query("UPDATE rank_run SET status='completed',completed_at=clock_timestamp() WHERE id=$1",[id]);
     }
     return {id,key,quoteKey,f};
@@ -60,9 +60,9 @@ export async function runRankRetentionChecks(){
   async function row(r:Receipt){return(await pool.query('SELECT * FROM rank_run WHERE id=$1',[r.id])).rows[0];}
   async function taskCounts(r:Receipt){return(await pool.query(`SELECT count(*)::int AS total,count(raw_evidence)::int AS raw,count(position)::int AS ranked,count(data_expired_at)::int AS expired,count(raw_expired_at)::int AS raw_expired FROM rank_task WHERE run_id=$1`,[r.id])).rows[0];}
   async function durable(r:Receipt){return(await pool.query(`SELECT r.request,r.request_hash,r.request_key,r.account_fingerprint,r.account_fingerprint_version,
-    (SELECT jsonb_agg(jsonb_build_object('id',d.id,'request',d.request,'hash',d.request_hash,'charge',d.charge_evidence) ORDER BY d.id) FROM rank_dispatch d WHERE d.run_id=r.id) AS dispatch,
+    (SELECT jsonb_agg(jsonb_build_object('id',d.id,'request',d.request,'hash',d.request_hash,'requestEvidence',d.request_evidence) ORDER BY d.id) FROM rank_dispatch d WHERE d.run_id=r.id) AS dispatch,
     (SELECT jsonb_agg(jsonb_build_object('id',p.id,'key',p.request_key,'status',p.status,'actual',p.actual_micros,'hash',p.input_hash) ORDER BY p.id) FROM provider_request p JOIN rank_dispatch d ON d.id=p.id WHERE d.run_id=r.id) AS ledger,
-    (SELECT jsonb_agg(jsonb_build_object('id',t.id,'keyword',t.keyword,'keywordId',t.keyword_id,'status',t.result_status,'observed',t.observed_at,'retrieved',t.retrieved_at,'charge',t.charge_evidence,'final',t.final_micros,'finalAt',t.final_charge_at) ORDER BY t.id) FROM rank_task t WHERE t.run_id=r.id) AS tasks,
+    (SELECT jsonb_agg(jsonb_build_object('id',t.id,'keyword',t.keyword,'keywordId',t.keyword_id,'status',t.result_status,'observed',t.observed_at,'retrieved',t.retrieved_at,'requestEvidence',t.request_evidence,'final',t.final_micros,'finalAt',t.final_charge_at) ORDER BY t.id) FROM rank_task t WHERE t.run_id=r.id) AS tasks,
     (SELECT jsonb_agg(to_jsonb(k) ORDER BY k.id) FROM rank_keyword k WHERE k.config_id=r.config_id) AS authored,
     (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.request_id) FROM project_content_request c WHERE c.project_id=r.project_id) AS receipts
     FROM rank_run r WHERE r.id=$1`,[r.id])).rows[0];}
@@ -88,7 +88,7 @@ export async function runRankRetentionChecks(){
     assert.deepEqual(await taskCounts(batched),{total:1002,raw:2,ranked:2,expired:1000,raw_expired:1000});
     const masked=(await getRankRun(batched.f.project,viewer,batched.id)).run;assert.ok(masked.dataExpiredAt);assert.equal(masked.tasks.length,1002);
     for(const t of masked.tasks){assert.ok(t.dataExpiredAt);for(const key of ['position','rankBasis','absolutePosition','rankingUrl','serpFeatures','checkedDepth','returnedItemCount'])assert.equal((t as any)[key],null);}
-    assert.deepEqual(await durable(batched),batchedBefore);assert.equal(masked.costStatus,'final');assert.equal(masked.knownChargeUsd,'1.002000');
+    assert.deepEqual(await durable(batched),batchedBefore);assert.equal(masked.requestStatus,'settled');assert.equal(Object.hasOwn(masked,'knownChargeUsd'),false);
     const extension=await expire(batched.f,{rawCutoff:early,derivedCutoff:early});assert.equal(extension.pending,false);assert.equal(extension.expiredRankTasks,2);assert.equal((await taskCounts(batched)).raw,0,'An irreversible run marker finishes residual cleanup despite longer policy.');
     assert.ok((await getRankRun(batched.f.project,owner,batched.id)).run.tasks.every((t:any)=>t.dataExpiredAt));
     const last=await expire(batched.f,{rawCutoff:early,derivedCutoff:cutoff});assert.equal(last.expiredRankTasks,0);assert.equal(last.pending,false);assert.equal((await taskCounts(batched)).ranked,0);

@@ -15,6 +15,10 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000
 WORKDIR /app
+ARG APP_VERSION
+ARG VCS_REF
+LABEL org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$VCS_REF
 # Runtime needs only: build output, server TS sources (Node 24 native type
 # stripping, server files only / no JSX), SQL migrations, manifest, pruned deps.
 COPY --from=build --chown=node:node /app/package.json ./

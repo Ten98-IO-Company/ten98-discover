@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {canonicalHash,parse} from './context-input.ts';
 import {readContentCursor,withContentProject} from './project-context.ts';
-import {microUsd} from './keyword-research-input.ts';
+import {rankRequestDiagnostic} from './rank-serp-input.ts';
 
 // Cookie and key readers share one bounded gate (nativeRead): workspace and project SHARE locks, 5 s statement and lock
 // waits, membership read after admission. Every rank writer takes the workspace row FOR UPDATE first, so a reader never
@@ -18,11 +18,11 @@ export type RankHistoryObservation={
   target:RankHistoryTarget;attemptedAt:string;observedAt:string|null;retrievedAt:string|null;
   position:number|null;rankBasis:'organic'|'absolute'|null;absolutePosition:number|null;rankingUrl:string|null;
   serpFeatures:string[]|null;checkedDepth:number|null;returnedItemCount:number|null;
-  rawExpiredAt:string|null;dataExpiredAt:string|null;diagnostic?:string|null; // Cookie readers only: it states provider balance, cost-limit and charge state.
+  rawExpiredAt:string|null;dataExpiredAt:string|null;diagnostic?:string|null; // Cookie readers only: original-request diagnostics.
 };
 export type RankRunSummary={id:string;status:string;trigger:string;method:string;isSubset:boolean;taskCount:number;scheduledFor:string|null;
-  createdAt:string;startedAt:string|null;completedAt:string|null;quoteExpired:boolean;rawExpiredAt:string|null;dataExpiredAt:string|null;
-  diagnostic?:string|null;costStatus?:'not_started'|'pending'|'uncertain'|'final';estimateUsd?:string;knownChargeUsd?:string}; // Ledger and diagnostic fields: cookie readers only.
+  createdAt:string;startedAt:string|null;completedAt:string|null;preparationExpired:boolean;rawExpiredAt:string|null;dataExpiredAt:string|null;
+  diagnostic?:string|null;requestStatus?:'not_started'|'reserved'|'dispatched'|'settled'|'uncertain'|'cancelled'}; // Request and diagnostic fields: cookie readers only.
 export type RankBaseline={days:1|7|30|90;targetAt:string;source:'at_or_before'|'earliest_available'|'unavailable';
   observation:RankHistoryObservation|null;change:number|null};
 export type RankLatestRow={keywordId:string;keyword:string;matchCase:boolean;pinnedAt:string|null;device:Device;
@@ -38,7 +38,7 @@ async function tracker(client:PoolClient,projectId:string,id:string){const row=(
 function target(row:any):RankHistoryTarget{return {domain:row.target_domain,locationCode:row.location_code,languageCode:row.language_code,depth:row.serp_depth,maxCrawlPages:row.max_crawl_pages};}
 // Every predicate also binds project/config/UUID. Mutable names and pins never alter compatibility.
 const compatible=`r.request->'target'=$4::jsonb AND t.keyword=k.keyword AND t.match_case=k.match_case`;
-// A key caller never selects t.diagnostic: its fixed texts report the provider balance, cost limit and charge reconciliation.
+// A key caller retains the narrower observation-only contract.
 const taskColumns=(key:boolean)=>`t.id AS "taskId",r.id AS "runId",t.device,t.result_status AS status,r.status AS "runStatus",r.is_subset AS "isSubset",
   (${compatible}) AS compatible,r.request->'target' AS target,${sqlTime('COALESCE(r.started_at,r.created_at)')} AS "attemptedAt",
   ${sqlTime('t.observed_at')} AS "observedAt",${sqlTime('t.retrieved_at')} AS "retrievedAt",
@@ -55,18 +55,17 @@ export async function listRankRuns(projectId:string,userId:string,trackerId:stri
   trackerId=parse(z.uuid(),trackerId);const input=parse(z.object({cursor:page}).strict(),fields(params,['cursor']));
   return withContentProject(projectId,userId,false,async(client,{role})=>{
     await tracker(client,projectId,trackerId);const scope={projectId,trackerId,list:'rank-runs'},after=readContentCursor(input.cursor??null,scope);
-    const rows=(await client.query(`SELECT r.id,r.status,r.trigger,r.method,r.is_subset,r.task_count,r.scheduled_for,r.created_at,r.started_at,r.completed_at,r.expires_at,r.raw_expired_at,r.data_expired_at,r.diagnostic,r.estimate_micros,
+    const rows=(await client.query(`SELECT r.id,r.status,r.trigger,r.method,r.is_subset,r.task_count,r.scheduled_for,r.created_at,r.started_at,r.completed_at,r.expires_at,r.raw_expired_at,r.data_expired_at,r.diagnostic,
       ${sqlTime('r.created_at')} AS cursor_at,c.* FROM rank_run r LEFT JOIN LATERAL (
-      SELECT count(*)::int AS charge_count,bool_or(p.status='uncertain' OR d.phase='uncertain') AS uncertain,bool_or(p.status IN ('reserved','dispatched')) AS pending,
-      COALESCE(sum(p.actual_micros) FILTER(WHERE p.status='settled'),0)::text AS known_micros FROM rank_dispatch d JOIN provider_request p ON p.id=d.id AND p.workspace_id=d.workspace_id WHERE d.run_id=r.id) c ON true
+      SELECT count(*)::int AS request_count,bool_or(p.status='uncertain' OR d.phase='uncertain') AS uncertain,bool_or(p.status='dispatched') AS pending,
+      bool_or(p.status='reserved') AS reserved,count(*) FILTER(WHERE p.status='cancelled')::int AS cancelled_count FROM rank_dispatch d JOIN provider_request p ON p.id=d.id AND p.workspace_id=d.workspace_id WHERE d.run_id=r.id) c ON true
       WHERE r.project_id=$1 AND r.config_id=$2 AND ($3::timestamptz IS NULL OR (r.created_at,r.id)<($3::timestamptz,$4::uuid))
       ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[projectId,trackerId,after?.at??null,after?.id??null])).rows;
     const runs:RankRunSummary[]=rows.slice(0,50).map(r=>({id:r.id,status:r.status,trigger:r.trigger,method:r.method,isSubset:r.is_subset,taskCount:r.task_count,
-      createdAt:iso(r.created_at)!,scheduledFor:iso(r.scheduled_for),startedAt:iso(r.started_at),completedAt:iso(r.completed_at),quoteExpired:r.status==='quoted'&&r.expires_at.getTime()<=Date.now(),
+      createdAt:iso(r.created_at)!,scheduledFor:iso(r.scheduled_for),startedAt:iso(r.started_at),completedAt:iso(r.completed_at),preparationExpired:r.status==='quoted'&&r.expires_at.getTime()<=Date.now(),
       rawExpiredAt:iso(r.raw_expired_at),dataExpiredAt:iso(r.data_expired_at),
-      // Provider-ledger amounts and the diagnostic (uncertain-charge and schedule-skip texts that restate cost and approval state) never reach a key holder; cookie readers keep them.
-      ...(apiToken===undefined?{diagnostic:r.diagnostic,estimateUsd:microUsd(BigInt(r.estimate_micros)),knownChargeUsd:microUsd(BigInt(r.known_micros)),
-        costStatus:r.uncertain?'uncertain':r.pending?'pending':r.charge_count?'final':'not_started'}:{})}));
+      ...(apiToken===undefined?{diagnostic:rankRequestDiagnostic(r.diagnostic,r.uncertain?'uncertain':undefined),
+        requestStatus:r.uncertain?'uncertain':r.pending?'dispatched':r.reserved?'reserved':r.request_count?r.cancelled_count===r.request_count?'cancelled':'settled':'not_started'}:{})}));
     return {role,trackerId,runs,nextCursor:cursor(rows,scope)};
   },apiToken,true,'rank:read').catch(busy);
 }
@@ -111,7 +110,7 @@ export async function getLatestRankResults(projectId:string,userId:string,tracke
     const observations:RankHistoryObservation[]=selected.length?(await client.query(`SELECT ${taskColumns(apiToken!==undefined)} FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
       JOIN rank_keyword k ON k.id=t.keyword_id AND k.project_id=$1 AND k.config_id=$2
       WHERE t.project_id=$1 AND r.config_id=$2 AND t.id=ANY($3::uuid[])`,[projectId,trackerId,selected,JSON.stringify(currentTarget)])).rows:[];
-    const byTask=new Map(observations.map(r=>[r.taskId,r])),byPair=new Map(picks.map(r=>[r.keyword_id+':'+r.device,r]));
+    const byTask=new Map(observations.map(r=>[r.taskId,apiToken===undefined?{...r,diagnostic:rankRequestDiagnostic(r.diagnostic,r.status)}:r])),byPair=new Map(picks.map(r=>[r.keyword_id+':'+r.device,r]));
     const results:RankLatestRow[]=keywords.slice(0,50).flatMap(k=>pairs.map(device=>{
       const picked=byPair.get(k.id+':'+device),latest=byTask.get(picked?.observation)??null,attempt=byTask.get(picked?.attempt)??null;
       return {keywordId:k.id,keyword:k.keyword,matchCase:k.match_case,pinnedAt:iso(k.pinned_at),device,latestAttempt:attempt,latestObservation:latest,
@@ -135,7 +134,7 @@ export async function getRankKeywordHistory(projectId:string,userId:string,track
     const rows=(await client.query(`SELECT ${taskColumns(apiToken!==undefined)},t.id,${sqlTime('COALESCE(r.started_at,r.created_at)')} AS cursor_at FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
       CROSS JOIN (SELECT $8::text AS keyword,$9::boolean AS match_case) k WHERE t.project_id=$1 AND r.config_id=$2 AND t.keyword_id=$3 AND ($5='both' OR t.device=$5)
       AND ($6::timestamptz IS NULL OR (COALESCE(r.started_at,r.created_at),t.id)<($6::timestamptz,$7::uuid)) ORDER BY COALESCE(r.started_at,r.created_at) DESC,t.id DESC LIMIT 51`,[projectId,trackerId,keywordId,JSON.stringify(currentTarget),input.device,after?.at??null,after?.id??null,keyword.keyword,keyword.match_case])).rows;
-    const observations:RankHistoryObservation[]=rows.slice(0,50).map(({id,cursor_at,...r})=>r as RankHistoryObservation);
+    const observations:RankHistoryObservation[]=rows.slice(0,50).map(({id,cursor_at,...r})=>({...r,...apiToken===undefined?{diagnostic:rankRequestDiagnostic(r.diagnostic,r.status)}:{}}) as RankHistoryObservation);
     return {role,trackerId,keyword:{id:keywordId,keyword:keyword.keyword,matchCase:keyword.match_case,removed},target:currentTarget,enabledDevices:config.devices,observations,nextCursor:cursor(rows,scope)};
   },apiToken,true,'rank:read').catch(busy);
 }

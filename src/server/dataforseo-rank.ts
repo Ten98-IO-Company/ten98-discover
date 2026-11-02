@@ -3,7 +3,7 @@ import {FoundationError} from './auth.ts';
 import {dataforseoJson,type DataforseoResponse} from './dataforseo-transport.ts';
 import {parseKeywordAccount} from './dataforseo-keywords.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
-import {keywordAccountEndpoint,providerMicros,validText} from './keyword-research-input.ts';
+import {keywordAccountEndpoint,validText} from './keyword-research-input.ts';
 import {rankLanguagePattern,rankSerpEndpoints,rankSerpPayload,type RankMethod,type RankSerpRequest} from './rank-serp-input.ts';
 
 type ObjectValue=Record<string,unknown>;
@@ -14,10 +14,10 @@ const code=(v:unknown):v is number=>Number.isInteger(v)&&Number(v)>0&&Number(v)<
 const taskIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 function freeRows(response:DataforseoResponse,url:string,maximum:number){
   const body=response.body;
-  if(response.httpStatus!==200||!object(body)||body.status_code!==20000||providerMicros(body.cost)!==0n||body.tasks_count!==1||body.tasks_error!==0||!Array.isArray(body.tasks)||body.tasks.length!==1)invalid();
+  if(response.httpStatus!==200||!object(body)||body.status_code!==20000||body.tasks_count!==1||body.tasks_error!==0||!Array.isArray(body.tasks)||body.tasks.length!==1)invalid();
   const task=body.tasks[0];
   const expectedPath=new URL(url).pathname.slice(1).split('/');
-  if(!object(task)||task.status_code!==20000||providerMicros(task.cost)!==0n||!Array.isArray(task.path)||task.path.length!==expectedPath.length||!task.path.every((part:unknown,index:number)=>part===expectedPath[index])||!Array.isArray(task.result)||task.result.length>maximum||task.result_count!==task.result.length)invalid();
+  if(!object(task)||task.status_code!==20000||!Array.isArray(task.path)||task.path.length!==expectedPath.length||!task.path.every((part:unknown,index:number)=>part===expectedPath[index])||!Array.isArray(task.result)||task.result.length>maximum||task.result_count!==task.result.length)invalid();
   return task.result as unknown[];
 }
 export type RankLocation={code:number;name:string;parentCode:number|null;countryIso:string;type:string;countryCode:number};
@@ -94,11 +94,9 @@ export function validateRankCatalogSelection(catalog:RankCatalog,raw:unknown){
 }
 export function parseRankAccount(response:DataforseoResponse,binding:{key:string;version:2}){
   const rows=freeRows(response,keywordAccountEndpoint,1);
-  if(rows.length!==1||!object(rows[0])||!object(rows[0].price)||binding.version!==2||typeof binding.key!=='string'||binding.key.length<32)invalid();
+  if(rows.length!==1||!object(rows[0])||binding.version!==2||typeof binding.key!=='string'||binding.key.length<32)invalid();
   const {fingerprint}=parseKeywordAccount(response,undefined,binding);
-  // Return neither the account login nor unrelated wallet/profile metadata.
-  // Price interpretation is deliberately owned by the separately tested helper.
-  return {fingerprint,price:rows[0].price};
+  return {fingerprint};
 }
 export async function readRankAccount(credentials:unknown,send:typeof fetch=fetch){
   const key=await getProviderAccountIdentityKey(2);
@@ -107,7 +105,7 @@ export async function readRankAccount(credentials:unknown,send:typeof fetch=fetc
 }
 
 export type RankDispatchTask={id:string;request:RankSerpRequest};
-// Authorization, account checks and spending reservation are the service's job.
+// Authorization, account checks and request registration are the service's job.
 // This function permits only one live task or up to100 standard queued tasks.
 export async function requestRankTasks(credentials:unknown,method:RankMethod,tasks:readonly RankDispatchTask[],send:typeof fetch=fetch):Promise<DataforseoResponse>{
   if((method!=='live'&&method!=='queued')||!Array.isArray(tasks)||tasks.length<1||tasks.length>(method==='live'?1:100))bad();
@@ -119,7 +117,7 @@ export async function requestRankTasks(credentials:unknown,method:RankMethod,tas
   return dataforseoJson(rankSerpEndpoints[method],credentials,'POST',payload,send);
 }
 // Provider IDs are UUID-shaped but their version/variant bits are not RFC4122.
-// This endpoint's reported cost belongs to the original task; GET adds no charge.
+// This endpoint retrieves the original task.
 export async function readRankTask(credentials:unknown,providerTaskId:string,send:typeof fetch=fetch):Promise<DataforseoResponse>{
   if(typeof providerTaskId!=='string'||!taskIdPattern.test(providerTaskId))bad();
   return dataforseoJson(rankSerpEndpoints.task+providerTaskId,credentials,'GET',undefined,send);
@@ -132,6 +130,6 @@ export async function readRankReconciliation(credentials:unknown,input:{dispatch
   const response=await dataforseoJson(rankSerpEndpoints.reconcile,credentials,'POST',[{datetime_from:stamp(at-60_000),datetime_to:stamp(Math.min(end,at+120_000)),limit:1000,offset,sort:'asc',include_metadata:true}],send);
   freeRows(response,rankSerpEndpoints.reconcile,1000);
   // At1000 rows this page may be truncated. The coordinator must not interpret
-  // missing/ambiguous metadata as a zero charge or silently restart paid work.
+  // missing/ambiguous metadata as a known outcome or silently restart work.
   return response;
 }

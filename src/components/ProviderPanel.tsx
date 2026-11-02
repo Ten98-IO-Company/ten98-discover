@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useConfirmDialog } from '@ten98/ui'
+import { useConfirmDialog, Disclosure, Tooltip } from '@ten98/ui'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { providerUsd } from '../lib/provider-money'
 
 type ProviderName = 'openrouter' | 'dataforseo'
 type CheckStatus = 'untested' | 'ok' | 'error'
@@ -19,29 +18,21 @@ interface ConnectionMeta {
   diagnostic: string | null
 }
 
-interface BudgetInfo {
-  paused: boolean
-  month: string
-  spentUsd: string
-  reservedUsd: string
-  uncertainUsd: string
-}
-
-interface LedgerEntry {
+interface ProviderRequest {
   id: string
   connectionId: string
   operation: string
   status: string
-  estimateUsd: string
-  actualUsd: string | null
+  updatedAt: string
+  providerReference: string | null
   createdAt: string
 }
 
 interface ProvidersResponse {
   vaultConfigured: boolean
   connections: ConnectionMeta[]
-  budget: BudgetInfo
-  ledger: LedgerEntry[]
+  requestControls: { paused: boolean }
+  requests: ProviderRequest[]
 }
 
 interface ProviderPanelProps {
@@ -86,7 +77,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
   const [rLogin, setRLogin] = useState('')
   const [rPassword, setRPassword] = useState('')
 
-  const [bPaused, setBPaused] = useState(true)
+  const [requestsPaused, setRequestsPaused] = useState(false)
 
   const mountedRef = useRef(true)
   const abortRef = useRef<AbortController | null>(null)
@@ -148,12 +139,12 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
     try {
       const d = await api<ProvidersResponse>(`/api/workspaces/${workspaceId}/providers`, { signal: ctrl.signal })
       if (!current()) return
-      if (typeof d?.budget?.paused !== 'boolean' || !Array.isArray(d.connections) || d.connections.some(c =>
+      if (typeof d?.vaultConfigured !== 'boolean' || typeof d?.requestControls?.paused !== 'boolean' || !Array.isArray(d.requests) || d.requests.some(r => !r || typeof r.id !== 'string' || typeof r.connectionId !== 'string' || typeof r.operation !== 'string' || !['reserved','dispatched','settled','uncertain','cancelled'].includes(r.status) || !Number.isFinite(Date.parse(r.createdAt)) || !Number.isFinite(Date.parse(r.updatedAt)) || !(r.providerReference === null || typeof r.providerReference === 'string')) || !Array.isArray(d.connections) || d.connections.some(c =>
         !c || typeof c.id !== 'string' || !Number.isInteger(c.revision) || c.revision < 1 || c.revision > 2147483647)) {
         throw new Error('Provider settings could not be confirmed. Reload to try again.')
       }
       setData(d)
-      setBPaused(d.budget.paused)
+      setRequestsPaused(d.requestControls.paused)
       setReloadRequired(false)
       setError(null)
     } catch (e) {
@@ -309,16 +300,16 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
     )
   }
 
-  const submitBudget = (ev: FormEvent<HTMLFormElement>) => {
+  const saveRequestControl = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault()
     if (mutLockRef.current || controlsOff || !data) return
-    if (!bPaused && !vaultOk) {
+    if (!requestsPaused && !vaultOk) {
       setError('Pause provider work until credential storage is configured.')
       return
     }
     void runMutation(
-      signal => api<unknown>(`/api/workspaces/${workspaceId}/budget`, { method: 'POST', body: { paused: bPaused }, signal }),
-      'Paid-work setting saved. No work was started.',
+      signal => api<unknown>(`/api/workspaces/${workspaceId}/provider-requests/control`, { method: 'POST', body: { paused: requestsPaused }, signal }),
+      'Provider request setting saved. No work was started.',
     )
   }
 
@@ -348,7 +339,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
         <>
           {!data.vaultConfigured && (
             <div className="banner">
-              Credential storage is not configured on this server. Ask the installation operator to enable it before saving, rotating or checking connections. You can still pause paid work.
+              Credential storage is not configured on this server. Ask the installation operator to enable it before saving, rotating or checking connections. Existing connections stay saved.
             </div>
           )}
           {loadError !== null && (
@@ -366,11 +357,9 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
 
           <div className="card">
             <h2>Connections</h2>
-            <p className="hint">ten98 Discover is free and MIT licensed. These controls only manage charges from your external API providers.</p>
-            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from API keys.</p>
-            <p className="hint">Run check contacts the provider's read-only account endpoint. It does not start paid work and never runs automatically.</p>
-            <p>Paid provider work is {data.budget.paused ? 'paused' : 'not paused'}. <button type="button" className="btn ghost" onClick={() => document.getElementById('provider-budget')?.focus()}>Review spending</button></p>
-            <p className="hint">A passed check does not start paid work; each paid run needs its own quote and Start. ten98 sets no spending limit; set budgets and add credits at OpenRouter or DataForSEO.</p>
+            <p>Connect DataForSEO for search research and OpenRouter for AI answers.</p>
+            <Tooltip content="Save credentials, then run an account check. Each feature runs when you choose Run. Provider billing is managed in OpenRouter and DataForSEO."><button type="button" className="btn ghost" aria-label="Connection setup help">Connection help</button></Tooltip>
+            {data.requestControls.paused&&<p role="status">Provider requests are paused. You can enable them in Advanced connection controls.</p>}
             {data.connections.length === 0 ? (
               <div className="empty">
                 <p><strong>No provider connections yet.</strong></p>
@@ -491,43 +480,17 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
             </form>
           </div>
 
-          <div className="card">
-            <h2 id="provider-budget" tabIndex={-1}>External API spending</h2>
-            <p className="hint">
-              Spent covers this app's settled requests for {data.budget.month} (UTC). Reserved and Uncertain include outstanding requests from all months. There is no app spending limit. Unknown charges block new paid work until an owner reconciles them.
-            </p>
-            <div className="row provider-spending-totals" style={{ gap: 32, alignItems: 'baseline' }}>
-              <div style={{ minWidth: 0 }}>
-                <span className="dim">Spent</span>
-                <div className="big-num">{providerUsd(data.budget.spentUsd)}</div>
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <span className="dim">Reserved</span>
-                <div className="big-num">{providerUsd(data.budget.reservedUsd)}</div>
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <span className="dim">Uncertain</span>
-                <div className="big-num">{providerUsd(data.budget.uncertainUsd)}</div>
-              </div>
-            </div>
-            <form onSubmit={submitBudget}>
-              <div className="row" style={{ alignItems: 'flex-start' }}>
-                <div className="field" style={{ minWidth: 0 }}>
-                  <label htmlFor="bl-paused">
-                    <input id="bl-paused" type="checkbox" style={{ width: 'auto', marginRight: 8 }} checked={bPaused} disabled={controlsOff || (!data.vaultConfigured && bPaused)} onChange={e => setBPaused(e.target.checked)} />
-                    Pause paid provider work
-                  </label>
-                  <p className="hint">Pauses new paid work after saving; off for new workspaces.</p>
-                  {!data.vaultConfigured && <p className="hint">Unpausing requires credential storage to be configured.</p>}
-                </div>
-              </div>
-              <button type="submit" className="btn primary" disabled={controlsOff}>Save pause setting</button>
+          <Disclosure summary="Advanced connection controls" variant="plain">
+            <form onSubmit={saveRequestControl} className="stack">
+              <label className="row" htmlFor="provider-requests-paused"><input id="provider-requests-paused" type="checkbox" checked={requestsPaused} disabled={controlsOff||(!data.vaultConfigured&&requestsPaused)} onChange={event=>setRequestsPaused(event.target.checked)}/>Pause provider requests</label>
+              <Tooltip content="This emergency stop prevents new provider requests. Requests already sent can still finish."><button type="button" className="btn ghost" aria-label="About pausing provider requests">About this control</button></Tooltip>
+              <button type="submit" className="btn" disabled={controlsOff}>Save request setting</button>
             </form>
-          </div>
+          </Disclosure>
 
           <div className="card">
-            <h2>Recent activity</h2>
-            {data.ledger.length === 0 ? (
+            <h2>Provider activity</h2>
+            {data.requests.length === 0 ? (
               <div className="empty">
                 <p>No provider activity yet.</p>
               </div>
@@ -540,26 +503,24 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
                       <th>Connection</th>
                       <th>Operation</th>
                       <th>Status</th>
-                      <th>Estimate</th>
-                      <th>Actual</th>
+                      <th>Request</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.ledger.map(l => (
+                    {data.requests.map(l => (
                       <tr key={l.id}>
                         <td className="dim">{new Date(l.createdAt).toLocaleString()}</td>
                         <td style={{ minWidth: '10rem', maxWidth: '18rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{connName(l.connectionId)}</td>
                         <td style={{ minWidth: '10rem', maxWidth: '20rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{l.operation}</td>
                         <td><span className="pill">{l.status}</span></td>
-                        <td className="mono">{providerUsd(l.estimateUsd)}</td>
-                        <td className="mono">{l.actualUsd === null ? 'Pending' : providerUsd(l.actualUsd)}</td>
+                        <td className="mono" style={{overflowWrap:'anywhere'}}>{l.id}{l.providerReference&&<p className="hint">Provider reference: {l.providerReference}</p>}<p className="hint">Updated {new Date(l.updatedAt).toLocaleString()}</p></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-            <p className="hint">Amounts are this app's own usage accounting, not provider billing.</p>
+            <p className="hint">Request activity records status and timing. Manage provider billing in OpenRouter or DataForSEO.</p>
           </div>
         </>
       )}

@@ -241,6 +241,7 @@
     "0005_provider_core",
     "0022_provider_account_identity",
     "0063_no_app_budgets",
+    "0076_provider_request_activity",
     "0072_paid_work_archive",
     "0073_operator_export_audit"
    ]
@@ -306,10 +307,10 @@
     "GET /api/projects/{projectId}/ai-content-support",
     "GET /api/projects/{projectId}/ai-content-support/runs",
     "GET /api/projects/{projectId}/ai-content-support/runs/{runId}",
-    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/prepare",
     "POST /api/projects/{projectId}/ai-content-support/runs",
     "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
-    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile"
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/recover"
    ],
    "migrations": [
     "0043_ai_content_support"
@@ -320,11 +321,11 @@
     "GET /api/projects/{projectId}/ai-content-support",
     "GET /api/projects/{projectId}/ai-content-support/runs",
     "GET /api/projects/{projectId}/ai-content-support/runs/{runId}",
-    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/prepare",
     "POST /api/projects/{projectId}/ai-content-support/runs",
     "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
     "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/export",
-    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile"
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/recover"
    ],
    "migrations": [
     "0032_site_audit_body",
@@ -650,10 +651,10 @@
     "GET /api/projects/{projectId}/domain-research/runs/{runId}",
     "GET /api/projects/{projectId}/domain-research/runs/{runId}/export",
     "POST /api/projects/{projectId}/domain-research/catalog",
-    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/prepare",
     "POST /api/projects/{projectId}/domain-research/runs",
     "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
-    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/recover"
    ],
    "migrations": [
     "0048_domain_research"
@@ -698,10 +699,10 @@
     "GET /api/projects/{projectId}/domain-research/runs/{runId}",
     "GET /api/projects/{projectId}/domain-research/runs/{runId}/export",
     "POST /api/projects/{projectId}/domain-research/catalog",
-    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/prepare",
     "POST /api/projects/{projectId}/domain-research/runs",
     "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
-    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/recover"
    ],
    "migrations": [
     "0048_domain_research"
@@ -884,23 +885,24 @@
   },
   "P64": {
    "routes": [
-    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/prepare",
     "POST /api/projects/{projectId}/ai-content-support/runs",
-    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/prepare",
     "POST /api/projects/{projectId}/domain-research/runs",
     "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/approve"
    ],
    "migrations": [
     "0005_provider_core",
-    "0063_no_app_budgets"
+    "0063_no_app_budgets",
+    "0076_provider_request_activity"
    ]
   },
   "P66": {
    "routes": [
     "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
-    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/recover",
     "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
-    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/recover"
    ],
    "migrations": [
     "0001_foundation",

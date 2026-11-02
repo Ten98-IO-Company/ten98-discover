@@ -61,7 +61,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
   const submit = (fn: () => void) => (e: React.FormEvent) => { e.preventDefault(); fn(); };
   return (
     <div className="research-panel rank-tracking" style={{ '--control-md': 'var(--control-touch)' } as React.CSSProperties}>
-      <p className="dim">Manage trackers and keywords, review a maximum charge, then start a manual rank check. Owners can separately approve recurring checks.</p>
+      <p className="dim">Manage trackers and keywords, then run a rank check. Owners can also schedule recurring checks.</p>
       {p.error !== '' && <p className="alert" role="alert">{p.error}</p>}
       {p.notice !== '' && <p className="notice" role="status">{p.notice}</p>}
       {p.reading && <p className="dim" role="status">Loading…</p>}

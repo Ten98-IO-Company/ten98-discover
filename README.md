@@ -11,7 +11,7 @@ Discover brings organic SEO, AEO and GEO research, AI prompt discovery and priva
 - **Analytics you own.** A first-party tracker with consent-aware collection, sessions, journeys, funnels, retention, revenue and session replay, stored in your own database.
 - **Search research in one place.** Keyword, rank, backlink and domain research, Google Search Console and Google Analytics imports, and site audits.
 - **Visibility in AI answers.** Run tracked prompts against AI models, compare answers over time and see which sources they cite.
-- **Spend only on what you start.** Paid data and model calls are quoted first and run only after you press Start, with receipts for every charge.
+- **Run research when you need it.** Choose Run to request search data or AI answers. Providers manage credits and limits; Discover keeps request history and usage records.
 - **Built for teams and tools.** Workspaces with roles, two-factor sign-in and single sign-on, plus a bearer API and an MCP server for your own tools.
 - **Free and fully featured.** No paywalls or seat limits; external data and model providers may charge for their own APIs.
 - Self-hosted and open source under the MIT licence.
