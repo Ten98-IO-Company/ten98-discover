@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {normalizePublicHostname} from './domains.ts';
 import {InputError} from './validation.ts';
-import {validText,microUsd,providerMicros} from './keyword-research-input.ts';
+import {validText} from './keyword-research-input.ts';
 
 export const rankSerpEndpoints={
   live:'https://api.dataforseo.com/v3/serp/google/organic/live/advanced',
@@ -31,29 +31,5 @@ export function rankSerpPayload(raw:RankSerpRequest,id:string,method:RankMethod)
     stop_crawl_on_match:[{match_value:request.domain,match_type:'with_subdomains'}],find_targets_in:['organic'],tag:rankTaskTag(id),...(method==='queued'?{priority:1}:{}),load_async_ai_overview:false,calculate_rectangles:false};
 }
 
-const operators=/(?:allinanchor|allintext|allintitle|allinurl|cache|define|definition|filetype|id|inanchor|info|intext|intitle|inurl|link|site):/gi;
-export function rankEstimateMicros(baseMicros:bigint,raw:RankSerpRequest){
-  const request=parseRankSerpRequest(raw);
-  if(typeof baseMicros!=='bigint'||baseMicros<=0n||baseMicros>1000000000000n)throw new Error('Unsupported SERP price.');
-  const operatorCount=[...request.keyword.matchAll(operators)].length;
-  // Current pricing says "per operator", while its FAQ describes a single x5.
-  // x5 per occurrence conservatively covers both readings; never copy old 75% pages.
-  const multiplier=5n**BigInt(operatorCount),maximum=baseMicros*BigInt(request.maxCrawlPages)*multiplier;
-  if(maximum>1000000000000n)throw new InputError(400,'This conservative rank quote exceeds the supported charge limit. Narrow the query or page limit.');
-  return {maximumMicros:maximum,maximumUsd:microUsd(maximum),operatorCount,multiplier:multiplier.toString()};
-}
-type RecordValue=Record<string,any>;
-const object=(value:unknown):value is RecordValue=>!!value&&typeof value==='object'&&!Array.isArray(value);
-export function parseRankBasePrices(account:unknown){
-  if(!object(account))throw new Error('Unsupported SERP price.');
-  function price(value:unknown,free=false){
-    if(!Array.isArray(value)||value.length!==1||!object(value[0])||value[0].cost_type!=='per_request')throw new Error('Unsupported SERP price.');
-    const amount=providerMicros(value[0].cost);
-    if(free?amount!==0n:amount<=0n)throw new Error('Unsupported SERP price.');return amount;
-  }
-  const serp=account.price?.serp;
-  // Verify retrieval stays free before approving queued work. Account endpoint is
-  // shared across engines; these are its documented SERP basic-price fields.
-  price(serp?.task_get?.advanced?.priority_normal,true);
-  return {liveMicros:price(serp?.live?.advanced?.priority_normal),queuedMicros:price(serp?.task_post?.priority_normal)};
-}
+
+export {providerRequestDiagnostic as rankRequestDiagnostic} from './providers.ts';

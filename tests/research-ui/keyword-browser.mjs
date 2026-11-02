@@ -30,9 +30,9 @@ try{
   assert.ok((await panel.innerText()).includes('2 unique keywords'));
   assert.equal((await providerCounts())['keyword-dispatch']??0,initialCounts['keyword-dispatch']??0);
   const started=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
-  const prepared=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
+  const prepared=page.waitForResponse(response=>response.url().endsWith(B+'/prepare')&&response.request().method()==='POST');
   await panel.getByRole('button',{name:'Run',exact:true}).click();
-  const preparation=await prepared;assert.equal(preparation.status(),200);assert.deepEqual((await preparation.json()).quote.request.keywords,['example','omitted fixture']);
+  const preparation=await prepared;assert.equal(preparation.status(),200);assert.deepEqual((await preparation.json()).preparation.request.keywords,['example','omitted fixture']);
   const first=(await (await started).json()).run;assert.equal(first.status,'queued');await selectedKeywordFocus(page,panel);
   await runKeyword(first.id);
   await panel.getByRole('button',{name:'Check status',exact:true}).click();
@@ -40,13 +40,13 @@ try{
   const cells=await table.locator('tbody > tr').first().locator(':scope > td:not(:has(input[type=checkbox]))').allTextContents();
   assert.equal(cells[1],'0');assert.equal(cells[2],'Unavailable');assert.match(await panel.innerText(),/No data returned.*omitted fixture/);
   await panel.getByText('Request details',{exact:true}).click();
-  assert.match(await panel.innerText(),/DataForSEO Labs \/ Google/);assert.match(await panel.innerText(),/\$0\.012120/);
-  await assertLayout(page,'keyword-result');console.log('PASS keyword one Run prepares and starts once, one synthetic dispatch, exact charge/null metrics and responsive results.');
+  assert.match(await panel.innerText(),/DataForSEO Labs \/ Google/);assert.ok((await panel.innerText()).includes(first.id));assert.equal(await panel.locator('.t98-cost-root').count(),0);
+  await assertLayout(page,'keyword-result');console.log('PASS keyword one Run prepares and starts once, one synthetic dispatch, request identity/null metrics and responsive results.');
 
   stage='committed acknowledgement loss and expired retry';await inputs('Lost acknowledgement fixture');
   const lost=await loseFirstPost(page,'**'+B+'/runs',{onCommitted:async(body,accepted)=>{
     await runKeyword(accepted.run.id);
-    await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.quoteId]);
+    await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.preparationId]);
   }});
   await panel.getByRole('button',{name:'Run',exact:true}).click();await panel.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
   assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);
@@ -59,7 +59,7 @@ try{
   assert.equal(lost.bodies.length,2);assert.deepEqual(lost.bodies[0],lost.bodies[1]);await lost.dispose();
   assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'2');
   assert.equal((await providerCounts())['keyword-dispatch']-(initialCounts['keyword-dispatch']??0),2);
-  console.log('PASS dropped committed start retries identical quote/key after server quote expiry with exactly one receipt/dispatch.');
+  console.log('PASS dropped committed start retries identical preparation/key after server preparation expiry with exactly one receipt/dispatch.');
 
   stage='expired result is receipt-only';const second=(await pool.query('SELECT id FROM keyword_research_run WHERE project_id=$1 AND id<>$2',[group.main.id,first.id])).rows[0];
   await pool.query('UPDATE keyword_research_run SET result=NULL,result_purged_at=clock_timestamp() WHERE id=$1',[second.id]);
@@ -82,7 +82,7 @@ try{
     assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());assert.equal(await page.getByText('Your session expired. Sign in again.',{exact:true}).count(),0);
     assert.equal(await page.getByText('Synthetic stale response.',{exact:true}).count(),0);
   }
-  stage='Region market selection retains exact quote and result scope';
+  stage='Region market selection retains exact preparation and result scope';
   const regionCounts=await providerCounts();
   for(const [label,locationCode,languageCode,locationName] of [['region-taiwan',2158,'zh-TW','Taiwan'],['region-hong-kong-english',2344,'en','Hong Kong'],['region-hong-kong-chinese',2344,'zh-TW','Hong Kong']]){
     const regionGroup=await createKeywordCase(label),regionSession=await browserSession(regionGroup.owner);
@@ -91,12 +91,12 @@ try{
       await page.goto(href(regionGroup,'keywords'),{waitUntil:'networkidle'});
       const panel=page.locator('section[aria-label="Keyword research"]'),table=panel.getByRole('region',{name:'Keyword data table',exact:true});
       await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
-      const quoted=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
+      const quoted=page.waitForResponse(response=>response.url().endsWith(B+'/prepare')&&response.request().method()==='POST');
       await openKeywordForm(panel);await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Region '+locationCode+' '+languageCode);
       await panel.getByLabel('Country or territory and language',{exact:true}).selectOption(locationCode+'|'+languageCode);
       const startedRegion=page.waitForResponse(response=>response.url().endsWith(B+'/runs')&&response.request().method()==='POST');
       await panel.getByRole('button',{name:'Run',exact:true}).click();
-      const quoteResponse=await quoted;assert.equal(quoteResponse.status(),200);const quoteBody=(await quoteResponse.json()).quote;
+      const quoteResponse=await quoted;assert.equal(quoteResponse.status(),200);const quoteBody=(await quoteResponse.json()).preparation;
       assert.equal(quoteResponse.request().postDataJSON().locationCode,locationCode);assert.equal(quoteResponse.request().postDataJSON().languageCode,languageCode);
       assert.equal(quoteBody.request.locationCode,locationCode);assert.equal(quoteBody.request.languageCode,languageCode);assert.ok((await panel.innerText()).includes(locationName));
       const acceptedRegion=await startedRegion;assert.equal(acceptedRegion.status(),202);const regionRun=(await acceptedRegion.json()).run;await selectedKeywordFocus(page,panel);await runKeyword(regionRun.id);
@@ -108,7 +108,7 @@ try{
     }finally{await regionSession.browser.close();}
   }
   assert.equal((await providerCounts())['keyword-dispatch']-(regionCounts['keyword-dispatch']??0),3);
-  console.log('PASS Taiwan and Hong Kong Region selections retain exact language and location through quote, synthetic dispatch and displayed results.');
+  console.log('PASS Taiwan and Hong Kong Region selections retain exact language and location through preparation, synthetic dispatch and displayed results.');
   stage='actual live-role downgrade removes writes';
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[group.workspace.id,group.owner.id]);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByText(/Ask a workspace owner/).waitFor();

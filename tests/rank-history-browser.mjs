@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_RANK_HISTORY_BROWSER,'1');

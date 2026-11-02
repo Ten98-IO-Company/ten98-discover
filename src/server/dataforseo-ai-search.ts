@@ -1,6 +1,6 @@
 import {aiSearchEndpoints,aiSearchPayload,aiSearchRequestSchema,aiSearchProfileId,aiSearchSource,type AiSearchRequest,type AiSearchCountry,type AiSearchLanguage} from '../lib/ai-search.ts';
 import {dataforseoJson,dataforseoRefusal,dataforseoRefusalEvidence,dataforseoRefusalMessage,type DataforseoResponse} from './dataforseo-transport.ts';
-import {providerMicros,microUsd,validText} from './keyword-research-input.ts';
+import {validText} from './keyword-research-input.ts';
 import {parseKeywordAccount} from './dataforseo-keywords.ts';
 import {normalizeDfsChatgptSearchEvidence,type SearchEvidence} from './ai-search-evidence.ts';
 import {canonicalHash} from './context-input.ts';
@@ -18,7 +18,7 @@ function envelope(response:DataforseoResponse,url:string){
 }
 function resultRows(response:DataforseoResponse,url:string,maximum:number){
  const {body,task}=envelope(response,url);
- if(response.httpStatus!==200||body.status_code!==20000||body.tasks_error!==0||!own(body,'cost')||providerMicros(body.cost)!==0n||!own(task,'cost')||providerMicros(task.cost)!==0n||!own(task,'status_code')||task.status_code!==20000||!own(task,'result')||!dense(task.result)||task.result.length>maximum||!own(task,'result_count')||task.result_count!==task.result.length)invalid();
+ if(response.httpStatus!==200||body.status_code!==20000||body.tasks_error!==0||!own(task,'status_code')||task.status_code!==20000||!own(task,'result')||!dense(task.result)||task.result.length>maximum||!own(task,'result_count')||task.result_count!==task.result.length)invalid();
  return task.result;
 }
 export function parseAiSearchCountries(response:DataforseoResponse):AiSearchCountry[]{
@@ -44,7 +44,7 @@ export function parseAiSearchAccount(response:DataforseoResponse,binding:{key:st
  const rows=resultRows(response,'https://api.dataforseo.com/v3/appendix/user_data',1);
  if(rows.length!==1||!object(rows[0])||!own(rows[0],'login'))invalid();
  if(!binding||binding.version!==2||typeof binding.key!=='string'||binding.key.length<32)invalid();
- // Shared v2 keyed account identity only; never interpret an invented AI price subtree.
+ // Shared v2 keyed account identity only.
  return {fingerprint:parseKeywordAccount(response,undefined,binding).fingerprint};
 }
 function matchesPayload(value:unknown,request:AiSearchRequest,id:string){
@@ -59,38 +59,34 @@ function observedAt(value:unknown):string|null{
  const normalized=value.slice(0,10)+'T'+value.slice(11,19)+'.000Z',date=new Date(normalized);
  return Number.isFinite(date.getTime())&&date.toISOString()===normalized?normalized:null;
 }
-// Same final-status admission used by native DataForSEO keyword outcomes. Unknown/queued/server errors never prove a charge.
+// Unknown, queued and server-error statuses do not prove a final outcome.
 const finalTaskStatuses=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export type AiSearchCapturedResult={profileId:typeof aiSearchProfileId;source:typeof aiSearchSource;capturedPrompt:string;locationCode:number;languageCode:string;forceWebSearch:true;reportedModel:string|null;providerObservedAt:string|null;receivedAt:string;evidence:SearchEvidence};
-export type AiSearchOutcome={charge:{state:'known';costUsd:string;providerTaskId:string|null}|{state:'unknown';providerTaskId:string|null};
- content:{state:'available';value:AiSearchCapturedResult}|{state:'unavailable';reason:'response_unverified'|'provider_error'|'content_invalid'|'transport_unverified'};
- evidence:{httpStatus:number|null;statusCode:number|null;taskStatus:number|null;totalCostUsd:string|null;taskCostUsd:string|null};diagnostic?:string};
-function unknown(httpStatus:number|null,reason:'response_unverified'|'transport_unverified'='response_unverified'):AiSearchOutcome{return {charge:{state:'unknown',providerTaskId:null},content:{state:'unavailable',reason},evidence:{httpStatus,statusCode:null,taskStatus:null,totalCostUsd:null,taskCostUsd:null}};}
+export type AiSearchOutcome={known:boolean;reference:string|null;result:AiSearchCapturedResult|null;diagnostic:string|null;
+ evidence:{httpStatus:number|null;statusCode:number|null;taskStatus:number|null}};
+function unknown(httpStatus:number|null,reason:'response_unverified'|'transport_unverified'='response_unverified'):AiSearchOutcome{return {known:false,reference:null,result:null,diagnostic:reason,evidence:{httpStatus,statusCode:null,taskStatus:null}};}
 export function parseAiSearchOutcome(response:DataforseoResponse,raw:unknown,id:string,now=new Date()):AiSearchOutcome{
  const request=aiSearchRequestSchema.parse(raw);aiSearchPayload(request,id);if(!Number.isFinite(now.getTime()))invalid();
  const outcome=unknown(response.httpStatus),refused=dataforseoRefusal(response);
- if(refused){const {statusCode,taskStatus,taskCost}=dataforseoRefusalEvidence(response);
-  return {charge:{state:'known',costUsd:'0.000000',providerTaskId:null},content:{state:'unavailable',reason:'provider_error'},diagnostic:dataforseoRefusalMessage[refused],
-   evidence:{httpStatus:response.httpStatus,statusCode,taskStatus,totalCostUsd:'0.000000',taskCostUsd:taskCost===null?null:'0.000000'}};}
+ if(refused)return {known:true,reference:null,result:null,diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
   const {body,task}=envelope(response,aiSearchEndpoints.live);
   if(!own(task,'id')||!uuid(task.id)||!own(task,'data')||!matchesPayload(task.data,request,id)||!own(task,'status_code')||!Number.isInteger(task.status_code))return outcome;
-  outcome.charge={state:'unknown',providerTaskId:task.id};outcome.evidence.statusCode=body.status_code as number;outcome.evidence.taskStatus=task.status_code as number;
-  if(response.httpStatus!==200||body.status_code!==20000||!finalTaskStatuses.has(task.status_code as number)||body.tasks_error!==(task.status_code===20000?0:1)||!own(body,'cost')||!own(task,'cost'))return outcome;
-  const total=providerMicros(body.cost),cost=providerMicros(task.cost);outcome.evidence.totalCostUsd=microUsd(total);outcome.evidence.taskCostUsd=microUsd(cost);if(total!==cost)return outcome;
-  outcome.charge={state:'known',providerTaskId:task.id,costUsd:microUsd(cost)};
-  if(task.status_code!==20000){outcome.content={state:'unavailable',reason:'provider_error'};return outcome;}
-  outcome.content={state:'unavailable',reason:'content_invalid'};
+  outcome.reference=task.id;outcome.evidence.statusCode=body.status_code as number;outcome.evidence.taskStatus=task.status_code as number;
+  if(response.httpStatus!==200||body.status_code!==20000||!finalTaskStatuses.has(task.status_code as number)||body.tasks_error!==(task.status_code===20000?0:1))return outcome;
+  outcome.known=true;
+  if(task.status_code!==20000){outcome.diagnostic='provider_error';return outcome;}
+  outcome.diagnostic='content_invalid';
   if(!own(task,'result')||!dense(task.result)||task.result.length!==1||!own(task,'result_count')||task.result_count!==1||!object(task.result[0]))return outcome;
   const result=task.result[0];
   if(!own(result,'keyword')||result.keyword!==request.capturedPrompt||!own(result,'location_code')||result.location_code!==request.locationCode||!own(result,'language_code')||result.language_code!==request.languageCode)return outcome;
   const model=own(result,'model')&&validText(result.model,160)?result.model:null;
-  outcome.content={state:'available',value:{profileId:aiSearchProfileId,source:aiSearchSource,capturedPrompt:request.capturedPrompt,locationCode:request.locationCode,languageCode:request.languageCode,forceWebSearch:true,
-   reportedModel:model,providerObservedAt:own(result,'datetime')?observedAt(result.datetime):null,receivedAt:now.toISOString(),evidence:normalizeDfsChatgptSearchEvidence(result)}};
- }catch{/* A known charge survives malformed content. A2 owns settlement; this adapter never retries. */}
+  outcome.result={profileId:aiSearchProfileId,source:aiSearchSource,capturedPrompt:request.capturedPrompt,locationCode:request.locationCode,languageCode:request.languageCode,forceWebSearch:true,
+   reportedModel:model,providerObservedAt:own(result,'datetime')?observedAt(result.datetime):null,receivedAt:now.toISOString(),evidence:normalizeDfsChatgptSearchEvidence(result)};outcome.diagnostic=null;
+ }catch{/* A known outcome survives malformed content; this adapter never retries. */}
  return outcome;
 }
-// Explicit send is mandatory. This adapter grants no authority to spend; A2 must reserve/dispatch first.
+// Explicit send is mandatory. The caller must authorize and record dispatch first.
 export async function requestAiSearch(credentials:unknown,raw:unknown,id:string,send:typeof fetch):Promise<AiSearchOutcome>{
  const request=aiSearchRequestSchema.parse(raw),payload=aiSearchPayload(request,id);if(typeof send!=='function')invalid();
  try{return parseAiSearchOutcome(await dataforseoJson(aiSearchEndpoints.live,credentials,'POST',[payload],send),request,id);}
@@ -106,7 +102,7 @@ function receiptBinding(raw:unknown):AiSearchReceiptBinding{
   own(raw,'providerTaskId')&&raw.providerTaskId!==null&&!uuid(raw.providerTaskId))invalid();
  const age=new Date(raw.asOf).getTime()-new Date(raw.dispatchedAt).getTime();
  // An early clipped page cannot rule out a later duplicate within the dispatch
- // window. Wait for the whole150s paid transport window before proving a charge.
+ // window. Wait for the whole150s transport window before proving the outcome.
  if(age<150_000||age>28*86400000)invalid();return raw as AiSearchReceiptBinding;
 }
 function receiptPayload(metadata:unknown,id:string){
@@ -116,9 +112,9 @@ function receiptPayload(metadata:unknown,id:string){
  const request=aiSearchRequestSchema.parse({profileId:aiSearchProfileId,capturedPrompt:metadata.keyword.replaceAll('%2B','+').replaceAll('%25','%'),locationCode:metadata.location_code,languageCode:metadata.language_code});
  if(!matchesPayload(metadata,request,id))invalid();return aiSearchPayload(request,id);
 }
-function chargeRow(row:unknown){
- if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||!['string','number'].includes(typeof row.status)||!/^\d{5}$(?![\s\S])/.test(String(row.status))||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
- return {providerTaskId:row.id,costUsd:microUsd(providerMicros(row.cost)),statusCode:Number(row.status)};
+function requestRow(row:unknown){
+ if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||!['string','number'].includes(typeof row.status)||!/^\d{5}$(?![\s\S])/.test(String(row.status))||!finalTaskStatuses.has(Number(row.status)))invalid();
+ return {reference:row.id,statusCode:Number(row.status)};
 }
 export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unknown,id?:string){
  if(id===undefined){
@@ -133,9 +129,9 @@ export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unkn
   const matches=rows.filter(row=>object(row)&&own(row,'metadata')&&object(row.metadata)&&own(row.metadata,'tag')&&row.metadata.tag===tag);
   if(matches.length!==1)invalid();const row=matches[0];if(!object(row)||!own(row,'url')||row.url!==pathFor(aiSearchEndpoints.live).join('/')||!own(row,'datetime_posted'))invalid();
   const posted=observedAt(row.datetime_posted);if(posted===null||new Date(posted).getTime()<at-60_000||new Date(posted).getTime()>at+150_000||canonicalHash(receiptPayload(row.metadata,binding.runId))!==binding.payloadHash)invalid();
-  const charge=chargeRow(row);if(binding.providerTaskId!=null&&charge.providerTaskId!==binding.providerTaskId)invalid();return charge;
+  const recovered=requestRow(row);if(binding.providerTaskId!=null&&recovered.reference!==binding.providerTaskId)invalid();return recovered;
  }
  const request=aiSearchRequestSchema.parse(raw);aiSearchPayload(request,id);const rows=resultRows(response,aiSearchEndpoints.reconciliation,1000);if(rows.length===1000)invalid();
  const matches=rows.filter(row=>object(row)&&own(row,'url')&&row.url===pathFor(aiSearchEndpoints.live).join('/')&&own(row,'metadata')&&matchesPayload(row.metadata,request,id));
- if(matches.length!==1)invalid();return chargeRow(matches[0]);
+ if(matches.length!==1)invalid();return requestRow(matches[0]);
 }

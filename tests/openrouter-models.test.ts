@@ -15,20 +15,28 @@ function endpoint(tag='compute/region',provider='Compute One'){return {tag,provi
 function endpointBody(){return {data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[endpoint()]}};}
 const candidate=()=>parseRoute(model,endpointBody(),2048,openRouterTextProfile);
 
+test('valid text and token usage succeed without provider billing evidence',()=>{
+ const now=new Date(),route=candidate();
+ const body={id:'gen-no-billing',model,provider:route.providerName,created:Math.floor(now.getTime()/1000),usage:{prompt_tokens:11,completion_tokens:7},choices:[{finish_reason:'stop',message:{content:'Observed answer'}}]};
+ const outcome=parseExecutionOutcome(body,200,null,route,now);
+ assert.equal(outcome.result?.text,'Observed answer');assert.equal(outcome.result?.promptTokens,11);assert.equal(outcome.result?.completionTokens,7);
+ assert.equal(outcome.known,true);assert.equal('cost'in outcome,false);
+ assert.ok(Object.keys(outcome.evidence).every(key=>!/cost|price|credit|billing/i.test(key)));
+});
+
 test('model identities distinguish historic known OpenAI from versioned dynamic routes',()=>{
  for(const v of ['vendor/text-2026:variant','vendor/model_1+2','openai/gpt-4o-mini'])assert.ok(openRouterModelId(v));
  for(const v of ['auto','https://host/model','vendor/../model','vendor/model?x','vendor/a/b','vendor/model\n','vendor/😀','vendor/'+'x'.repeat(256)])assert.equal(openRouterModelId(v),false);
  assert.ok(openRouterProviderTag('compute/region-fp8'));for(const v of ['compute/../region','Compute One','compute/region\n'])assert.equal(openRouterProviderTag(v),false);
  const r=candidate();assert.ok(openRouterRouteIdentity(r));assert.equal(openRouterSavedProvider(r),'Compute One');
  assert.equal(openRouterSavedProvider({model:'openai/gpt-4o-mini'}),'OpenAI');assert.equal(openRouterRouteIdentity({model:'openai/gpt-4o-mini'}),false);
- for(const v of [{model},{...r,profile:undefined},{...r,profile:'future'},{...r,contextLength:0},{...r,promptPrice:undefined},{...r,promptCapacity:128001},{...r,providerName:'bad\n'},{model:'openai/gpt-4o-mini',tag:'other'}])assert.equal(openRouterSavedProvider(v),null);
+ for(const v of [{model},{...r,profile:undefined},{...r,profile:'future'},{...r,contextLength:0},{...r,promptCapacity:128001},{...r,providerName:'bad\n'},{model:'openai/gpt-4o-mini',tag:'other'}])assert.equal(openRouterSavedProvider(v),null);
  assert.equal(insightFilters(new URLSearchParams({from:'2026-10-01',to:'2026-10-02',model})).model,model);
 });
-test('catalog prices retain exact values and explicit unsupported billing/capability reasons',()=>{
- const row=modelCatalogRow(catalogRow());assert.equal(row.admission,'candidate');assert.equal(row.promptPrice,'0.0000001');assert.equal(row.requestPrice,'0.0000001');assert.equal(row.structuredOutput,true);
- for(const mutate of [(v:any)=>v.pricing.prompt='NaN',(v:any)=>v.pricing.prompt='-1',(v:any)=>v.pricing.request=null,(v:any)=>v.pricing.overrides=[],(v:any)=>v.pricing.input_cache_write='0.01',(v:any)=>v.pricing.web_search='1',(v:any)=>v.pricing.internal_reasoning='1',(v:any)=>v.pricing.unknown='0',(v:any)=>v.pricing.discount=0.1,(v:any)=>v.pricing.input_cache_read='1',(v:any)=>v.top_provider.max_completion_tokens=null,(v:any)=>v.architecture.output_modalities.push('image'),(v:any)=>v.supported_parameters.push('reasoning'),(v:any)=>v.reasoning={mandatory:true,default_enabled:true},(v:any)=>v.expiration_date='2020-01-01',(v:any)=>v.id='openrouter/auto']){const raw:any=catalogRow();mutate(raw);const out=modelCatalogRow(raw);assert.equal(out.admission,'unsupported');assert.ok(out.reason);}
- const free=catalogRow();free.pricing={prompt:'0',completion:'0',request:'0'};assert.match(modelCatalogRow(free).reason!,/zero-reservation/);
- const missing=catalogRow();delete (missing.pricing as any).request;assert.equal(modelCatalogRow(missing).requestPrice,'0');
+test('catalog admission depends on capabilities and never exposes provider prices',()=>{
+ const row=modelCatalogRow(catalogRow());assert.equal(row.admission,'candidate');assert.equal(row.structuredOutput,true);assert.equal(/price|cost/i.test(JSON.stringify(row)),false);
+ for(const mutate of [(v:any)=>v.top_provider.max_completion_tokens=null,(v:any)=>v.architecture.output_modalities.push('image'),(v:any)=>v.supported_parameters.push('reasoning'),(v:any)=>v.reasoning={mandatory:true,default_enabled:true},(v:any)=>v.expiration_date='2020-01-01',(v:any)=>v.id='openrouter/auto']){const raw:any=catalogRow();mutate(raw);const out=modelCatalogRow(raw);assert.equal(out.admission,'unsupported');assert.ok(out.reason);}
+ for(const pricing of [undefined,null,{}, {prompt:'NaN',completion:'-1',unknown:'1'}, {prompt:'0',completion:'0',request:'0'}])assert.equal(modelCatalogRow({...catalogRow(),pricing}).admission,'candidate');
  assert.throws(()=>modelCatalogRow({...catalogRow(),id:'vendor/../escape'}));assert.throws(()=>modelCatalogRow({...catalogRow(),name:'bad\ud800'}));
 });
 test('free catalog pagination is fixed, credential-free, bounded and replaced atomically',async()=>{
@@ -63,11 +71,12 @@ test('official latest aliases and space-padded display names cannot poison a com
  assert.equal(cachedOpenRouterModels().revision,revision);
  await refreshOpenRouterCatalog(async()=>Response.json({data:[catalogRow()],total_count:1,links:{next:null}}));
 });
-test('v2 routes choose a supported leaf by exact reservation and pin provider without changing legacy shape',()=>{
+test('v2 routes choose a supported leaf by identity and pin the provider without prices',()=>{
  const body=endpointBody();body.data.endpoints.push({...endpoint('compute'),pricing:{...endpoint().pricing,prompt:'0'}});body.data.endpoints.push({...endpoint('other/leaf','Other'),pricing:{...endpoint().pricing,prompt:'0.0000002'}});
- const route=parseRoute(model,body,2048,openRouterTextProfile);assert.equal(route.tag,'compute/region');assert.equal(route.estimateMicros,'13620');
+ const route=parseRoute(model,body,2048,openRouterTextProfile);assert.equal(route.tag,'compute/region');assert.equal(/price|cost|estimate/i.test(JSON.stringify(route)),false);
  assert.equal(parseRoute(model,body,2048,openRouterTextProfile,false,'other/leaf').providerName,'Other');
- for(const mutate of [(v:any)=>v.data.endpoints[0].pricing.overrides=[],(v:any)=>v.data.endpoints[0].pricing.input_cache_write='1',(v:any)=>v.data.endpoints[0].max_completion_tokens=16,(v:any)=>v.data.endpoints[0].context_length=2048,(v:any)=>v.data.reasoning={mandatory:true,default_enabled:true}]){const broken:any=endpointBody();mutate(broken);assert.throws(()=>parseRoute(model,broken,2048,openRouterTextProfile));}
+ for(const mutate of [(v:any)=>v.data.endpoints[0].max_completion_tokens=16,(v:any)=>v.data.endpoints[0].context_length=2048,(v:any)=>v.data.reasoning={mandatory:true,default_enabled:true}]){const broken:any=endpointBody();mutate(broken);assert.throws(()=>parseRoute(model,broken,2048,openRouterTextProfile));}
+ const noPrice=endpointBody();delete (noPrice.data.endpoints[0] as any).pricing;assert.deepEqual(parseRoute(model,noPrice,2048,openRouterTextProfile),candidate());
  assert.throws(()=>parseRoute(model,endpointBody(),2048));assert.throws(()=>parseRoute(model,body,2048,openRouterTextProfile,false,'absent'));
  const missing=endpointBody();missing.data.endpoints[0].supported_parameters=['max_tokens'];assert.throws(()=>parseRoute(model,missing,2048,openRouterTextProfile,true));
 });
@@ -78,7 +87,7 @@ test('v2 endpoint architecture drift cannot authorize an image or unknown-output
  }
  assert.equal(parseRoute(model,endpointBody(),2048,openRouterTextProfile).model,model);
 });
-test('v2 endpoint reasoning metadata must explicitly rule out unsupported billing',()=>{
+test('v2 endpoint reasoning metadata must explicitly rule out automatic reasoning',()=>{
  for(const reasoning of [true,'mandatory',[],{}, {mandatory:false},{mandatory:false,default_enabled:true}]){
   const data:any=endpointBody();data.data.reasoning=reasoning;
   assert.throws(()=>parseRoute(model,data,2048,openRouterTextProfile),JSON.stringify(reasoning));
@@ -97,20 +106,20 @@ test('new request profile disables compression, bounds UTF8 payload/output, and 
  const legacy={...route,model:'openai/gpt-4o-mini',tag:'openai',providerName:'OpenAI',profile:undefined,contextLength:undefined};assert.equal('plugins'in executionBody(messages,legacy,2048,id,actor),false);
 });
 test('dynamic suggestion profile is explicit, schema-bound and cannot override legacy profiles',()=>{
- const input={requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,fundedCredits:true,topic:'Grinders',country:'UAE',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
+ const input={requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,topic:'Grinders',country:'UAE',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
  const parsed=suggestionQuoteInput.parse(input);assert.equal(suggestionModel(parsed),model);
  for(const patch of [{model:undefined},{profileId:'benchmark-mini-v1'},{benchmark:false},{maxSpendUsd:'0'},{maxSpendUsd:'0.1'},{tools:[]},{model:'auto'}])assert.equal(suggestionQuoteInput.safeParse({...input,...patch}).success,false);
  const legacy={...input,profileId:'benchmark-mini-v1'};delete (legacy as any).model;assert.equal(suggestionModel(suggestionQuoteInput.parse(legacy)),'openai/gpt-4o-mini');
- assert.ok(executionInput.safeParse({connectionId:input.connectionId,promptId:id,versionId:randomUUID(),systemText:'',models:[model],maxCompletionTokens:2048,fundedCredits:true}).success);
+ assert.ok(executionInput.safeParse({connectionId:input.connectionId,promptId:id,versionId:randomUUID(),systemText:'',models:[model],maxCompletionTokens:2048}).success);
 });
-test('dynamic readiness rechecks selected leaf and exact provider costs survive invalid charged text',async()=>{
+test('dynamic readiness rechecks selected leaf and terminal outcomes do not depend on cost',async()=>{
  let calls=0;const routes=await readOpenRouterRoutes({apiKey:'synthetic-never-live'},[model],2048,async(url,init)=>{calls++;assert.equal(init?.redirect,'error');if(String(url).endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});assert.equal(String(url),'https://openrouter.ai/api/v1/models/vendor/text-standard/endpoints');return Response.json(endpointBody());},openRouterTextProfile,['compute/region']);assert.equal(calls,2);
  const now=new Date();const response=parseOpenRouterJson(JSON.stringify({id:'gen-dynamic',model,provider:'Compute One',created:Math.floor(now.getTime()/1000),usage:{is_byok:false,cost:0.000012345},choices:[{finish_reason:'stop',message:{content:'Observed answer'}}]}));
- const result=parseExecutionOutcome(response,200,null,routes[0],now);assert.equal(result.cost,'0.000013');assert.equal(result.result?.provider,'Compute One');response.choices[0].message.content={bad:true};const invalid=parseExecutionOutcome(response,200,null,routes[0],now);assert.equal(invalid.cost,'0.000013');assert.equal(invalid.result,null);
+ const result=parseExecutionOutcome(response,200,null,routes[0],now);assert.equal(result.known,true);assert.equal(result.result?.provider,'Compute One');response.choices[0].message.content={bad:true};const invalid=parseExecutionOutcome(response,200,null,routes[0],now);assert.equal(invalid.known,true);assert.equal(invalid.result,null);assert.equal(/cost|price/i.test(JSON.stringify(result.evidence)),false);
 });
 test('complete2000-model admission budgets both wrappers and candidate IDs before publishing, retaining the prior complete snapshot on refusal',async()=>{
  assert.equal(openRouterMetadataBytes,2_097_152);
- const rows=Array.from({length:2000},(_,i)=>({...catalogRow('fixture/model-'+String(i).padStart(4,'0')),name:'X'}));let calls=0;
+ const rows=Array.from({length:2000},(_,i)=>({...catalogRow('fixture/model-'+String(i).padStart(4,'0')+'-'+'x'.repeat(100)),name:'X'}));let calls=0;
  const send:typeof fetch=async(url,init)=>{const u=new URL(String(url));assert.equal(u.origin,'https://openrouter.ai');assert.equal(u.pathname,'/api/v1/models');assert.equal(u.searchParams.get('output_modalities'),'text');assert.equal(u.searchParams.get('limit'),'500');const offset=Number(u.searchParams.get('offset'));assert.ok([0,500,1000,1500].includes(offset));assert.deepEqual(init?.headers,{accept:'application/json'});assert.equal(init?.credentials,'omit');assert.equal(init?.redirect,'error');const body={data:rows.slice(offset,offset+500),total_count:2000,links:{next:offset===1500?null:`/api/v1/models?output_modalities=text&offset=${offset+500}&limit=500`}},wire=JSON.stringify(body);assert.ok(Buffer.byteLength(wire)<=openRouterCatalogLimits.pageBytes);calls++;return new Response(wire,{headers:{'content-type':'application/json'}});};
  const first=await refreshOpenRouterCatalog(send);assert.equal(calls,4);assert.equal(first.models.length,2000);assert.ok(first.models.every(m=>m.admission==='candidate'));const original=JSON.stringify(first.models),revision=first.revision;
  const envelopeBytes=Buffer.byteLength(JSON.stringify({role:'editor',catalog:first}))-Buffer.byteLength(JSON.stringify(first.models));
@@ -124,7 +133,7 @@ test('complete2000-model admission budgets both wrappers and candidate IDs befor
 });
 test('the complete execution metadata guard refuses variable bounded connection rows at413 without truncation',()=>{
  const catalog=cachedOpenRouterModels(),models=catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),connections=[{id:randomUUID(),name:'Synthetic',checkStatus:'ok'}];
- const body={role:'owner',models,catalog,vaultConfigured:true,spendingPaused:false,connections,comparisons:[],cache:{available:false},scheduling:{available:false}};
+ const body={role:'owner',models,catalog,vaultConfigured:true,requestsPaused:false,connections,comparisons:[],cache:{available:false},scheduling:{available:false}};
  assert.equal(boundedOpenRouterMetadata(body),body);
  const large={...body,connections:Array.from({length:6000},()=>({id:randomUUID(),name:'界'.repeat(120),checkStatus:'ok'}))};assert.ok(Buffer.byteLength(JSON.stringify(large))>openRouterMetadataBytes);const count=large.connections.length;
  assert.throws(()=>boundedOpenRouterMetadata(large),{status:413,message:'The model metadata exceeds the complete response limit.'});assert.equal(large.connections.length,count);assert.equal(large.catalog.models.length,2000);assert.equal(boundedOpenRouterMetadata(body),body);

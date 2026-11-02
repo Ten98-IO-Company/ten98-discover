@@ -9,7 +9,7 @@ import {createSyntheticProviderFetch} from './provider.mjs';
 import {assertSchema,getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {claimInstallation} from '../../src/server/auth.ts';
 import {createWorkspace} from '../../src/server/teams.ts';
-import {saveProvider,saveBudget} from '../../src/server/providers.ts';
+import {saveProvider,saveProviderRequestControls} from '../../src/server/providers.ts';
 import {createPrompts,updatePrompt,setPromptArchived} from '../../src/server/prompts.ts';
 import {addDomain,issueDomainChallenge,verifyDomain} from '../../src/server/domains.ts';
 import {refreshKeywordMarkets} from '../../src/server/keyword-research.ts';
@@ -32,7 +32,7 @@ export async function createKeywordCase(label){
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,$3,$4,$5,'infinity')",[project.id,workspace.id,project.name,project.origin,randomUUID()]);projects.push(project);
   }
   const dataforseo=(await saveProvider(workspace.id,owner.id,{provider:'dataforseo',name:'Synthetic DataForSEO',credentials:{login:'synthetic-provider@keywords.integration.test',password:'synthetic-never-live'}})).connection.id;
-  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[dataforseo]);await saveBudget(workspace.id,owner.id,{paused:false});
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[dataforseo]);await saveProviderRequestControls(workspace.id,owner.id,{paused:false});
   await refreshKeywordMarkets(projects[0].id,owner.id,{connectionId:dataforseo},createSyntheticProviderFetch());
   const group={workspace,owner,main:projects[0],other:projects[1],connections:{dataforseo}};fixture.groups[key]=group;
   await writeFile(fixturePath,JSON.stringify(fixture,null,2)+'\n',{mode:0o600});return group;
@@ -99,7 +99,7 @@ export async function seedFixture(){
       connections[provider]=(await saveProvider(workspace.id,owner.id,{provider,name:'Synthetic '+provider,credentials})).connection.id;
       await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[connections[provider]]);
     }
-    await saveBudget(workspace.id,owner.id,{paused:false});
+    await saveProviderRequestControls(workspace.id,owner.id,{paused:false});
     await refreshKeywordMarkets(main.id,owner.id,{connectionId:connections.dataforseo},send);
     const initial=(await createPrompts(main.id,owner.id,{requestId:randomUUID(),prompts:[
       {text:'Synthetic disabled prompt original version',enabled:false},

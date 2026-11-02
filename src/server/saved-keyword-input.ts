@@ -433,7 +433,7 @@ export function parseSavedKeywordExport(raw: unknown): {
   };
 }
 
-export function parseSavedKeywordRefreshQuote(raw: unknown): {
+export function parseSavedKeywordRefreshPreparation(raw: unknown): {
   connectionId: string;
   selection: SavedKeywordSelection;
 } {
@@ -444,7 +444,7 @@ export function parseSavedKeywordRefreshQuote(raw: unknown): {
   };
 }
 
-export function parseSavedKeywordRefreshStart(raw: unknown): { quoteId: string; requestKey: string } {
-  const m = asObject(raw, ['quoteId', 'requestKey']);
-  return { quoteId: asUuid(required(m, 'quoteId')), requestKey: asUuid(required(m, 'requestKey')) };
+export function parseSavedKeywordRefreshStart(raw: unknown): { preparationId: string; requestKey: string } {
+  const m = asObject(raw, ['preparationId', 'requestKey']);
+  return { preparationId: asUuid(required(m, 'preparationId')), requestKey: asUuid(required(m, 'requestKey')) };
 }

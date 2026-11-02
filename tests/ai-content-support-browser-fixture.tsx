@@ -3,13 +3,13 @@ import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet,useLocation,useRouter} from '@tanstack/react-router';
 import {AISearchPanel} from '../src/components/AISearchPanel';
 import {AIContentSupportPanel} from '../src/components/AIContentSupportPanel';
-import {readSupportQuote,readSupportRun,supportQueryId,type SupportSourceReport} from '../src/components/ai-content-support-ui';
+import {readSupportPreparation,readSupportRun,supportQueryId,type SupportSourceReport} from '../src/components/ai-content-support-ui';
 import {parseNavigation,type NavigationSearch} from '../src/lib/navigation';
 import '../src/styles.css';
 
 type Config={workspaceId:string;projectId:string;userId:string;report?:SupportSourceReport;mode:'parent'|'assessment'|'history'};
-const fixture=window as unknown as {assessmentConfig:Config;assessmentReplace:(next?:Config)=>void;assessmentQueryId:typeof supportQueryId;assessmentReaders:{quote:typeof readSupportQuote;run:typeof readSupportRun}};
-fixture.assessmentQueryId=supportQueryId;fixture.assessmentReaders={quote:readSupportQuote,run:readSupportRun};
+const fixture=window as unknown as {assessmentConfig:Config;assessmentReplace:(next?:Config)=>void;assessmentQueryId:typeof supportQueryId;assessmentReaders:{quote:typeof readSupportPreparation;run:typeof readSupportRun}};
+fixture.assessmentQueryId=supportQueryId;fixture.assessmentReaders={quote:readSupportPreparation,run:readSupportRun};
 function Fixture(){
  const location=useLocation(),router=useRouter(),search=index.useSearch(),navigate=index.useNavigate(),[entry,setEntry]=React.useState(0),[closed,setClosed]=React.useState(false),[denied,setDenied]=React.useState(false),[signedOut,setSignedOut]=React.useState(false),config=fixture.assessmentConfig,current=React.useRef('');
  const key=`${config.workspaceId}:${config.projectId}:${config.userId}:${entry}:${location.state.__TSR_key}`;current.current=key;

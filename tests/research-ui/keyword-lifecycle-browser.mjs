@@ -40,8 +40,8 @@ try{
       await openKeywordForm(panel);
       await panel.getByLabel('Seed keyword',{exact:true}).fill('Synthetic ideas '+limit);await panel.getByLabel('Max ideas',{exact:true}).selectOption(String(limit));
       await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
-      const response=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
-      const accepted=start(page,panel,B),preparation=await response;assert.equal(preparation.status(),200);const quote=(await preparation.json()).quote;
+      const response=page.waitForResponse(response=>response.url().endsWith(B+'/prepare')&&response.request().method()==='POST');
+      const accepted=start(page,panel,B),preparation=await response;assert.equal(preparation.status(),200);const quote=(await preparation.json()).preparation;
       assert.equal(quote.request.limit,limit);assert.equal(quote.request.mode,'ideas');assert.deepEqual(quote.request.keywords,['synthetic ideas '+limit]);
       const run=await accepted;await runKeyword(run.id);await completed(page,panel,B,run);
       assert.match(await panel.innerText(),new RegExp('Showing 1 of 250 keywords \\(bounded to the requested limit of '+limit+'\\)'));
@@ -53,7 +53,7 @@ try{
 
   stage='Run preparation lock/double click and held poll cancellation';{
     const {group,page,panel,B}=await phase('cancel');const before=await providerCounts(),entered=deferred(),release=deferred();let quoteCalls=0,startCalls=0;
-    const quotePath='**'+B+'/quote';
+    const quotePath='**'+B+'/prepare';
     await page.route(quotePath,async route=>{quoteCalls++;const response=await route.fetch();entered.resolve();await release.promise;await route.fulfill({response});});
     cleanups.push(async()=>{release.resolve();await page.unroute(quotePath);});
     await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Cancellation fixture');await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
@@ -69,9 +69,9 @@ try{
     const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Cancelled ·/).waitFor();
     held.release();await held.dispose();await page.waitForTimeout(250);assert.ok(await selected.getByText(/^Cancelled ·/).isVisible());
     assert.equal(await selected.getByRole('button',{name:'Cancel run',exact:true}).count(),0);
-    const saved=(await pool.query('SELECT r.status,p.status AS charge FROM keyword_research_run r JOIN provider_request p ON p.id=r.id WHERE r.id=$1',[run.id])).rows[0];assert.deepEqual(saved,{status:'cancelled',charge:'cancelled'});
+    const saved=(await pool.query('SELECT r.status,p.status AS request_status FROM keyword_research_run r JOIN provider_request p ON p.id=r.id WHERE r.id=$1',[run.id])).rows[0];assert.deepEqual(saved,{status:'cancelled',request_status:'cancelled'});
     await runKeyword(run.id);assert.equal((await providerCounts())['keyword-dispatch']??0,before['keyword-dispatch']??0);noBrowserErrors();
-    console.log('PASS quote mutation locks, same-tick double clicks, real held-poll cancellation and zero paid dispatch.');
+    console.log('PASS preparation mutation locks, same-tick double clicks, real held-poll cancellation and zero provider dispatch.');
   }
 
   stage='503/malformed acknowledged starts and expiry recovery';{
@@ -79,7 +79,7 @@ try{
     for(const failure of ['503','malformed','malformed-row']){
       await overviewInputs(panel,'Acknowledgement '+failure);
       const lost=await loseFirstPost(page,'**'+B+'/runs',{failure,onCommitted:async(body,accepted)=>{
-        await runKeyword(accepted.run.id);await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.quoteId]);
+        await runKeyword(accepted.run.id);await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.preparationId]);
       }});cleanups.push(lost.dispose);
       await panel.getByRole('button',{name:'Run',exact:true}).evaluate(element=>{element.click();element.click();});
       await panel.getByRole('button',{name:'Retry same request',exact:true}).waitFor();assert.equal(lost.bodies.length,1);
@@ -91,24 +91,24 @@ try{
       assert.deepEqual(accepted.request.keywords,['acknowledgement '+failure]);await retry.waitFor({state:'hidden'});
       await panel.getByRole('region',{name:'Keyword data table',exact:true}).locator(':scope > table > tbody > tr').filter({hasText:'acknowledgement '+failure}).waitFor();
       assert.equal(lost.bodies.length,2);assert.deepEqual(lost.bodies[0],lost.bodies[1]);
-      assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE quote_id=$1',[lost.bodies[0].quoteId])).rows[0].n,'1');
+      assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE quote_id=$1',[lost.bodies[0].preparationId])).rows[0].n,'1');
       await lost.dispose();await page.clock.setSystemTime(new Date());
     }
     assert.equal((await providerCounts())['keyword-dispatch']-(before['keyword-dispatch']??0),3);noBrowserErrors();
-    console.log('PASS503, malformed2xx and malformed nested result acknowledgement loss preserve the accepted quote/key through browser/server expiry.');
+    console.log('PASS503, malformed2xx and malformed nested result acknowledgement loss preserve the accepted preparation/key through browser/server expiry.');
   }
 
-  stage='known receipt reconciliation without paid retry';{
-    const {group,page,panel,B}=await phase('reconcile');const before=await providerCounts();await overviewInputs(panel,'Known reconciliation fixture');
+  stage='known request recovery without resubmitting';{
+    const {group,page,panel,B}=await phase('reconcile');const before=await providerCounts();await overviewInputs(panel,'Known recovery fixture');
     const run=await start(page,panel,B);await runKeyword(run.id,'receipt-only');await panel.getByRole('button',{name:'Check status',exact:true}).click();
-    await panel.getByText('Check provider charge (owner)',{exact:true}).click();await panel.getByRole('button',{name:'Check provider charge',exact:true}).click();
+    await panel.getByText('Check original request (owner)',{exact:true}).click();await panel.getByRole('button',{name:'Check original request',exact:true}).click();
     const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Reconciled ·/).waitFor();
-    await selected.getByText('Request details',{exact:true}).click();assert.match(await selected.innerText(),/Only the cost was reconciled/);assert.match(await selected.innerText(),/\$0\.012120/);
-    // Owner decision D3: the uncertain charge never paused the workspace and reconciliation leaves it unpaused.
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[group.workspace.id])).rows[0].paused,false);
+    await selected.getByText('Request details',{exact:true}).click();assert.match(await selected.innerText(),/original request was checked, but no result was recovered/);assert.ok((await selected.innerText()).includes(run.id));assert.equal(await selected.locator('.t98-cost-root').count(),0);
+    // Request recovery does not change the manual emergency stop.
+    assert.equal((await pool.query('SELECT COALESCE((SELECT paused FROM workspace_provider_control WHERE workspace_id=$1),false) AS paused',[group.workspace.id])).rows[0].paused,false);
     const after=await providerCounts();assert.equal(after['keyword-dispatch']-(before['keyword-dispatch']??0),1);assert.equal(after['keyword-reconcile']-(before['keyword-reconcile']??0),1);
     assert.equal(await panel.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);noBrowserErrors();
-    console.log('PASS owner metadata reconciliation records known cost, leaves the workspace unpaused (D3) and does not recover/invent a result or rerun paid work.');
+    console.log('PASS owner metadata recovery keeps request identity, leaves manual controls unchanged and does not invent a result or resubmit work.');
   }
 
   stage='current403/404 purge cached results and draft';{

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {PoolClient} from 'pg';
 import {aiQueryFilters} from '../src/lib/ai-search-analysis.ts';
-import {aiSearchPriceEvidence,aiSearchProfileId,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
+import {aiSearchProfileId,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
 import {aggregateAiSearchQueries,aggregateAiSearchQueryPopulation,AiQueryCapacityError,type AiQueryInput} from '../src/server/ai-search-analysis.ts';
 import {readAiSearchAnalysisPopulation} from '../src/server/ai-search.ts';
 import {normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidence.ts';
@@ -33,7 +33,7 @@ test('complete population keeps typed model filtering and unknown/empty source a
  assert.throws(()=>aggregateAiSearchQueryPopulation(Array.from({length:1001},(_,i)=>({...rows[0],id:id(100+i)})),{...filters,reportedModel:{state:'reported',value:'excluded'}},brand),AiQueryCapacityError);
 });
 
-const input=aiSearchSnapshotSchema.parse({version:1,request:{profileId:aiSearchProfileId,capturedPrompt:'Original prompt',locationCode:2840,languageCode:'en'},promptId:id(1),versionId:id(2),maxSpendUsd:'0.004000',country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:at,price:aiSearchPriceEvidence()});
+const input=aiSearchSnapshotSchema.parse({version:2,request:{profileId:aiSearchProfileId,capturedPrompt:'Original prompt',locationCode:2840,languageCode:'en'},promptId:id(1),versionId:id(2),country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:at});
 const stored={id:id(10),quote_id:id(20),prompt_id:id(1),version_id:id(2),status:'completed',requested_at:at,user_tags:['current'],input_hash:canonicalHash(input),expired:false,quote_created_at:at,raw_expired_at:null,input_purged_at:null,result_purged_at:null,input,result:capture(10,['query']).result,input_fingerprint:'d'.repeat(64),result_hash:'e'.repeat(64)};
 const project={id:id(30),workspace_id:id(31),role:'viewer' as const};
 // Offline query-boundary double only: actual SQL, locking and authorization need

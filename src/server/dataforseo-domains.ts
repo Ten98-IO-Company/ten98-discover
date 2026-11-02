@@ -34,17 +34,17 @@ function competitorRow(value:unknown,request:DomainRequest):DomainCompetitorRow{
  // describe the competitor. They must not be merged or relabeled as one population.
  return {domain,sharedKeywords:metric(value.intersections,Number.MAX_SAFE_INTEGER,true),averagePosition,fullDomain:metrics(value.full_domain_metrics),targetOverlap:metrics(value.metrics)};
 }
-export type DomainOutcome={cost:string|null;reference:string|null;result:DomainReportResult|null;diagnostic:string|null;evidence:{httpStatus:number|null;statusCode:number|null;taskStatus:number|null;reportedCost:unknown;taskCost:unknown}};
+export type DomainOutcome={known:boolean;reference:string|null;result:DomainReportResult|null;diagnostic:string|null;evidence:{httpStatus:number|null;statusCode:number|null;taskStatus:number|null}};
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseDomainOutcome(response:{httpStatus:number;body:unknown},request:DomainRequest,id:string,now=new Date()):DomainOutcome{
- const outcome:DomainOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Recover this original request; unrelated features can continue.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
- const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
+ const outcome:DomainOutcome={known:false,reference:null,result:null,diagnostic:'The provider outcome is unknown. Recover this original request; unrelated features can continue.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null}};
+ const refused=dataforseoRefusal(response);if(refused)return {...outcome,known:true,diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
-  const b=response.body;if(!object(b))invalid();outcome.evidence.reportedCost=b.cost;outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
+  const b=response.body;if(!object(b))invalid();outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
   if(response.httpStatus!==200||b.status_code!==20000||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();
-  const task=b.tasks[0];outcome.evidence.taskCost=task.cost;outcome.evidence.taskStatus=typeof task.status_code==='number'?task.status_code:null;
-  if(!validText(task.id,128)||JSON.stringify(task.path)!==JSON.stringify(['v3','dataforseo_labs','google',domainEndpointName(request),'live'])||!matchesDomainPayload(task.data,request,id)||typeof task.status_code!=='number'||!final.has(task.status_code)||providerMicros(b.cost)!==providerMicros(task.cost))invalid();
-  outcome.reference=task.id;outcome.cost=microUsd(providerMicros(task.cost));outcome.diagnostic='The charge was recorded, but no readable result is available. A new run needs a new paid quote.';
+  const task=b.tasks[0];outcome.evidence.taskStatus=typeof task.status_code==='number'?task.status_code:null;
+  if(!validText(task.id,128)||JSON.stringify(task.path)!==JSON.stringify(['v3','dataforseo_labs','google',domainEndpointName(request),'live'])||!matchesDomainPayload(task.data,request,id)||typeof task.status_code!=='number'||!final.has(task.status_code))invalid();
+  outcome.reference=task.id;outcome.known=true;outcome.diagnostic='The provider completed this request without a readable result.';
   if(task.status_code!==20000||task.result_count!==1||!Array.isArray(task.result)||task.result.length!==1||!object(task.result[0]))invalid();
   const r=task.result[0],t=domainTarget(request.target,request.scope);
   // A live empty result can omit its total; zero returned rows do not prove a zero provider total.
@@ -65,21 +65,21 @@ export function parseDomainOutcome(response:{httpStatus:number;body:unknown},req
    const rows=items.map(v=>row(v,request)),seen=new Set<string>();for(const v of rows){const key=JSON.stringify([v.keyword,v.url]);if(seen.has(key))invalid();seen.add(key);}outcome.result={...base,rows};
   }
   outcome.diagnostic=null;
- }catch{/* Financial evidence above is retained independently of malformed content. */}
+ }catch{/* Verified provider outcomes are retained independently of malformed content. */}
  return outcome;
 }
 export async function requestDomainResearch(credentials:unknown,request:DomainRequest,id:string,send:typeof fetch=fetch):Promise<DomainOutcome>{
- try{return parseDomainOutcome(await dataforseoJson(domainEndpoint(request),credentials,'POST',[domainPayload(request,id)],send),request,id);}catch{return {cost:null,reference:null,result:null,diagnostic:'The request may have reached the provider. Its charge is unknown; recover this original request; unrelated features can continue.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};}
+ try{return parseDomainOutcome(await dataforseoJson(domainEndpoint(request),credentials,'POST',[domainPayload(request,id)],send),request,id);}catch{return {known:false,reference:null,result:null,diagnostic:'The request may have reached the provider. Its outcome is unknown; recover this original request; unrelated features can continue.',evidence:{httpStatus:null,statusCode:null,taskStatus:null}};}
 }
 export function parseDomainReconciliation(response:{httpStatus:number;body:unknown},request:DomainRequest,id:string){
- const b=response.body;if(response.httpStatus!==200||!object(b)||b.status_code!==20000||providerMicros(b.cost)!==0n||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();
- const task=b.tasks[0];if(task.status_code!==20000||providerMicros(task.cost)!==0n||!Array.isArray(task.result)||task.result.length>=1000)invalid();
+ const b=response.body;if(response.httpStatus!==200||!object(b)||b.status_code!==20000||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();
+ const task=b.tasks[0];if(task.status_code!==20000||!Array.isArray(task.result)||task.result.length>=1000)invalid();
  const matches=task.result.filter(v=>object(v)&&v.url==='v3/dataforseo_labs/google/'+domainEndpointName(request)+'/live'&&matchesDomainPayload(v.metadata,request,id));
  if(matches.length!==1||!object(matches[0])||!validText(matches[0].id,128)||!['string','number'].includes(typeof matches[0].status)||!/^\d{5}$(?![\s\S])/.test(String(matches[0].status))||!final.has(Number(matches[0].status)))invalid();
- return {reference:matches[0].id,cost:microUsd(providerMicros(matches[0].cost)),statusCode:Number(matches[0].status)};
+ return {reference:matches[0].id,statusCode:Number(matches[0].status)};
 }
-export async function reconcileDomainCharge(credentials:unknown,request:DomainRequest,id:string,dispatchedAt:Date,send:typeof fetch=fetch){
- if(!Number.isFinite(dispatchedAt.getTime())||Date.now()-dispatchedAt.getTime()>28*86400000)throw new FoundationError(409,'The provider charge lookup window expired. Review the recorded receipt.');
+export async function recoverDomainRequest(credentials:unknown,request:DomainRequest,id:string,dispatchedAt:Date,send:typeof fetch=fetch){
+ if(!Number.isFinite(dispatchedAt.getTime())||Date.now()-dispatchedAt.getTime()>28*86400000)throw new FoundationError(409,'The provider request lookup window expired. Review the recorded receipt.');
  const stamp=(date:Date)=>date.toISOString().replace('T',' ').slice(0,19)+' +00:00';
- try{return parseDomainReconciliation(await dataforseoJson(keywordReconcileEndpoint,credentials,'POST',[{datetime_from:stamp(new Date(dispatchedAt.getTime()-60000)),datetime_to:stamp(new Date(Math.min(Date.now(),dispatchedAt.getTime()+120000))),limit:1000,offset:0,sort:'asc',include_metadata:true}],send),request,id);}catch{throw new FoundationError(409,'The charge could not be matched uniquely. The charge remains unresolved; do not repeat the paid request.');}
+ try{return parseDomainReconciliation(await dataforseoJson(keywordReconcileEndpoint,credentials,'POST',[{datetime_from:stamp(new Date(dispatchedAt.getTime()-60000)),datetime_to:stamp(new Date(Math.min(Date.now(),dispatchedAt.getTime()+120000))),limit:1000,offset:0,sort:'asc',include_metadata:true}],send),request,id);}catch{throw new FoundationError(409,'The original request could not be matched uniquely. Its outcome remains unresolved; do not repeat it.');}
 }

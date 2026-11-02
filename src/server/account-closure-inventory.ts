@@ -164,7 +164,7 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'ai_search_quote', rule: 'keep', columns: ['user_id', 'price_mode', 'price_source', 'input'], reason: keepContent, retention: financial() },
   { table: 'ai_search_run', rule: 'keep', columns: ['user_id', 'result', 'financial_evidence', 'preflight_evidence', 'diagnostic'], reason: keepContent, retention: financial() },
   { table: 'ai_content_support_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'source_kind', 'dependencies', 'source_input', 'snapshot', 'messages', 'route', 'unavailable_reason'], reason: keepContent, retention: financial() },
-  { table: 'ai_content_support_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'financial_evidence', 'diagnostic'], reason: keepContent, retention: financial() },
+  { table: 'ai_content_support_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'financial_evidence', 'request_evidence', 'diagnostic'], reason: keepContent, retention: financial() },
   { table: 'domain_research_quote', rule: 'keep', columns: ['user_id', 'request'], reason: keepContent, retention: financial() },
   { table: 'domain_research_run', rule: 'keep', columns: ['user_id', 'diagnostic', 'result', 'reconciliation_evidence'], reason: keepContent, retention: financial() },
   { table: 'domain_redirect_check', rule: 'keep', columns: ['user_id', 'hostname', 'expected_target_host', 'diagnostic', 'observation'], reason: keepContent, retention: nonPaidWork },

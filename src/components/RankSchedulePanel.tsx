@@ -19,8 +19,6 @@ const integer=(v:unknown,min:number,max:number)=>Number.isInteger(v)&&Number(v)>
 const date=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&v.length<=40&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
 const role=(v:unknown):v is Role=>workspaceRoles.includes(v as WorkspaceRole);
-const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=14&&/^(?:0|[1-9]\d{0,6})\.\d{6}(?![\s\S])/.test(v)&&BigInt(v.replace('.',''))<=1_000_000_000_000n;
-const micros=(v:string)=>BigInt(v.replace('.',''));
 function validSchedule(v:unknown,id:string):v is Envelope{
   if(!object(v)||!role(v.role)||v.trackerId!==id||!integer(v.authoredRevision,1,2147483646)||v.canManage!==(v.role==='owner')||!object(v.schedule)||(v.replayed!==undefined&&typeof v.replayed!=='boolean'))return false;
   const s=v.schedule;if(typeof s.enabled!=='boolean'||typeof s.approvalStale!=='boolean'||!['manual','daily','weekly','monthly'].includes(s.interval)||!nullableDate(s.nextDueAt)||!Array.isArray(s.staleReasons)||s.staleReasons.length>10||!s.staleReasons.every((r:unknown)=>text(r,100,1)))return false;
@@ -36,17 +34,16 @@ function validPreview(v:unknown,c:Calendar):v is SchedulePreview{
   return true;
 }
 function quoteDisplay(v:unknown,id:string,trackerId:string,knownExpiry?:string):ScheduleQuote|null{
-  if(!object(v)||!role(v.role)||!object(v.run))throw new Error('The quote response could not be verified.');const r=v.run;
-  if(r.id!==id||r.trackerId!==trackerId)throw new Error('The quote belongs to another tracker.');
+  if(!object(v)||!role(v.role)||!object(v.run))throw new Error('The preparation response could not be verified.');const r=v.run;
+  if(r.id!==id||r.trackerId!==trackerId)throw new Error('The preparation belongs to another tracker.');
   if(r.status!=='quoted'||r.method!=='queued'||r.trigger!=='manual'||r.isSubset!==false||r.startedAt!==null)return null;
-  if(typeof r.canStart!=='boolean'||!date(r.expiresAt)||!money(r.estimateUsd)||!integer(r.taskCount,1,2000)||!object(r.target)||!Array.isArray(r.quotedTasks)||r.quotedTasks.length!==r.taskCount)throw new Error('The quote response could not be verified.');
-  const t=r.target;if(!text(t.domain,253,1)||!integer(t.locationCode,1,2147483647)||!text(t.languageCode,16,1)||!integer(t.depth,10,100)||t.depth%10!==0||!integer(t.maxCrawlPages,1,10))throw new Error('The quote target could not be verified.');
-  const pairs=new Set<string>(),devices=new Set<string>();let total=0n;
-  for(const task of r.quotedTasks){if(!object(task)||!uuid(task.keywordId)||!text(task.keyword,200,1)||!['desktop','mobile'].includes(task.device)||!money(task.maximumUsd))throw new Error('The quote tasks could not be verified.');const pair=task.keywordId.toLowerCase()+':'+task.device;if(pairs.has(pair))throw new Error('The quote contains duplicate checks.');pairs.add(pair);devices.add(task.device);total+=micros(task.maximumUsd);}
-  if(total!==micros(r.estimateUsd))throw new Error('The quote maximum could not be verified.');
+  if(typeof r.canStart!=='boolean'||!date(r.expiresAt)||!integer(r.taskCount,1,2000)||!object(r.target)||!Array.isArray(r.preparedTasks)||r.preparedTasks.length!==r.taskCount)throw new Error('The preparation response could not be verified.');
+  const t=r.target;if(!text(t.domain,253,1)||!integer(t.locationCode,1,2147483647)||!text(t.languageCode,16,1)||!integer(t.depth,10,100)||t.depth%10!==0||!integer(t.maxCrawlPages,1,10))throw new Error('The preparation target could not be verified.');
+  const pairs=new Set<string>(),devices=new Set<string>();
+  for(const task of r.preparedTasks){if(!object(task)||!uuid(task.keywordId)||!text(task.keyword,200,1)||!['desktop','mobile'].includes(task.device))throw new Error('The preparation tasks could not be verified.');const pair=task.keywordId.toLowerCase()+':'+task.device;if(pairs.has(pair))throw new Error('The preparation contains duplicate checks.');pairs.add(pair);devices.add(task.device);}
   const expiresAt=date(knownExpiry)&&Date.parse(knownExpiry)<Date.parse(r.expiresAt)?knownExpiry:r.expiresAt;
   if(!r.canStart&&Date.parse(expiresAt)>Date.now())return null;
-  return {id:r.id,targetText:`${t.domain} and subdomains · Location ${t.locationCode} · Language ${t.languageCode} · ${[...devices].sort().join(' + ')} · Up to ${t.depth} results · ${t.maxCrawlPages} maximum billable page(s)`,taskCount:r.taskCount,estimateUsd:r.estimateUsd,expiresAt,expired:!r.canStart||Date.parse(expiresAt)<=Date.now()};
+  return {id:r.id,targetText:`${t.domain} and subdomains · Location ${t.locationCode} · Language ${t.languageCode} · ${[...devices].sort().join(' + ')} · Up to ${t.depth} results · ${t.maxCrawlPages} maximum page(s)`,taskCount:r.taskCount,expiresAt,expired:!r.canStart||Date.parse(expiresAt)<=Date.now()};
 }
 const blank=():ScheduleForm=>({interval:'daily',timezone:'UTC',hour:'9',minute:'0',weekday:'1',consent:false});
 function calendar(form:ScheduleForm):Calendar|null{
@@ -81,7 +78,7 @@ function ScheduleController(props:Props){
   async function load(){const op=begin();if(!op)return;patch({data:null,quote:null,preview:null,form:blank(),dirty:false});
     try{const data=await api<unknown>(base,{signal:op.controller.signal});if(!current(op))return;if(!validSchedule(data,props.trackerId))throw new Error('The schedule response could not be verified.');accept(data);patch({conflict:false});
       if(props.quoteId&&data.canManage){const raw=await api<unknown>(`/api/projects/${props.projectId}/rank-checks/${props.quoteId}`,{signal:op.controller.signal});if(!current(op))return;const quote=quoteDisplay(raw,props.quoteId,props.trackerId,knownDeadline.current===null?undefined:new Date(knownDeadline.current).toISOString());
-        // A quote response also reflects current membership; a demotion must not
+        // A preparation response also reflects current membership; a demotion must not
         // leave an owner form enabled from the earlier schedule read.
         if(object(raw)&&raw.role!=='owner'){purge('Only current workspace owners can approve this schedule.');return;}
         if(quote)knownDeadline.current=expiry(quote);
@@ -96,13 +93,13 @@ function ScheduleController(props:Props){
     try{const data=await api<unknown>(base+'/'+saved.kind,{method:'POST',body:saved.body,signal:op.controller.signal});if(!current(op))return;if(!validSchedule(data,props.trackerId)||typeof data.replayed!=='boolean')throw new Error('The save response could not be verified.');
       if(!data.replayed){if(saved.kind==='approve'){const c=saved.calendar!,a=data.schedule.approval;if(!data.canManage||!data.schedule.enabled||!a||!date(a.approvedAt)||!date(data.schedule.nextDueAt)||Date.parse(data.schedule.nextDueAt)<=Date.parse(a.approvedAt)||a.approvedByUserId!==props.userId||data.authoredRevision!==saved.revision+1||data.schedule.interval!==c.interval||data.schedule.timezone!==c.timezone||data.schedule.hour!==c.hour||data.schedule.minute!==c.minute||data.schedule.weekday!==c.weekday)throw new Error('The saved approval could not be verified.');}
         else if(data.schedule.enabled||data.schedule.nextDueAt!==null||![saved.revision,Math.min(saved.revision+1,2147483646)].includes(data.authoredRevision))throw new Error('The disabled schedule could not be verified.');}
-      intent.current=null;accept(data);patch({pending:false,conflict:false,dirty:false,preview:null,form:{...state.current.form,consent:false},notice:data.replayed?'The original request receipt was recovered. The current schedule is shown.':saved.kind==='approve'?'Recurring spending approved. No check was started by this save.':'Schedule disabled. Work already sent retains its charges.',focus:true});
+      intent.current=null;accept(data);patch({pending:false,conflict:false,dirty:false,preview:null,form:{...state.current.form,consent:false},notice:data.replayed?'The original request receipt was recovered. The current schedule is shown.':saved.kind==='approve'?'Recurring checks approved. No check was started by this save.':'Schedule disabled. Requests already sent retain their original status.',focus:true});
     }catch(error){if(!current(op))return;if(error instanceof ApiError&&error.status>=400&&error.status<500&&![408,429].includes(error.status)){intent.current=null;patch({pending:false,conflict:error.status===409});failure(error,op);}
       else patch({pending:true,error:error instanceof ApiError&&error.status===429?'The retry was rate limited. Wait a minute, then retry the same request.':''});
     }finally{finish(op);}}
   function approve(){const at=state.current,c=calendar(at.form);if(locked()||at.loading||!at.data?.canManage||at.conflict||!at.quote||!c||!at.preview||!at.form.consent||at.quote.expired||expiry(at.quote)<=Date.now())return;
-    try{void send({kind:'approve',revision:at.data.authoredRevision,calendar:c,body:structuredClone({requestId:crypto.randomUUID(),revision:at.data.authoredRevision,quoteId:at.quote.id,...c})});}catch{patch({error:'This browser could not prepare a safe approval request. Reload before trying again.'});}}
-  async function disable(){const at=state.current;if(locked()||at.loading||!at.data?.canManage||!at.data.schedule.enabled)return;if(!await confirm({title:'Disable this schedule?',description:'Future scheduled requests, including unsent work, will stop. Requests already sent and their charges remain.',confirmLabel:'Disable schedule'}))return;
+    try{void send({kind:'approve',revision:at.data.authoredRevision,calendar:c,body:structuredClone({requestId:crypto.randomUUID(),revision:at.data.authoredRevision,preparationId:at.quote.id,...c})});}catch{patch({error:'This browser could not prepare a safe approval request. Reload before trying again.'});}}
+  async function disable(){const at=state.current;if(locked()||at.loading||!at.data?.canManage||!at.data.schedule.enabled)return;if(!await confirm({title:'Disable this schedule?',description:'Future scheduled requests, including unsent work, will stop. Requests already sent retain their original outcomes.',confirmLabel:'Disable schedule'}))return;
     const now=state.current;if(locked()||now.loading||!now.data?.canManage||!now.data.schedule.enabled)return;
     try{void send({kind:'disable',revision:at.data.authoredRevision,body:{requestId:crypto.randomUUID(),revision:at.data.authoredRevision}});}catch{patch({error:'This browser could not prepare a safe disable request. Reload before trying again.'});}}
   function navigate(callback:()=>void){if(!leave())return;invalidate();patch({dirty:false});callback();}

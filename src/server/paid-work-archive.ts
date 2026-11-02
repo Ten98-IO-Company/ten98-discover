@@ -53,7 +53,7 @@ export type PaidWorkScope = { workspaceId: string; projectId?: string };
 export async function archivePaidWork(client: PoolClient, scope: PaidWorkScope): Promise<Record<string, number>> {
   if (!(await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [scope.workspaceId])).rowCount) throw new FoundationError(404, 'Workspace not found.');
   if (scope.projectId === undefined && (await client.query("SELECT 1 FROM provider_request WHERE workspace_id=$1 AND status IN('reserved','dispatched','uncertain') LIMIT 1", [scope.workspaceId])).rowCount)
-    throw new FoundationError(409, 'Finish or cancel reserved work and reconcile uncertain provider charges before deleting this workspace.');
+    throw new FoundationError(409, 'Finish or cancel pending work and check uncertain provider requests before deleting this workspace.');
   const columns = (await client.query<{ table_name: string; column_name: string; udt_name: string }>(
     `SELECT table_name::text, column_name::text, udt_name::text FROM information_schema.columns
      WHERE table_schema=current_schema() AND table_name=ANY($1::text[]) ORDER BY table_name, ordinal_position`, [paidWorkArchiveTables])).rows;

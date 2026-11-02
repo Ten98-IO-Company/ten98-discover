@@ -1,48 +1,47 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {RunCostSummary, useConfirmDialog,Disclosure,Tooltip} from '@ten98/ui';
+import {useConfirmDialog,Disclosure,Tooltip} from '@ten98/ui';
 import {Link} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
-import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,modelUsdMicros,type ModelQuoteRoute} from './OpenRouterModelPicker';
+import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelPreparation,type ModelPreparationRoute} from './OpenRouterModelPicker';
 import {PromptRecurringPanel} from './PromptRecurringPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Role=WorkspaceRole;
 type Model=string;
 type Status='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';
-type Charge='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';
-type Input={connectionId:string;promptId:string;versionId:string;systemText:string;models:Model[];maxCompletionTokens:number;fundedCredits:true;reuseCached?:boolean};
+type RequestState='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';
+type Input={connectionId:string;promptId:string;versionId:string;systemText:string;models:Model[];maxCompletionTokens:number;reuseCached?:boolean};
 type Message={role:'system'|'user';content:string};
-type RouteQuote=ModelQuoteRoute;
+type RoutePreparation=ModelPreparationRoute;
 type CacheChoice={model:string;sourceRunId:string|null;sourceComparisonId:string|null;observedAt:string|null;eligibleUntil:string|null};
-type Quote={id:string;createdAt:string;expiresAt:string;input:Input;messages:Message[];connectionName:string;routes:RouteQuote[];estimateUsd:string;explanation:string;cacheReused:boolean;cache?:{version:'seven-day-v1';items:CacheChoice[]}};
+type Preparation={id:string;createdAt:string;expiresAt:string;input:Input;messages:Message[];connectionName:string;routes:RoutePreparation[];explanation:string;cacheReused:boolean;cache?:{version:'seven-day-v1';items:CacheChoice[]}};
 type Source={url:string;title:string|null};
 type Answer={text:string;resolvedModel:string;provider:string;finishReason:string;promptTokens:number|null;completionTokens:number|null;receivedAt:string};
-type Reuse={sourceRunId:string;sourceComparisonId:string;observedAt:string;originalCharge:{status:'settled';estimateUsd:string;actualUsd:string}};
-type RunSummary={id:string;model:Model;provider:string;status:Status;chargeStatus:Charge|null;estimateUsd:string|null;actualUsd:string|null;dispatchedAt:string|null;completedAt:string|null;diagnostic:string|null;resultExpired:boolean;reuse?:Reuse};
-type Run=RunSummary&{result:Answer|null;reportedCost:string|null;isByok:boolean|null;upstreamReportedCost:string|null;generationId:string|null};
-type Summary={id:string;quoteId:string;createdAt:string;cancelRequested:boolean;prompt:{id:string;versionId:string;textPreview:string};canCancel:boolean;runs:RunSummary[]};
+type Reuse={sourceRunId:string;sourceComparisonId:string;observedAt:string};
+type RunSummary={id:string;model:Model;provider:string;status:Status;requestStatus:RequestState|null;dispatchedAt:string|null;completedAt:string|null;diagnostic:string|null;resultExpired:boolean;reuse?:Reuse};
+type Run=RunSummary&{result:Answer|null;generationId:string|null};
+type Summary={id:string;preparationId:string;createdAt:string;cancelRequested:boolean;prompt:{id:string;versionId:string;textPreview:string};canCancel:boolean;runs:RunSummary[]};
 type Comparison=Summary&{input:Input|null;messages:Message[]|null;inputExpired:boolean;cache:{reused:boolean;available:boolean};answerMode:'individual'};
 type AnswerResponse={role:Role;comparisonId:string;run:Run;citations:{count:number|null;pageSize:20}};
 type SourcePage={role:Role;comparisonId:string;runId:string;resultExpired:boolean;total:number|null;offset:number;nextOffset:number|null;items:Source[]};
 type Card={run:Run|null;loading:boolean;error:string|null;sources:Source[];total:number|null;nextOffset:number|null;sourcesLoading:boolean;sourcesError:string|null};
-type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:boolean};scheduling:{available:boolean;kind?:'owner-approved-text-v1'}};
+type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConfigured:boolean;requestsPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:boolean};scheduling:{available:boolean;kind?:'owner-approved-text-v1'}};
 type DetailResponse={role:Role;comparison:Comparison};
-type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
+type RecoveryResponse=DetailResponse&{recovery:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
 type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;initialExpiredAnswerIds?:string[];initialExpiredInputComparisonIds?:string[];onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
-type Screen='setup'|'quote'|'unknown'|'history'|'detail';
-type Attempt=Readonly<{quoteId:string;requestKey:string}>;
+type Screen='setup'|'preparation'|'unknown'|'history'|'detail';
+type Attempt=Readonly<{preparationId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
 const roles:readonly Role[]=workspaceRoles;
 const statuses:Status[]=['queued','running','completed','failed','uncertain','cancelled','reconciled'];
-const charges:Charge[]=['reserved','dispatched','uncertain','settled','cancelled'];
+const requests:RequestState[]=['reserved','dispatched','uncertain','settled','cancelled'];
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const when=(v:string|null)=>v?new Date(v).toLocaleString():'Unavailable';
-const money=(v:string|null)=>v===null?'Unknown':`USD ${v}`;
 const active=(c:Summary)=>c.runs.some(r=>r.status==='queued'||r.status==='running');
 const modelName=(m:string)=>m==='openai/gpt-4o-mini'?'GPT-4o-mini':m==='openai/gpt-4o'?'GPT-4o':m;
-const outcome=(r:RunSummary)=>({queued:'Waiting to start',running:'Request sent',completed:'Answer received',failed:'No supported answer',uncertain:'Charge unconfirmed',cancelled:'Not sent',reconciled:'Charge confirmed'}[r.status]);
+const outcome=(r:RunSummary)=>({queued:'Waiting to start',running:'Request sent',completed:'Answer received',failed:'No supported answer',uncertain:'Request outcome unconfirmed',cancelled:'Not sent',reconciled:'Request outcome recovered'}[r.status]);
 const textStyle={whiteSpace:'pre-wrap' as const,overflowWrap:'anywhere' as const};
 function citationUrl(raw:string){try{const u=new URL(raw);return u.protocol==='https:'&&!u.username&&!u.password?u.href:null;}catch{return null;}}
 function checkedRole(value:unknown):Role{if(!roles.includes(value as Role))throw new Error('The response could not be read. Reload access.');return value as Role;}
@@ -55,13 +54,12 @@ const object=(value:unknown):value is Record<string,any>=>!!value&&typeof value=
 const safeText=(value:unknown,max:number):value is string=>typeof value==='string'&&value.length<=max&&!/[\u0000\uD800-\uDFFF]/u.test(value);
 const exactKeys=(value:Record<string,unknown>,names:string[])=>Object.keys(value).length===names.length&&names.every(key=>Object.hasOwn(value,key));
 const sourceCount=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=100;
-const summaryKeys=['id','model','provider','status','chargeStatus','estimateUsd','actualUsd','dispatchedAt','completedAt','diagnostic','resultExpired'];
-const reported=(value:unknown)=>value===null||typeof value==='string'&&value.length<=140&&/^(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value);
+const summaryKeys=['id','model','provider','status','requestStatus','dispatchedAt','completedAt','diagnostic','resultExpired'];
 const emptyCard=():Card=>({run:null,loading:false,error:null,sources:[],total:null,nextOffset:null,sourcesLoading:false,sourcesError:null});
 function validMessages(value:unknown):value is Message[]{return Array.isArray(value)&&value.length>=1&&value.length<=2&&value.every((m,i)=>object(m)&&exactKeys(m,['role','content'])&&m.role===(i===value.length-1?'user':'system')&&safeText(m.content,i===value.length-1?2000:4000));}
 function validInput(value:unknown):value is Input{
   const i=value as Input|null;
-  return object(i)&&exactKeys(i,['connectionId','promptId','versionId','systemText','models','maxCompletionTokens','fundedCredits',...(Object.hasOwn(i,'reuseCached')?['reuseCached']:[])])&&(i.reuseCached===undefined||typeof i.reuseCached==='boolean')&&uuid(i.connectionId)&&uuid(i.promptId)&&uuid(i.versionId)&&safeText(i.systemText,4000)&&Array.isArray(i.models)&&i.models.length>=1&&i.models.length<=4&&i.models.every(model)&&new Set(i.models).size===i.models.length&&Number.isInteger(i.maxCompletionTokens)&&i.maxCompletionTokens>=16&&i.maxCompletionTokens<=4096&&i.fundedCredits===true;
+  return object(i)&&exactKeys(i,['connectionId','promptId','versionId','systemText','models','maxCompletionTokens',...(Object.hasOwn(i,'reuseCached')?['reuseCached']:[])])&&(i.reuseCached===undefined||typeof i.reuseCached==='boolean')&&uuid(i.connectionId)&&uuid(i.promptId)&&uuid(i.versionId)&&safeText(i.systemText,4000)&&Array.isArray(i.models)&&i.models.length>=1&&i.models.length<=4&&i.models.every(model)&&new Set(i.models).size===i.models.length&&Number.isInteger(i.maxCompletionTokens)&&i.maxCompletionTokens>=16&&i.maxCompletionTokens<=4096;
 }
 function validAnswer(value:unknown):value is Answer{
   const a=value as Answer|null;
@@ -70,27 +68,27 @@ function validAnswer(value:unknown):value is Answer{
 function validRunSummary(value:unknown):value is RunSummary{
   const r=value as RunSummary|null;
   if(!r||!uuid(r.id)||!model(r.model)||!openRouterProviderName(r.provider)||!statuses.includes(r.status)||!optionalDate(r.dispatchedAt)||!optionalDate(r.completedAt)||!nullableString(r.diagnostic)||typeof r.resultExpired!=='boolean')return false;
-  if(Object.hasOwn(r,'reuse')){const p=r.reuse;return object(p)&&exactKeys(p,['sourceRunId','sourceComparisonId','observedAt','originalCharge'])&&uuid(p.sourceRunId)&&p.sourceRunId!==r.id&&uuid(p.sourceComparisonId)&&date(p.observedAt)&&p.observedAt===r.completedAt&&r.status==='completed'&&r.chargeStatus===null&&r.estimateUsd===null&&r.actualUsd===null&&r.dispatchedAt===null&&object(p.originalCharge)&&exactKeys(p.originalCharge,['status','estimateUsd','actualUsd'])&&p.originalCharge.status==='settled'&&modelUsdMicros(p.originalCharge.estimateUsd)!==null&&modelUsdMicros(p.originalCharge.actualUsd)!==null;}
-  return r.chargeStatus!==null&&charges.includes(r.chargeStatus)&&modelUsdMicros(r.estimateUsd)!==null&&(r.actualUsd===null||modelUsdMicros(r.actualUsd)!==null);
+  if(Object.hasOwn(r,'reuse')){const p=r.reuse;return object(p)&&exactKeys(p,['sourceRunId','sourceComparisonId','observedAt'])&&uuid(p.sourceRunId)&&p.sourceRunId!==r.id&&uuid(p.sourceComparisonId)&&date(p.observedAt)&&p.observedAt===r.completedAt&&r.status==='completed'&&r.requestStatus===null&&r.dispatchedAt===null;}
+  return r.requestStatus!==null&&requests.includes(r.requestStatus);
 }
 const runKeys=(r:RunSummary)=>[...summaryKeys,...(Object.hasOwn(r,'reuse')?['reuse']:[])];
-function validQuoteReservation(q:Quote,input:Input){
- if(input.reuseCached===undefined)return q.cache===undefined&&q.cacheReused===false&&validModelReservation(q.routes,q.estimateUsd,input.models,input.maxCompletionTokens,4);
+function validPreparation(q:Preparation,input:Input){
+ if(!validModelPreparation(q.routes,input.models,input.maxCompletionTokens,4))return false;
+ if(input.reuseCached===undefined)return q.cache===undefined&&q.cacheReused===false;
  const plan=q.cache;if(!object(plan)||!exactKeys(plan,['version','items'])||plan.version!=='seven-day-v1'||!Array.isArray(plan.items)||plan.items.length!==input.models.length||plan.items.some((i,index)=>!object(i)||!exactKeys(i,['model','sourceRunId','sourceComparisonId','observedAt','eligibleUntil'])||i.model!==input.models[index]||(i.sourceRunId===null?(i.sourceComparisonId!==null||i.observedAt!==null||i.eligibleUntil!==null):(!input.reuseCached||!uuid(i.sourceRunId)||!uuid(i.sourceComparisonId)||!date(i.observedAt)||!date(i.eligibleUntil)||Date.parse(i.eligibleUntil)<=Date.parse(q.createdAt)||Date.parse(i.eligibleUntil)>Date.parse(i.observedAt)+7*86400000))))return false;
- if(new Set(plan.items.filter(i=>i.sourceRunId!==null).map(i=>i.sourceRunId)).size!==plan.items.filter(i=>i.sourceRunId!==null).length||plan.items.some(i=>i.observedAt!==null&&Date.parse(i.observedAt)>Date.parse(q.createdAt))||q.cacheReused!==plan.items.some(i=>i.sourceRunId!==null)||!Array.isArray(q.routes)||q.routes.length!==input.models.length)return false;
- for(const [index,route]of q.routes.entries())if(!validModelReservation([route],route.estimateUsd,[input.models[index]],input.maxCompletionTokens,4))return false;
- const paid=q.routes.filter((_r,index)=>plan.items[index].sourceRunId===null);
- return paid.length?validModelReservation(paid,q.estimateUsd,paid.map(r=>r.model),input.maxCompletionTokens,4):q.estimateUsd==='0.000000';
+ const hits=plan.items.filter(i=>i.sourceRunId!==null);
+ return new Set(hits.map(i=>i.sourceRunId)).size===hits.length&&!hits.some(i=>Date.parse(i.observedAt!)>Date.parse(q.createdAt))&&q.cacheReused===(hits.length>0);
 }
+
 function validSummary(value:unknown):value is Summary{
   const c=value as Summary|null;
-  return !!c&&uuid(c.id)&&uuid(c.quoteId)&&date(c.createdAt)&&typeof c.cancelRequested==='boolean'&&typeof c.canCancel==='boolean'&&!!c.prompt&&uuid(c.prompt.id)&&uuid(c.prompt.versionId)&&safeText(c.prompt.textPreview,320)&&Array.isArray(c.runs)&&c.runs.length>=1&&c.runs.length<=4&&c.runs.every(r=>validRunSummary(r)&&exactKeys(r,runKeys(r)))&&new Set(c.runs.map(r=>r.id)).size===c.runs.length&&new Set(c.runs.map(r=>r.model)).size===c.runs.length;
+  return !!c&&uuid(c.id)&&uuid(c.preparationId)&&date(c.createdAt)&&typeof c.cancelRequested==='boolean'&&typeof c.canCancel==='boolean'&&!!c.prompt&&uuid(c.prompt.id)&&uuid(c.prompt.versionId)&&safeText(c.prompt.textPreview,320)&&Array.isArray(c.runs)&&c.runs.length>=1&&c.runs.length<=4&&c.runs.every(r=>validRunSummary(r)&&exactKeys(r,runKeys(r)))&&new Set(c.runs.map(r=>r.id)).size===c.runs.length&&new Set(c.runs.map(r=>r.model)).size===c.runs.length;
 }
-const sameComparisonIdentity=(a:Summary,b:Summary)=>a.id===b.id&&a.quoteId===b.quoteId&&a.createdAt===b.createdAt&&a.prompt.id===b.prompt.id&&a.prompt.versionId===b.prompt.versionId&&a.prompt.textPreview===b.prompt.textPreview&&JSON.stringify(a.runs.map(r=>[r.id,r.model,r.provider,r.reuse??null]))===JSON.stringify(b.runs.map(r=>[r.id,r.model,r.provider,r.reuse??null]));
+const sameComparisonIdentity=(a:Summary,b:Summary)=>a.id===b.id&&a.preparationId===b.preparationId&&a.createdAt===b.createdAt&&a.prompt.id===b.prompt.id&&a.prompt.versionId===b.prompt.versionId&&a.prompt.textPreview===b.prompt.textPreview&&JSON.stringify(a.runs.map(r=>[r.id,r.model,r.provider,r.reuse??null]))===JSON.stringify(b.runs.map(r=>[r.id,r.model,r.provider,r.reuse??null]));
 function checkedComparison(value:unknown):DetailResponse{
   const data=value as DetailResponse;checkedRole(data?.role);const c=data?.comparison;
   if(!validSummary(c)||c.answerMode!=='individual'||typeof c.inputExpired!=='boolean'||(c.inputExpired?(c.input!==null||c.messages!==null):(!validInput(c.input)||!validMessages(c.messages))))throw new Error('The response was incomplete. Reload the saved run.');
-  if(!exactKeys(c,['id','quoteId','createdAt','cancelRequested','prompt','canCancel','runs','input','messages','inputExpired','cache','answerMode'])||!object(c.cache)||!exactKeys(c.cache,['reused','available'])||typeof c.cache.available!=='boolean'||c.cache.reused!==c.runs.some(r=>!!r.reuse)||c.cache.reused&&!c.cache.available)throw new Error('The saved summary was not bounded metadata.');
+  if(!exactKeys(c,['id','preparationId','createdAt','cancelRequested','prompt','canCancel','runs','input','messages','inputExpired','cache','answerMode'])||!object(c.cache)||!exactKeys(c.cache,['reused','available'])||typeof c.cache.available!=='boolean'||c.cache.reused!==c.runs.some(r=>!!r.reuse)||c.cache.reused&&!c.cache.available)throw new Error('The saved summary was not bounded metadata.');
   if(c.input&&(c.input.promptId!==c.prompt.id||c.input.versionId!==c.prompt.versionId||JSON.stringify(c.input.models)!==JSON.stringify(c.runs.map(r=>r.model))||c.messages?.[0].role==='system'&&c.messages[0].content!==c.input.systemText||c.messages?.some(m=>m.role==='system')!==!!c.input.systemText))throw new Error('The saved run identity could not be verified.');
   return data;
 }
@@ -105,7 +103,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
-  const [comparison,setComparison]=useState<Comparison|null>(null),[quote,setQuote]=useState<Quote|null>(null);
+  const [comparison,setComparison]=useState<Comparison|null>(null),[preparation,setPreparation]=useState<Preparation|null>(null);
   const [cards,setCards]=useState<Record<string,Card>>({});
   const [attempt,setAttempt]=useState<Attempt|null>(null),[connectionId,setConnectionId]=useState('');
   const [models,setModels]=useState<Model[]>([]),[systemText,setSystemText]=useState(''),[maxTokens,setMaxTokens]=useState('1024');
@@ -133,8 +131,8 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   function finish(op:Operation){if(current(op)){operation.current=null;setBusy(false);setWriting(false);setCards(old=>Object.fromEntries(Object.entries(old).map(([id,card])=>[id,{...card,loading:false,sourcesLoading:false,...(card.loading?{error:'This answer read was interrupted. Retry loading it.'}:{}),...(card.sourcesLoading?{sourcesError:'This source read was interrupted. Retry loading it.'}:{})}])));}}
   function setPending(value:Attempt|null){attemptRef.current=value;setAttempt(value);}
   function move(view:Screen){focusNext.current=true;setScreen(view);}
-  function clearDraft(){setReuseCached(true);setQuote(null);setPending(null);setConnectionId('');setModels([]);setSystemText('');setMaxTokens('1024');runRequested.current=false;}
-  function applyRole(value:Role){if(roleAuthority.current.value!==value)roleAuthority.current={value};setRole(value);setAccessLost(false);if(value==='viewer'){if(attemptRef.current)move('unknown');else{clearDraft();if(['setup','quote','unknown'].includes(screen))move('history');}}}
+  function clearDraft(){setReuseCached(true);setPreparation(null);setPending(null);setConnectionId('');setModels([]);setSystemText('');setMaxTokens('1024');runRequested.current=false;}
+  function applyRole(value:Role){if(roleAuthority.current.value!==value)roleAuthority.current={value};setRole(value);setAccessLost(false);if(value==='viewer'){if(attemptRef.current)move('unknown');else{clearDraft();if(['setup','preparation','unknown'].includes(screen))move('history');}}}
   function purge(message:string){
     invalidate();clearDraft();setMetadata(null);setComparison(null);setCards({});roleAuthority.current={value:null};setRole(null);selection.current=null;setPolling(false);
     setNotice(null);setError(message);setAccessLost(true);initialized.current=false;restoreReceipt.current=entry.kind==='receipt';move(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
@@ -150,7 +148,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   function rememberExpiredResults(c:Summary){const answerIds=c.runs.filter(run=>run.resultExpired).map(run=>run.id);for(const id of answerIds)expiredResults.current.add(id);if(answerIds.length)expiryRef.current?.({comparisonId:c.id,answerIds,inputIds:[]});}
   async function readMetadata(op:Operation){
     const data=await api<Metadata>(B,{signal:op.controller.signal});if(!current(op))return null;
-    try{checkedRole(data?.role);if(!Array.isArray(data.models)||data.models.length>2000||!data.models.every(model)||new Set(data.models).size!==data.models.length||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean'||!object(data.cache)||!exactKeys(data.cache,['available'])||typeof data.cache.available!=='boolean')throw new Error();
+    try{checkedRole(data?.role);if(!Array.isArray(data.models)||data.models.length>2000||!data.models.every(model)||new Set(data.models).size!==data.models.length||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.requestsPaused!=='boolean'||!object(data.cache)||!exactKeys(data.cache,['available'])||typeof data.cache.available!=='boolean')throw new Error();
       // Older metadata has no discovery snapshot: history remains readable, but
       // its finite model hints are not promoted into a current catalog.
       data.catalog=data.catalog===undefined?null:readModelCatalog(data.catalog);if(data.catalog&&JSON.stringify(data.models)!==JSON.stringify(data.catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id)))throw new Error();}
@@ -173,15 +171,15 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
     if(role==='viewer'||attemptRef.current)return;const op=begin(true);if(!op)return;setError(null);
     try{const data=await api<{role:Role;catalog:unknown}>('/api/projects/'+encodeURIComponent(projectId)+'/openrouter-models',{method:'POST',body:{},signal:op.controller.signal});if(!current(op))return;checkedRole(data?.role);const catalog=readModelCatalog(data.catalog);applyRole(data.role);if(data.role==='viewer')return;
       setMetadata(old=>old?{...old,role:data.role,catalog,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id)}:old);
-      if(models.some(id=>!catalog.models.some(m=>m.id===id&&!modelUnavailableReason(m))))setQuote(null);setNotice('Model metadata refreshed. Your selections were kept; no quote or paid request was started.');
+      if(models.some(id=>!catalog.models.some(m=>m.id===id&&!modelUnavailableReason(m))))setPreparation(null);setNotice('Model metadata refreshed. Your selections were kept; no request was started.');
     }catch(e){if(current(op)&&!failure(e,op)){if(e instanceof ApiError&&(e.status===0||e.status>=500)){setMetadata(old=>old?.catalog?{...old,catalog:{...old.catalog,status:old.catalog.status==='unavailable'?'unavailable':'stale'}}:old);setError(errMsg(e));}else if(e instanceof ApiError){setError(errMsg(e));}else purge('The model catalog response could not be verified. Reload access.');}}finally{finish(op);}
   }
   useEffect(()=>{mounted.current=true;void refreshMetadata();return ()=>{mounted.current=false;generation.current++;operation.current?.controller.abort();operation.current=null;};},[B]);
-  useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,quote?.id,comparison?.id,accessLost]);
+  useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,preparation?.id,comparison?.id,accessLost]);
   async function mayLeave(){return !attemptRef.current||(await confirm({title:'Leave this run?',description:'This start may already have been accepted. Leaving discards local retry controls and does not stop server work.',confirmLabel:'Leave run'})&&!operation.current?.write);}
   async function back(){if(operation.current?.write||!await mayLeave())return;invalidate();setPending(null);backRef.current();}
-  async function history(){if(operation.current?.write||!await mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setQuote(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
-  function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setQuote(null);setError(null);setNotice(null);change();}
+  async function history(){if(operation.current?.write||!await mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setPreparation(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
+  function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setPreparation(null);setError(null);setNotice(null);change();}
   function showComparison(data:DetailResponse,explicit=true){
     if(data.comparison.inputExpired){expiredInputs.current.add(data.comparison.id);expiryRef.current?.({comparisonId:data.comparison.id,answerIds:[],inputIds:data.comparison.runs.map(run=>run.id)});}
     rememberExpiredResults(data.comparison);
@@ -228,7 +226,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
       const data=await api<AnswerResponse>(B+'/runs/'+encodeURIComponent(run.id),{signal:op.controller.signal});if(!current(op)||selection.current!==id)return;
       if(!object(data)||data.role!==expectedRole||data.comparisonId!==id||!object(data.run)||data.run.id!==run.id||data.run.model!==run.model||data.run.provider!==run.provider||JSON.stringify(data.run.reuse??null)!==JSON.stringify(run.reuse??null)){purge('The answer identity or current access changed. Reload access to continue.');return;}
       const next=data.run;
-      if(!exactKeys(data,['role','comparisonId','run','citations'])||!validRunSummary(next)||!exactKeys(next,[...runKeys(next),'result','reportedCost','isByok','upstreamReportedCost','generationId'])||!(next.result===null||validAnswer(next.result)&&next.result.resolvedModel===next.model&&next.result.provider===next.provider)||!reported(next.reportedCost)||!reported(next.upstreamReportedCost)||!(next.isByok===null||typeof next.isByok==='boolean')||!(next.generationId===null||typeof next.generationId==='string'&&/^gen-[0-9A-Za-z-]{1,124}$/.test(next.generationId))||!object(data.citations)||!exactKeys(data.citations,['count','pageSize'])||data.citations.pageSize!==20||(next.result===null?data.citations.count!==null:!sourceCount(data.citations.count))||next.resultExpired&&next.result!==null)throw new Error('The complete saved answer could not be verified.');
+      if(!exactKeys(data,['role','comparisonId','run','citations'])||!validRunSummary(next)||!exactKeys(next,[...runKeys(next),'result','generationId'])||!(next.result===null||validAnswer(next.result)&&next.result.resolvedModel===next.model&&next.result.provider===next.provider)||!(next.generationId===null||typeof next.generationId==='string'&&/^gen-[0-9A-Za-z-]{1,124}$/.test(next.generationId))||!object(data.citations)||!exactKeys(data.citations,['count','pageSize'])||data.citations.pageSize!==20||(next.result===null?data.citations.count!==null:!sourceCount(data.citations.count))||next.resultExpired&&next.result!==null)throw new Error('The complete saved answer could not be verified.');
       if(next.resultExpired){expireAnswer(id,run.id);return;}if(expiredResults.current.has(run.id))return;
       setCards(old=>({...old,[run.id]:{...emptyCard(),run:next,total:data.citations.count,nextOffset:data.citations.count?0:null}}));
       if(data.citations.count!==null&&data.citations.count>0)await readSources(op,id,next,expectedRole,data.citations.count,0);
@@ -259,7 +257,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
     const visibility=()=>{if(document.hidden)stop();};document.addEventListener('visibilitychange',visibility);timer=setTimeout(tick,5000);
     return ()=>{stopped=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);};
   },[polling,screen,comparison?.id,activeStatuses]);
-  async function getQuote(event:FormEvent){
+  async function getPreparation(event:FormEvent){
     event.preventDefault();if(operation.current?.write||entry.kind!=='configure'||attemptRef.current)return;
     const checks:[boolean,string,HTMLElement|null][]=[
       [!metadata?.connections.some(c=>c.id===connectionId&&c.checkStatus==='ok'),'Choose a connection whose account check passed.',connectionControl.current],
@@ -268,53 +266,53 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
       [systemText.length>4000||/[\u0000\u000b\u000c\uD800-\uDFFF]/u.test(systemText),'Use a valid system message of at most 4000 characters without unsupported control characters.',systemControl.current],
     ];
     const problem=checks.find(c=>c[0]);if(problem){setError(problem[1]);const details=problem[2]?.closest('details');if(details)details.open=true;problem[2]?.focus();return;}
-    const op=begin(true);if(!op)return;setError(null);setNotice(null);setQuote(null);setPolling(false);
+    const op=begin(true);if(!op)return;setError(null);setNotice(null);setPreparation(null);setPolling(false);
     runRequested.current=(event.nativeEvent as SubmitEvent).submitter?.getAttribute('value')!=='schedule';
-    const body:Input={connectionId,promptId:entry.promptId,versionId:entry.versionId,systemText,models:[...models],maxCompletionTokens:Number(maxTokens),fundedCredits:true,...(metadata?.cache?.available?{reuseCached:runRequested.current?reuseCached:false}:{})};
+    const body:Input={connectionId,promptId:entry.promptId,versionId:entry.versionId,systemText,models:[...models],maxCompletionTokens:Number(maxTokens),...(metadata?.cache?.available?{reuseCached:runRequested.current?reuseCached:false}:{})};
     try{
-      const data=await api<{role:Role;quote:Quote}>(B+'/quote',{method:'POST',body,signal:op.controller.signal});if(!current(op))return;
+      const data=await api<{role:Role;preparation:Preparation}>(B+'/prepare',{method:'POST',body,signal:op.controller.signal});if(!current(op))return;
       checkedRole(data?.role);
-      const q=data.quote;
-      if(!uuid(q?.id)||!date(q.expiresAt)||!date(q.createdAt)||!validMessages(q.messages)||!validInput(q.input)||Object.keys(q.input).length!==Object.keys(body).length||Object.entries(body).some(([k,v])=>JSON.stringify(q.input[k as keyof Input])!==JSON.stringify(v))||typeof q.connectionName!=='string'||typeof q.explanation!=='string'||!validQuoteReservation(q,body)||JSON.stringify(q.messages)!==JSON.stringify([...(body.systemText?[{role:'system',content:body.systemText}]:[]),{role:'user',content:entry.authoredText}]))throw new Error('The prepared request did not match the complete submitted request and reservation. Run again.');
-      applyRole(data.role);if(data.role==='viewer')return;setQuote(data.quote);move('quote');
+      const q=data.preparation;
+      if(!uuid(q?.id)||!date(q.expiresAt)||!date(q.createdAt)||!validMessages(q.messages)||!validInput(q.input)||Object.keys(q.input).length!==Object.keys(body).length||Object.entries(body).some(([k,v])=>JSON.stringify(q.input[k as keyof Input])!==JSON.stringify(v))||typeof q.connectionName!=='string'||typeof q.explanation!=='string'||!validPreparation(q,body)||JSON.stringify(q.messages)!==JSON.stringify([...(body.systemText?[{role:'system',content:body.systemText}]:[]),{role:'user',content:entry.authoredText}]))throw new Error('The prepared request did not match the complete submitted request. Run again.');
+      applyRole(data.role);if(data.role==='viewer')return;setPreparation(data.preparation);move('preparation');
     }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
   }
   async function start(){
-    if(!quote||role==='viewer')return;const recovering=attemptRef.current!==null;
-    if(!recovering&&(Date.parse(quote.expiresAt)<=Date.now()||!metadata?.vaultConfigured||(metadata.spendingPaused&&quote.routes.some((_r,i)=>!quote.cache?.items[i].sourceRunId)))){setError('This request cannot run now. Check the connection and try again.');setQuote(null);move('setup');return;}
+    if(!preparation||role==='viewer')return;const recovering=attemptRef.current!==null;
+    if(!recovering&&(Date.parse(preparation.expiresAt)<=Date.now()||!metadata?.vaultConfigured||(metadata.requestsPaused&&preparation.routes.some((_r,i)=>!preparation.cache?.items[i].sourceRunId)))){setError('This request cannot run now. Check the connection and try again.');setPreparation(null);move('setup');return;}
     const op=begin(true);if(!op)return;setError(null);setNotice(null);setPolling(false);let posted=false,acknowledged=false;
     try{
       // Refresh local authority before acting; final server gates remain authoritative.
       const latest=await readMetadata(op);if(!latest||!current(op)||latest.role==='viewer')return;
-      if(!recovering&&(!latest.vaultConfigured||(latest.spendingPaused&&quote.routes.some((_r,i)=>!quote.cache?.items[i].sourceRunId))||Date.parse(quote.expiresAt)<=Date.now()))throw new Error('The connection or request settings changed. Check setup and run again.');
-      const body=attemptRef.current??Object.freeze({quoteId:quote.id,requestKey:crypto.randomUUID()});setPending(body);posted=true;
+      if(!recovering&&(!latest.vaultConfigured||(latest.requestsPaused&&preparation.routes.some((_r,i)=>!preparation.cache?.items[i].sourceRunId))||Date.parse(preparation.expiresAt)<=Date.now()))throw new Error('The connection or request settings changed. Check setup and run again.');
+      const body=attemptRef.current??Object.freeze({preparationId:preparation.id,requestKey:crypto.randomUUID()});setPending(body);posted=true;
       const raw=await api<unknown>(B+'/comparisons',{method:'POST',body,signal:op.controller.signal});if(!current(op))return;
-      const data=checkedComparison(raw);if(data.comparison.quoteId!==body.quoteId||data.comparison.prompt.id!==quote.input.promptId||data.comparison.prompt.versionId!==quote.input.versionId||JSON.stringify(data.comparison.runs.map(r=>[r.model,r.provider]))!==JSON.stringify(quote.routes.map(r=>[r.model,r.providerName]))||data.comparison.runs.some((r,i)=>(r.reuse?.sourceRunId??null)!==(quote.cache?.items[i].sourceRunId??null)||(r.reuse?.sourceComparisonId??null)!==(quote.cache?.items[i].sourceComparisonId??null)||(r.reuse?.observedAt??null)!==(quote.cache?.items[i].observedAt??null)))throw new Error('The run response did not match this request.');
-      acknowledged=true;setPending(null);setQuote(null);showComparison(data);op.write=false;setWriting(false);await readComparison(op,data.comparison.id,false,data.comparison);if(current(op))setNotice('The saved prompt run is shown below.');
+      const data=checkedComparison(raw);if(data.comparison.preparationId!==body.preparationId||data.comparison.prompt.id!==preparation.input.promptId||data.comparison.prompt.versionId!==preparation.input.versionId||JSON.stringify(data.comparison.runs.map(r=>[r.model,r.provider]))!==JSON.stringify(preparation.routes.map(r=>[r.model,r.providerName]))||data.comparison.runs.some((r,i)=>(r.reuse?.sourceRunId??null)!==(preparation.cache?.items[i].sourceRunId??null)||(r.reuse?.sourceComparisonId??null)!==(preparation.cache?.items[i].sourceComparisonId??null)||(r.reuse?.observedAt??null)!==(preparation.cache?.items[i].observedAt??null)))throw new Error('The run response did not match this request.');
+      acknowledged=true;setPending(null);setPreparation(null);showComparison(data);op.write=false;setWriting(false);await readComparison(op,data.comparison.id,false,data.comparison);if(current(op))setNotice('The saved prompt run is shown below.');
     }catch(e){
       if(!current(op)||failure(e,op))return;const uncertain=!(e instanceof ApiError)||e.status===0||e.status>=500;
       if(acknowledged){setError('The run was saved, but its status could not be read. Retry loading the saved run; do not start another request.');}
       else if((posted||recovering)&&uncertain){move('unknown');setError('This start may already have been accepted. Retry the same request, or inspect Recent runs before starting anything new.');}
-      else{if(posted||!recovering){setPending(null);setQuote(null);move(entry.kind==='configure'?'setup':'history');}setError(errMsg(e));}
+      else{if(posted||!recovering){setPending(null);setPreparation(null);move(entry.kind==='configure'?'setup':'history');}setError(errMsg(e));}
     }finally{finish(op);}
   }
   useEffect(()=>{
-    if(!runRequested.current||writing||!quote||screen!=='quote')return;
+    if(!runRequested.current||writing||!preparation||screen!=='preparation')return;
     runRequested.current=false;
     void start();
-  },[quote,writing,screen]);
+  },[preparation,writing,screen]);
   async function cancel(){
     if(!comparison||!comparison.canCancel||role==='viewer')return;const id=comparison.id,op=begin(true);if(!op)return;setError(null);setNotice(null);setPolling(false);
     try{
       const raw=await api<unknown>(B+'/comparisons/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:{},signal:op.controller.signal});if(!current(op)||selection.current!==id)return;
-      const data=checkedComparison(raw);if(!sameComparisonIdentity(data.comparison,comparison))throw new Error('Reload this run to check its state.');showComparison(data);op.write=false;setWriting(false);await readComparison(op,id,false,data.comparison);if(current(op))setNotice('Remaining requests updated. Requests already sent may still be charged.');
+      const data=checkedComparison(raw);if(!sameComparisonIdentity(data.comparison,comparison))throw new Error('Reload this run to check its state.');showComparison(data);op.write=false;setWriting(false);await readComparison(op,id,false,data.comparison);if(current(op))setNotice('Remaining requests updated. Requests already sent may still complete.');
     }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
   }
-  async function reconcile(run:Run){
+  async function recover(run:Run){
     if(!comparison||role!=='owner'||run.status!=='uncertain'||!run.generationId)return;const id=comparison.id,op=begin(true);if(!op)return;setError(null);setNotice(null);setPolling(false);
     try{
-      const raw=await api<ReconcileResponse>(B+'/runs/'+encodeURIComponent(run.id)+'/reconcile',{method:'POST',body:{},signal:op.controller.signal});if(!current(op)||selection.current!==id)return;
-      const data=checkedComparison(raw);if(!sameComparisonIdentity(data.comparison,comparison)||!raw.reconciliation||!['matched','inconclusive'].includes(raw.reconciliation.status)||typeof raw.reconciliation.message!=='string')throw new Error('Reload this run to check its state.');showComparison(data);op.write=false;setWriting(false);await readComparison(op,id,false,data.comparison);if(current(op))setNotice(raw.reconciliation.message);
+      const raw=await api<RecoveryResponse>(B+'/runs/'+encodeURIComponent(run.id)+'/recover',{method:'POST',body:{},signal:op.controller.signal});if(!current(op)||selection.current!==id)return;
+      const data=checkedComparison(raw);if(!sameComparisonIdentity(data.comparison,comparison)||!raw.recovery||!['matched','inconclusive'].includes(raw.recovery.status)||typeof raw.recovery.message!=='string')throw new Error('Reload this run to check its state.');showComparison(data);op.write=false;setWriting(false);await readComparison(op,id,false,data.comparison);if(current(op))setNotice(raw.recovery.message);
     }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
   }
   const writer=role==='owner'||role==='admin'||role==='editor';
@@ -326,42 +324,43 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
     {error&&<div className="alert" role="alert" id={uid+'-error'}>{error}</div>}{notice&&<p role="status">{notice}</p>}
     {busy&&<p role="status" className="hint">{operation.current?.write?'Waiting for the requested action…':'Loading saved state…'}</p>}
     {accessLost?<button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Reload access</button>:!metadata?<div><p>Loading readiness and recent runs.</p>{error&&<button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Retry loading</button>}</div>:<>
-      {['setup','quote','unknown'].includes(screen)&&<>
+      {['setup','preparation','unknown'].includes(screen)&&<>
         {(!metadata.vaultConfigured||metadata.connections.length===0||!metadata.connections.some(c=>c.checkStatus==='ok'))&&<div className="banner"><p>{!metadata.vaultConfigured?'Credential storage is unavailable. Ask your administrator to restore it before starting a run.':metadata.connections.length===0?'No OpenRouter connection is configured.':'No OpenRouter connection has a successful account check.'}</p>{providerHelp}</div>}
-        {metadata.spendingPaused&&<div className="banner"><p>Spending is paused. You may reuse eligible saved answers. Any new provider request needs an owner to enable spending.</p>{providerHelp}</div>}
+        {metadata.requestsPaused&&<div className="banner"><p>Provider requests are paused. You may reuse eligible saved answers. An owner can enable new provider requests.</p>{providerHelp}</div>}
       </>}
-      {screen==='setup'&&entry.kind==='configure'&&writer&&<form className="card stack" onSubmit={getQuote} noValidate>
+      {screen==='setup'&&entry.kind==='configure'&&writer&&<form className="card stack" onSubmit={getPreparation} noValidate>
         <h3>Authored prompt version</h3><p style={textStyle}>{entry.authoredText}</p>
         <fieldset disabled={writing||attempt!==null} style={{border:0,padding:0,minWidth:0}}><legend>Run setup</legend>
-          <div className="field"><label htmlFor={uid+'-connection'}>OpenRouter connection</label><select ref={connectionControl} id={uid+'-connection'} aria-describedby={error?uid+'-error':undefined} value={connectionId} onChange={e=>edit(()=>setConnectionId(e.target.value))} style={{width:'100%'}}><option value="">Choose a connection</option>{metadata.connections.map(c=><option key={c.id} value={c.id} disabled={c.checkStatus!=='ok'}>{c.name} — {c.checkStatus==='ok'?'Check passed':c.checkStatus==='error'?'Check failed':'Not checked'}</option>)}</select><p className="hint">A successful account check does not guarantee funding, route availability or execution permission.</p></div>
+          <div className="field"><label htmlFor={uid+'-connection'}>OpenRouter connection</label><select ref={connectionControl} id={uid+'-connection'} aria-describedby={error?uid+'-error':undefined} value={connectionId} onChange={e=>edit(()=>setConnectionId(e.target.value))} style={{width:'100%'}}><option value="">Choose a connection</option>{metadata.connections.map(c=><option key={c.id} value={c.id} disabled={c.checkStatus!=='ok'}>{c.name} — {c.checkStatus==='ok'?'Check passed':c.checkStatus==='error'?'Check failed':'Not checked'}</option>)}</select><p className="hint">A successful account check does not guarantee route availability or execution permission.</p></div>
           <div ref={modelControl} tabIndex={-1} aria-describedby={error?uid+'-error':undefined}><OpenRouterModelPicker catalog={metadata.catalog} selected={models} maximum={4} disabled={busy||!!attempt} refreshing={busy} canRefresh={writer} onChange={value=>edit(()=>setModels(value))} onRefresh={()=>void refreshModels()}/></div>
           <div className="field"><label htmlFor={uid+'-tokens'}>Maximum output tokens</label><input ref={tokensControl} id={uid+'-tokens'} type="number" min={16} max={4096} step={1} value={maxTokens} onChange={e=>edit(()=>setMaxTokens(e.target.value))} aria-describedby={error?uid+'-error':undefined}/><p className="hint">Allowed: 16–4096.</p></div>
           {metadata.cache?.available&&<div className="field"><label htmlFor={uid+'-answer-source'}>Answer source</label><select id={uid+'-answer-source'} value={reuseCached?'reuse':'fresh'} onChange={e=>edit(()=>setReuseCached(e.target.value==='reuse'))}><option value="reuse">Reuse eligible saved answers</option><option value="fresh">Request fresh answers</option></select><p className="hint">Saved answers can be up to seven days old. Choose fresh answers to contact the selected models again.</p></div>}
           <details className="field"><summary>Optional system message</summary><label htmlFor={uid+'-system'}>System message</label><textarea ref={systemControl} id={uid+'-system'} maxLength={4000} value={systemText} onChange={e=>edit(()=>setSystemText(e.target.value))} style={{width:'100%',minHeight:96}} aria-describedby={error?uid+'-error':undefined}/><p className="hint">Up to 4000 characters. Project context is not added automatically.</p></details>
-          <Tooltip content="Requests use this connection’s OpenRouter credits. Upstream BYOK billing is not supported."><button type="button" className="btn ghost" aria-label="How model requests work">About model requests</button></Tooltip>
+          <Tooltip content="Requests go to the selected model through this connection. Each answer retains its model identity and actual token usage."><button type="button" className="btn ghost" aria-label="How model requests work">About model requests</button></Tooltip>
           <div className="row"><button type="submit" className="btn primary" value="run" disabled={!metadata.vaultConfigured}>Run answers</button>{role==='owner'&&metadata.scheduling?.available&&<button type="submit" className="btn" value="schedule" disabled={!metadata.vaultConfigured}>Schedule</button>}</div>
         </fieldset>
       </form>}
-      {screen==='quote'&&runRequested.current&&<p role="status">Starting answers…</p>}
-      {screen==='unknown'&&quote&&writer&&<div className="banner"><p>The run may already have started. Retry this same request or inspect Recent runs.</p><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||!attempt}>Retry same request</button></div>}
-      {screen==='unknown'&&attempt&&!writer&&<div className="banner"><p>The pending Start request is retained. Your current role cannot start or retry paid work; inspect saved runs or refresh access before recovery.</p><button type="button" className="btn" disabled={writing} onClick={()=>void refreshMetadata()}>Refresh recovery access</button></div>}
+      {screen==='preparation'&&runRequested.current&&<p role="status">Starting answers…</p>}
+      {screen==='unknown'&&preparation&&writer&&<div className="banner"><p>The run may already have started. Retry this same request or inspect Recent runs.</p><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||!attempt}>Retry same request</button></div>}
+      {screen==='unknown'&&attempt&&!writer&&<div className="banner"><p>The pending Start request is retained. Your current role cannot start or retry requests; inspect saved runs or refresh access before recovery.</p><button type="button" className="btn" disabled={writing} onClick={()=>void refreshMetadata()}>Refresh recovery access</button></div>}
       {screen==='history'&&<div className="card stack"><div className="row between"><h3>Recent prompt runs</h3><button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Refresh</button></div><p className="hint">Latest 20 prompt runs across this project, regardless of prompt-library filters.</p>
-        {metadata.comparisons.length===0&&!error?<p>No prompt runs yet. Choose a saved prompt in the library to review your first run.</p>:metadata.comparisons.length>0&&<div className="table-wrap" role="region" aria-label="Recent prompt runs" tabIndex={0}><table style={{minWidth:680}}><thead><tr><th>Authored prompt version</th><th>Models</th><th>Started</th><th>Outcome</th><th>Action</th></tr></thead><tbody>{metadata.comparisons.map(c=><tr key={c.id}><td style={{minWidth:200,...textStyle}}>{c.prompt.textPreview}</td><td>{c.runs.map(r=>modelName(r.model)).join(' + ')}</td><td>{when(c.createdAt)}</td><td>{c.runs.filter(r=>r.chargeStatus==='uncertain').length>0?`${c.runs.filter(r=>r.chargeStatus==='uncertain').length} need charge review`:c.runs.map(outcome).join(' · ')}</td><td><button type="button" className="btn" onClick={()=>void openComparison(c.id)} disabled={writing}>Open run</button></td></tr>)}</tbody></table></div>}
+        {metadata.comparisons.length===0&&!error?<p>No prompt runs yet. Choose a saved prompt in the library to review your first run.</p>:metadata.comparisons.length>0&&<div className="table-wrap" role="region" aria-label="Recent prompt runs" tabIndex={0}><table style={{minWidth:680}}><thead><tr><th>Authored prompt version</th><th>Models</th><th>Started</th><th>Outcome</th><th>Action</th></tr></thead><tbody>{metadata.comparisons.map(c=><tr key={c.id}><td style={{minWidth:200,...textStyle}}>{c.prompt.textPreview}</td><td>{c.runs.map(r=>modelName(r.model)).join(' + ')}</td><td>{when(c.createdAt)}</td><td>{c.runs.filter(r=>r.requestStatus==='uncertain').length>0?`${c.runs.filter(r=>r.requestStatus==='uncertain').length} need request review`:c.runs.map(outcome).join(' · ')}</td><td><button type="button" className="btn" onClick={()=>void openComparison(c.id)} disabled={writing}>Open run</button></td></tr>)}</tbody></table></div>}
       </div>}
-      {metadata.scheduling?.available===true&&metadata.scheduling.kind==='owner-approved-text-v1'&&<PromptRecurringPanel projectId={projectId} userId={userId} role={role} quote={screen==='quote'&&!attempt?quote:null} onUnauthorized={onUnauthorized} onRole={value=>{if(roleAuthority.current===recurringAuthority)applyRole(value);}} onOpenComparison={id=>void openComparison(id)}/>}
+      {metadata.scheduling?.available===true&&metadata.scheduling.kind==='owner-approved-text-v1'&&<PromptRecurringPanel projectId={projectId} userId={userId} role={role} preparation={screen==='preparation'&&!attempt?preparation:null} onUnauthorized={onUnauthorized} onRole={value=>{if(roleAuthority.current===recurringAuthority)applyRole(value);}} onOpenComparison={id=>void openComparison(id)}/>}
       {screen==='detail'&&(comparison?<div className="stack">
         <div className="card"><div className="row between"><h3>Authored prompt version</h3><button type="button" className="btn" onClick={()=>void openComparison(comparison.id)} disabled={writing}>Refresh status</button></div><p style={textStyle}>{comparison.prompt.textPreview}</p><p>Started {when(comparison.createdAt)} · {comparison.runs.length} model {comparison.runs.length===1?'request':'requests'}</p>
           {active(comparison)&&<p className="hint">{polling?'Checking saved status every 5 seconds, for at most 5 minutes.':'Automatic status checks stopped. Refresh status to check again.'}</p>}
-          {writer&&comparison.canCancel&&<div><button type="button" className="btn" onClick={()=>void cancel()} disabled={writing}>Stop remaining requests</button><p className="hint">Requests already sent may still be charged. Leaving this page does not cancel them.</p></div>}
+          {writer&&comparison.canCancel&&<div><button type="button" className="btn" onClick={()=>void cancel()} disabled={writing}>Stop remaining requests</button><p className="hint">Requests already sent may still complete. Leaving this page does not cancel them.</p></div>}
           {comparison.inputExpired?<p>Copied execution input expired under workspace retention. The authored version preview above is preserved separately.</p>:<Disclosure summary="Copied prompt and system input" variant="plain">{comparison.messages?<Messages messages={comparison.messages}/>:<p>Copied input is unavailable.</p>}</Disclosure>}
-          {(comparison.runs.some(r=>r.chargeStatus==='uncertain')||metadata.spendingPaused)&&<div className="banner">{comparison.runs.some(r=>r.chargeStatus==='uncertain')&&<p>This charge is unconfirmed. Check the original receipt before retrying this request.</p>}{metadata.spendingPaused&&<p>Paid provider work is paused by an owner.</p>}{providerHelp}</div>}
+          {(comparison.runs.some(r=>r.requestStatus==='uncertain')||metadata.requestsPaused)&&<div className="banner">{comparison.runs.some(r=>r.requestStatus==='uncertain')&&<p>This request outcome is unconfirmed. Check the original request before retrying it.</p>}{metadata.requestsPaused&&<p>Provider requests are paused by an owner.</p>}{providerHelp}</div>}
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,320px),1fr))',gap:16,minWidth:0}}>{comparison.runs.map(summary=>{const card=cards[summary.id]??emptyCard(),run=card.run??summary,detail=card.run;return <article className="card stack" key={run.id} style={{minWidth:0}}>
-          <h3 style={{overflowWrap:'anywhere'}}><bdi dir="ltr">{modelName(run.model)}</bdi> · {run.provider}</h3><strong>{outcome(run)}</strong><><Disclosure summary="Request details" variant="plain"><RunCostSummary scope={<><bdi dir="ltr">{modelName(run.model)}</bdi> · {run.provider}</>} units={run.reuse?'One reused saved answer; no new provider request':'One model request'} estimatedPrice={run.reuse?'No new reservation':money(run.estimateUsd)} settledPrice={run.reuse?'No new request charge':run.chargeStatus==='cancelled'&&run.actualUsd===null?'Not sent':money(run.actualUsd)} receipt={<bdi dir="ltr">{run.id}</bdi>} state={run.chargeStatus==='uncertain'?'uncertain':run.chargeStatus==='cancelled'?'blocked':run.reuse||run.chargeStatus==='settled'?'settled':'pending'} reason={run.reuse?'Reused answer; no new provider request or charge.':run.chargeStatus==='cancelled'?'This request was not sent.':`Charge state: ${run.chargeStatus}`}/></Disclosure></>{run.reuse&&<div><p>Reused answer observed {when(run.reuse.observedAt)}. This action made no provider request and incurred no new charge.</p><p className="hint">Original request charge: {money(run.reuse.originalCharge.actualUsd)} · {run.reuse.originalCharge.status}. Source run <bdi dir="ltr">{run.reuse.sourceRunId}</bdi>.</p></div>}
-          {run.diagnostic&&<p style={textStyle}>{run.diagnostic}</p>}{detail?.isByok&&<div className="alert"><strong>Unexpected upstream BYOK billing</strong><p>The recorded credit charge excludes external provider billing. An owner must review this separate invoice.</p></div>}
-          {run.status==='uncertain'&&<div className="banner"><p>The charge is unconfirmed; unknown does not mean free.</p>{role==='owner'?(detail?.generationId?<><button type="button" className="btn" onClick={()=>void reconcile(detail)} disabled={writing}>Check charge receipt</button><p className="hint">Read-only provider lookup; does not request another answer.</p></>:<p>{card.loading?'Loading the saved charge metadata.':card.error?'Charge metadata is unavailable until this answer is reloaded.':'No saved generation ID is available for automatic matching. This charge remains unresolved.'}</p>):<p>A workspace owner can review the charge.</p>}</div>}
+          <h3 style={{overflowWrap:'anywhere'}}><bdi dir="ltr">{modelName(run.model)}</bdi> · {run.provider}</h3><strong>{outcome(run)}</strong>
+          <Disclosure summary="Request details" variant="plain"><p>Request state: {run.requestStatus??'Saved answer reused'}</p><p>Request ID: <bdi dir="ltr">{run.id}</bdi></p><p>{run.reuse?'Saved answer reused; no new provider request.':'One model request'}</p></Disclosure>
+          {run.reuse&&<div><p>Reused answer observed {when(run.reuse.observedAt)}. This action made no provider request.</p><p className="hint">Source run <bdi dir="ltr">{run.reuse.sourceRunId}</bdi>.</p></div>}
+          {run.diagnostic&&<p style={textStyle}>{run.diagnostic}</p>}
+          {run.status==='uncertain'&&<div className="banner"><p>The request outcome is unconfirmed.</p>{role==='owner'?(detail?.generationId?<><button type="button" className="btn" onClick={()=>void recover(detail)} disabled={writing}>Check original request</button><p className="hint">Read-only provider lookup; does not request another answer.</p></>:<p>{card.loading?'Loading the saved request metadata.':card.error?'Request metadata is unavailable until this answer is reloaded.':'No saved generation ID is available for automatic matching. The request outcome remains unresolved.'}</p>):<p>A workspace owner can review this request.</p>}</div>}
           <AnswerView run={run} card={card} busy={busy} onAnswer={()=>void retryCard(summary)} onSources={()=>void retryCard(summary,true)}/>
-          {detail&&(detail.reportedCost!==null||detail.upstreamReportedCost!==null)&&<Disclosure summary="Original charge evidence" variant="plain">{detail.reportedCost!==null&&<p>Reported credit cost: USD {detail.reportedCost}</p>}{detail.upstreamReportedCost!==null&&<p>Reported upstream cost: USD {detail.upstreamReportedCost}</p>}<p className="hint">Original reported evidence is separate from app-accounted credit charges.</p></Disclosure>}
         </article>;})}</div><p className="hint">These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Recurring tracking requires a separate explicit owner approval and always requests fresh answers.</p>
       </div>:<div><p>{error?'The selected run could not be read.':'Loading the selected run.'}</p>{error&&selection.current&&<button type="button" className="btn" onClick={()=>void openComparison(selection.current!)} disabled={writing}>Retry loading run</button>}</div>)}
     </>}
@@ -372,7 +371,7 @@ function AnswerView({run,card,busy,onAnswer,onSources}:{run:RunSummary;card:Card
   if(run.resultExpired)return <p>Answer and citations expired under workspace retention.</p>;
   const state=<>{card.loading&&<p role="status">Loading this answer.</p>}{card.error&&<div role="alert"><p>Could not load this answer. {card.error}</p><button type="button" className="btn" onClick={onAnswer} disabled={busy}>Retry loading answer</button></div>}</>;
   if(!card.run)return <>{state}{!card.loading&&!card.error&&<div><p>This answer has not been loaded.</p><button type="button" className="btn" onClick={onAnswer} disabled={busy}>Load answer</button></div>}</>;
-  if(!card.run.result)return <>{state}<p>{run.status==='reconciled'?'Only the charge was recovered. Run the prompt again to request a new answer.':run.status==='queued'?'Waiting to send this request.':run.status==='running'?'The request was sent; the answer and charge are pending.':run.status==='cancelled'?'This request was not sent.':'No supported answer is available. A failed request may still be charged.'}</p></>;
+  if(!card.run.result)return <>{state}<p>{run.status==='reconciled'?'Only the original request outcome was recovered. Run the prompt again to request a new answer.':run.status==='queued'?'Waiting to send this request.':run.status==='running'?'The request was sent; the answer is pending.':run.status==='cancelled'?'This request was not sent.':'No supported answer is available. Check the original request status before trying again.'}</p></>;
   const result=card.run.result;
   return <>
     {state}

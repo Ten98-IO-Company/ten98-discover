@@ -30,8 +30,8 @@ async function prepare(page,group,{both=false,system='',fresh=false}={}){
   if(fresh)await panel.getByLabel('Answer source',{exact:true}).selectOption('fresh');
   if(system){await panel.getByText('Optional system message',{exact:true}).click();await panel.getByLabel('System message',{exact:true}).fill(system);}
 }
-async function start(page){const panel=execution(page),quoted=page.waitForResponse(response=>response.url().endsWith('/prompt-executions/quote')&&response.request().method()==='POST'),response=page.waitForResponse(response=>response.url().endsWith('/prompt-executions/comparisons')&&response.request().method()==='POST');
-  await panel.getByRole('button',{name:'Run answers',exact:true}).click();const quote=(await(await quoted).json()).quote,received=await response;assert.equal(received.status(),202);const result=await received.json();await panel.getByRole('heading',{name:'Prompt run',exact:true}).waitFor();return {quote,comparison:result.comparison};}
+async function start(page){const panel=execution(page),quoted=page.waitForResponse(response=>response.url().endsWith('/prompt-executions/prepare')&&response.request().method()==='POST'),response=page.waitForResponse(response=>response.url().endsWith('/prompt-executions/comparisons')&&response.request().method()==='POST');
+  await panel.getByRole('button',{name:'Run answers',exact:true}).click();const quote=(await(await quoted).json()).preparation,received=await response;assert.equal(received.status(),202);const result=await received.json();await panel.getByRole('heading',{name:'Prompt run',exact:true}).waitFor();return {quote,comparison:result.comparison};}
 async function back(page){await execution(page).getByRole('button',{name:'Back to saved prompts',exact:true}).click();await library(page).getByRole('button',{name:'Recent runs',exact:true}).waitFor();}
 // One "not sent" line per run card (the run cost summary repeats it as its status reason).
 const notSent=page=>execution(page).locator('article > p').filter({hasText:/^This request was not sent\.$/});
@@ -74,12 +74,12 @@ try{
   for(const model of ['GPT-4o-mini','GPT-4o'])await execution(page).getByRole('region',{name:'Answer from '+model,exact:true}).waitFor();
   for(const details of await execution(page).locator('details').filter({has:page.getByText('Request details',{exact:true})}).all())await details.locator('summary').click();
   assert.equal(await execution(page).locator('script,img,iframe').count(),0);assert.equal(await page.evaluate(()=>window.syntheticUnsafe),undefined);
-  assert.match(await execution(page).innerText(),/Settled price\s+USD 0\.000013/);
+  assert.match(await execution(page).innerText(),/Request state:\s+settled/);
   for(const details of await execution(page).locator('details').filter({has:page.getByText('Reported citations (1)',{exact:true})}).all())await details.locator('summary').click();
   assert.equal(await execution(page).locator('a[href^="https://citation.example.com/"]').count(),2);
   for(const link of await execution(page).locator('a[href^="https://citation.example.com/"]').all()){assert.equal(await link.getAttribute('rel'),'noopener noreferrer');assert.equal(await link.getAttribute('target'),'_blank');}
   assert.equal((await providerCounts())['prompt-dispatch']-(initial['prompt-dispatch']??0),2);await assertLayout(page,'prompt-two-model');browserClean();
-  console.log('PASS historical exact messages/two-model quote, explicit dispatch, plain text/citations, exact charges and360px answer cards.');
+  console.log('PASS historical exact messages/two-model quote, explicit dispatch, plain text/citations, request states and360px answer cards.');
 
   stage='failed detail refresh preserves visibly stale answer';const detailPath='**'+B+'/comparisons/'+comparison.id+'/summary';
   const unavailable=route=>route.fulfill({status:503,json:{error:'Synthetic saved-status refresh unavailable.'}});await page.route(detailPath,unavailable);
@@ -88,10 +88,10 @@ try{
 
   stage='raw result and copied input expiry retains authored preview';
   await pool.query('UPDATE prompt_execution SET result=NULL,result_purged_at=clock_timestamp() WHERE comparison_id=$1',[comparison.id]);
-  await pool.query('UPDATE prompt_execution_quote SET input=NULL,messages=NULL,input_purged_at=clock_timestamp() WHERE id=$1',[comparison.quoteId]);
+  await pool.query('UPDATE prompt_execution_quote SET input=NULL,messages=NULL,input_purged_at=clock_timestamp() WHERE id=$1',[comparison.preparationId]);
   await execution(page).getByRole('button',{name:'Refresh status',exact:true}).click();await execution(page).getByText(/Copied execution input expired/).waitFor();
   assert.equal(await execution(page).getByRole('region',{name:/^Answer from/}).count(),0);assert.equal(await execution(page).getByText('Answer and citations expired under workspace retention.',{exact:true}).count(),2);
-  assert.ok(await execution(page).getByText(group.prompts.original.text,{exact:true}).isVisible());assert.match(await execution(page).innerText(),/Settled price\s+USD 0\.000013/);
+  assert.ok(await execution(page).getByText(group.prompts.original.text,{exact:true}).isVisible());assert.match(await execution(page).innerText(),/Request state:\s+settled/);
 
   stage='SPA project race and live viewer purge';const held=await holdNextGet(page,'**'+B+'/comparisons/'+comparison.id+'/summary',{status:401});cleanup.push(held.dispose);
   await execution(page).getByRole('button',{name:'Refresh status',exact:true}).click();await bounded(held.entered);
@@ -109,13 +109,13 @@ try{
     const g=await createPromptCase(phaseLabel('ack')),p=await begin(g),base='/api/projects/'+g.main.id+'/prompt-executions';await p.clock.install();
     for(const failure of ['disconnect','503','malformed']){
       await review(p,g.prompts.disabled);await prepare(p,g,{fresh:true});// Each fault needs a new paid start, not a reuse of the previous iteration's answer.
-      const fault=await loseFirstPost(p,'**'+base+'/comparisons',{failure,onCommitted:async(body,accepted)=>{await runPrompt(accepted.comparison.id);await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.quoteId]);}});cleanup.push(fault.dispose);
+      const fault=await loseFirstPost(p,'**'+base+'/comparisons',{failure,onCommitted:async(body,accepted)=>{await runPrompt(accepted.comparison.id);await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[body.preparationId]);}});cleanup.push(fault.dispose);
       await execution(p).getByRole('button',{name:'Run answers',exact:true}).evaluate(element=>{element.click();element.click();});await execution(p).getByRole('button',{name:'Retry same request',exact:true}).waitFor();assert.equal(fault.bodies.length,1);
       await p.clock.setSystemTime(new Date(Date.now()+360_000));await p.waitForTimeout(1100);
       const retry=execution(p).getByRole('button',{name:'Retry same request',exact:true}),retried=p.waitForResponse(r=>r.url().endsWith(base+'/comparisons')&&r.request().method()==='POST');
-      await retry.click();const response=await retried;assert.equal(response.status(),202);assert.equal((await response.json()).comparison.quoteId,fault.bodies[0].quoteId);
+      await retry.click();const response=await retried;assert.equal(response.status(),202);assert.equal((await response.json()).comparison.preparationId,fault.bodies[0].preparationId);
       await retry.waitFor({state:'hidden'});await execution(p).getByRole('heading',{name:'Prompt run',exact:true}).waitFor();await execution(p).getByRole('region',{name:'Answer from GPT-4o-mini',exact:true}).waitFor();
-      assert.equal(fault.bodies.length,2);assert.deepEqual(fault.bodies[0],fault.bodies[1]);assert.equal((await pool.query('SELECT count(*) AS n FROM prompt_comparison WHERE quote_id=$1',[fault.bodies[0].quoteId])).rows[0].n,'1');await fault.dispose();await p.clock.setSystemTime(new Date());await back(p);browserClean();
+      assert.equal(fault.bodies.length,2);assert.deepEqual(fault.bodies[0],fault.bodies[1]);assert.equal((await pool.query('SELECT count(*) AS n FROM prompt_comparison WHERE quote_id=$1',[fault.bodies[0].preparationId])).rows[0].n,'1');await fault.dispose();await p.clock.setSystemTime(new Date());await back(p);browserClean();
     }
     console.log('PASS dropped/503/malformed committed prompt starts and double clicks recover identical intent after browser and server expiry.');
   }
@@ -127,7 +127,7 @@ try{
     await notSent(p).first().waitFor();held.release();await held.dispose();await p.waitForTimeout(200);
     assert.equal(await notSent(p).count(),2);assert.equal((await providerCounts())['prompt-dispatch']??0,before['prompt-dispatch']??0);
     assert.deepEqual((await pool.query('SELECT status FROM prompt_execution WHERE comparison_id=$1',[c.id])).rows.map(r=>r.status),['cancelled','cancelled']);await runPrompt(c.id);browserClean();
-    console.log('PASS a real stop action interrupts stale poll and cancels both undispatched model requests without charge dispatch.');
+    console.log('PASS a real stop action interrupts stale poll and cancels both undispatched model requests without a provider dispatch.');
   }
 
   stage='current403 clears unused quote then recovers setup';{
@@ -143,13 +143,13 @@ try{
 
   stage='owner reconciliation and empty answer are distinct';{
     const g=await createPromptCase(phaseLabel('receipt')),p=await begin(g);await review(p,g.prompts.disabled);await prepare(p,g);const before=await providerCounts(),{comparison:c}=await start(p);
-    await runPrompt(c.id,'receipt-only');await execution(p).getByRole('button',{name:'Refresh status',exact:true}).click();await execution(p).getByRole('button',{name:'Check charge receipt',exact:true}).click();
-    await execution(p).getByText('Only the charge was recovered. Run the prompt again to request a new answer.',{exact:true}).waitFor();await execution(p).getByText('Request details',{exact:true}).click();assert.match(await execution(p).innerText(),/Settled price\s+USD 0\.000013/);
+    await runPrompt(c.id,'receipt-only');await execution(p).getByRole('button',{name:'Refresh status',exact:true}).click();await execution(p).getByRole('button',{name:'Check original request',exact:true}).click();
+    await execution(p).getByText('Only the original request outcome was recovered. Run the prompt again to request a new answer.',{exact:true}).waitFor();await execution(p).getByText('Request details',{exact:true}).click();assert.match(await execution(p).innerText(),/Request state:\s+settled/);
     // Owner decision D3: charge reconciliation never pauses the workspace.
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[g.workspace.id])).rows[0].paused,false);assert.equal((await providerCounts())['prompt-dispatch']-(before['prompt-dispatch']??0),1);browserClean();
+    assert.equal((await pool.query('SELECT COALESCE((SELECT paused FROM workspace_provider_control WHERE workspace_id=$1),false) AS paused',[g.workspace.id])).rows[0].paused,false);assert.equal((await providerCounts())['prompt-dispatch']-(before['prompt-dispatch']??0),1);browserClean();
     const empty=await createPromptCase(phaseLabel('empty')),ep=await begin(empty);await review(ep,empty.prompts.disabled);await prepare(ep,empty);const {comparison:ec}=await start(ep);await runPrompt(ec.id,'empty');await execution(ep).getByRole('button',{name:'Refresh status',exact:true}).click();
     await execution(ep).getByText('Provider returned an empty answer.',{exact:true}).waitFor();assert.equal(await execution(ep).getByText('No supported answer is available. A failed request may still be charged.',{exact:true}).count(),0);browserClean();
-    console.log('PASS known generation reconciliation leaves spending unpaused (D3) with no invented answer and an observed empty answer is labelled separately.');
+    console.log('PASS known generation recovery leaves requests unpaused (D3) with no invented answer and an observed empty answer is labelled separately.');
   }
 }catch(error){await captureFailure(session?.page,error,stage).catch(()=>{});console.error('FAIL prompt UI stage: '+stage+' ('+(error?.name??'Error')+'). Details saved privately.');process.exitCode=1;}
 finally{for(const close of cleanup)await close().catch(()=>{});await session?.browser.close();await stopJobs();await closeDatabase();}

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConfirmDialog, Disclosure, Tooltip } from '@ten98/ui'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { providerUsd } from '../lib/provider-money'
 
 type ProviderName = 'openrouter' | 'dataforseo'
 type CheckStatus = 'untested' | 'ok' | 'error'
@@ -19,29 +18,21 @@ interface ConnectionMeta {
   diagnostic: string | null
 }
 
-interface ProviderActivity {
-  paused: boolean
-  month: string
-  spentUsd: string
-  reservedUsd: string
-  uncertainUsd: string
-}
-
-interface LedgerEntry {
+interface ProviderRequest {
   id: string
   connectionId: string
   operation: string
   status: string
-  estimateUsd: string
-  actualUsd: string | null
+  updatedAt: string
+  providerReference: string | null
   createdAt: string
 }
 
 interface ProvidersResponse {
   vaultConfigured: boolean
   connections: ConnectionMeta[]
-  budget: ProviderActivity
-  ledger: LedgerEntry[]
+  requestControls: { paused: boolean }
+  requests: ProviderRequest[]
 }
 
 interface ProviderPanelProps {
@@ -86,7 +77,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
   const [rLogin, setRLogin] = useState('')
   const [rPassword, setRPassword] = useState('')
 
-  const [bPaused, setBPaused] = useState(true)
+  const [requestsPaused, setRequestsPaused] = useState(false)
 
   const mountedRef = useRef(true)
   const abortRef = useRef<AbortController | null>(null)
@@ -148,12 +139,12 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
     try {
       const d = await api<ProvidersResponse>(`/api/workspaces/${workspaceId}/providers`, { signal: ctrl.signal })
       if (!current()) return
-      if (typeof d?.budget?.paused !== 'boolean' || !Array.isArray(d.connections) || d.connections.some(c =>
+      if (typeof d?.vaultConfigured !== 'boolean' || typeof d?.requestControls?.paused !== 'boolean' || !Array.isArray(d.requests) || d.requests.some(r => !r || typeof r.id !== 'string' || typeof r.connectionId !== 'string' || typeof r.operation !== 'string' || !['reserved','dispatched','settled','uncertain','cancelled'].includes(r.status) || !Number.isFinite(Date.parse(r.createdAt)) || !Number.isFinite(Date.parse(r.updatedAt)) || !(r.providerReference === null || typeof r.providerReference === 'string')) || !Array.isArray(d.connections) || d.connections.some(c =>
         !c || typeof c.id !== 'string' || !Number.isInteger(c.revision) || c.revision < 1 || c.revision > 2147483647)) {
         throw new Error('Provider settings could not be confirmed. Reload to try again.')
       }
       setData(d)
-      setBPaused(d.budget.paused)
+      setRequestsPaused(d.requestControls.paused)
       setReloadRequired(false)
       setError(null)
     } catch (e) {
@@ -312,13 +303,13 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
   const saveRequestControl = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault()
     if (mutLockRef.current || controlsOff || !data) return
-    if (!bPaused && !vaultOk) {
+    if (!requestsPaused && !vaultOk) {
       setError('Pause provider work until credential storage is configured.')
       return
     }
     void runMutation(
-      signal => api<unknown>(`/api/workspaces/${workspaceId}/budget`, { method: 'POST', body: { paused: bPaused }, signal }),
-      'Paid-work setting saved. No work was started.',
+      signal => api<unknown>(`/api/workspaces/${workspaceId}/provider-requests/control`, { method: 'POST', body: { paused: requestsPaused }, signal }),
+      'Provider request setting saved. No work was started.',
     )
   }
 
@@ -367,8 +358,8 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
           <div className="card">
             <h2>Connections</h2>
             <p>Connect DataForSEO for search research and OpenRouter for AI answers.</p>
-            <Tooltip content="Save credentials, then run an account check. Each feature runs when you choose Run. Providers manage their own credits and limits."><button type="button" className="btn ghost" aria-label="Connection setup help">Connection help</button></Tooltip>
-            {data.budget.paused&&<p role="status">Provider requests are paused. You can enable them in Advanced connection controls.</p>}
+            <Tooltip content="Save credentials, then run an account check. Each feature runs when you choose Run. Provider billing is managed in OpenRouter and DataForSEO."><button type="button" className="btn ghost" aria-label="Connection setup help">Connection help</button></Tooltip>
+            {data.requestControls.paused&&<p role="status">Provider requests are paused. You can enable them in Advanced connection controls.</p>}
             {data.connections.length === 0 ? (
               <div className="empty">
                 <p><strong>No provider connections yet.</strong></p>
@@ -491,7 +482,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
 
           <Disclosure summary="Advanced connection controls" variant="plain">
             <form onSubmit={saveRequestControl} className="stack">
-              <label className="row" htmlFor="provider-requests-paused"><input id="provider-requests-paused" type="checkbox" checked={bPaused} disabled={controlsOff||(!data.vaultConfigured&&bPaused)} onChange={event=>setBPaused(event.target.checked)}/>Pause provider requests</label>
+              <label className="row" htmlFor="provider-requests-paused"><input id="provider-requests-paused" type="checkbox" checked={requestsPaused} disabled={controlsOff||(!data.vaultConfigured&&requestsPaused)} onChange={event=>setRequestsPaused(event.target.checked)}/>Pause provider requests</label>
               <Tooltip content="This emergency stop prevents new provider requests. Requests already sent can still finish."><button type="button" className="btn ghost" aria-label="About pausing provider requests">About this control</button></Tooltip>
               <button type="submit" className="btn" disabled={controlsOff}>Save request setting</button>
             </form>
@@ -499,7 +490,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
 
           <div className="card">
             <h2>Provider activity</h2>
-            {data.ledger.length === 0 ? (
+            {data.requests.length === 0 ? (
               <div className="empty">
                 <p>No provider activity yet.</p>
               </div>
@@ -512,24 +503,24 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
                       <th>Connection</th>
                       <th>Operation</th>
                       <th>Status</th>
-                      <th>Actual</th>
+                      <th>Request</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.ledger.map(l => (
+                    {data.requests.map(l => (
                       <tr key={l.id}>
                         <td className="dim">{new Date(l.createdAt).toLocaleString()}</td>
                         <td style={{ minWidth: '10rem', maxWidth: '18rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{connName(l.connectionId)}</td>
                         <td style={{ minWidth: '10rem', maxWidth: '20rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{l.operation}</td>
                         <td><span className="pill">{l.status}</span></td>
-                        <td className="mono">{l.actualUsd === null ? 'Pending' : providerUsd(l.actualUsd)}</td>
+                        <td className="mono" style={{overflowWrap:'anywhere'}}>{l.id}{l.providerReference&&<p className="hint">Provider reference: {l.providerReference}</p>}<p className="hint">Updated {new Date(l.updatedAt).toLocaleString()}</p></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-            <p className="hint">Amounts are this app's own usage accounting, not provider billing.</p>
+            <p className="hint">Request activity records status and timing. Manage provider billing in OpenRouter or DataForSEO.</p>
           </div>
         </>
       )}

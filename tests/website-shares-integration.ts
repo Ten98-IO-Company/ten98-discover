@@ -16,7 +16,7 @@ import {runRetentionBatch} from '../src/server/retention.ts';
 import {getAnalyticsReset,resetAnalytics} from '../src/server/analytics-reset.ts';
 import {deleteProject,getProjectDeletion} from '../src/server/project-delete.ts';
 import {removeMember} from '../src/server/teams.ts';
-import {quarantineRestoredSpending} from '../src/server/restore-quarantine.ts';
+import {quarantineRestoredRequests} from '../src/server/restore-quarantine.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
 import {saveBoard,createBoardShare} from '../src/server/boards.ts';
 import {listWebsiteShares,createWebsiteShare,revokeWebsiteShare,readWebsiteShare} from '../src/server/website-shares.ts';
@@ -196,7 +196,7 @@ export async function runWebsiteShareChecks(){
   const deletion=await getProjectDeletion(workspace,project,owner);await deleteProject(workspace,project,owner,{requestId:randomUUID(),revision:deletion.item!.revision,confirmation:'DELETE'});
   await assert.rejects(readWebsiteShare(sid,readInput.token,range),status(404));for(const table of ['project_share','project_content_request'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE project_id=$1`,[project])).rows[0].n,0,table+' cascades with the website.');
   const survivorInput=input(['overview']),survivor=await createWebsiteShare(project2,owner,survivorInput);assert.ok(await readWebsiteShare(survivor.ack.shareId,survivorInput.token,range));
-  await quarantineRestoredSpending();assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_share WHERE revoked_at IS NULL')).rows[0].n,0,'Restore quarantine revokes every live website share.');await assert.rejects(readWebsiteShare(survivor.ack.shareId,survivorInput.token,range),status(404));
+  await quarantineRestoredRequests();assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_share WHERE revoked_at IS NULL')).rows[0].n,0,'Restore quarantine revokes every live website share.');await assert.rejects(readWebsiteShare(survivor.ack.shareId,survivorInput.token,range),status(404));
   await pass('revocation is idempotent and irreversible, expiry and reset coverage apply on the next read, deletion cascades grants and receipts, and restore quarantine revokes the rest');
   assert.equal(groups.length,7);
  }catch(error){primary=error;}

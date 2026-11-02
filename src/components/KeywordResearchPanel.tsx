@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {DataTable,RunCostSummary, useConfirmDialog,Disclosure,SegmentedControl,Tooltip,Field,Input,Select,ReportToolbar} from '@ten98/ui';
+import {DataTable, useConfirmDialog,Disclosure,SegmentedControl,Tooltip,Field,Input,Select,ReportToolbar} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {emptyKeywordResultFilters,filterKeywordResults,type KeywordResultFilters} from '../lib/keyword-result-filters';
@@ -11,25 +11,24 @@ type Role=WorkspaceRole;
 type Mode='overview'|'ideas';
 type Market={locationCode:number;locationName:string;languageCode:string;languageName:string};
 type Req={connectionId:string;mode:Mode;keywords:string[];locationCode:number;languageCode:string;limit:25|50|100};
-type Quote={id:string;expiresAt:string;request:Req;connectionName:string;estimateUsd:string;perTaskUsd:string;perItemUsd:string;upperItems:number;priceAsOf:string};
+type Preparation={id:string;expiresAt:string;request:Req;connectionName:string;upperItems?:number};
 type Row={keyword:string;searchVolume:number|null;cpcUsd:string|null;competition:number|null;competitionLevel:'LOW'|'MEDIUM'|'HIGH'|null;keywordDifficulty:number|null;intent:string|null;monthlySearches:Array<{year:number;month:number;searchVolume:number|null}>;metricsUpdatedAt:string|null;intentUpdatedAt:string|null};
 type Result={retrievedAt:string;source:'DataForSEO Labs / Google';rows:Row[];missingKeywords:string[];totalCount:number|null;limited:boolean};
 type Status='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';
-type Charge='reserved'|'dispatched'|'settled'|'uncertain'|'cancelled';
-type RunSummary={id:string;mode:Mode;keywords:string[];locationCode:number;languageCode:string;status:Status;createdAt:string;completedAt:string|null;estimateUsd:string;actualUsd:string|null;chargeStatus:Charge};
+type RequestStatus='reserved'|'dispatched'|'settled'|'uncertain'|'cancelled';
+type RunSummary={id:string;preparationId:string;mode:Mode;keywords:string[];locationCode:number;languageCode:string;status:Status;createdAt:string;completedAt:string|null;requestStatus:RequestStatus};
 type Run=RunSummary&{request:Req;canCancel:boolean;diagnostic:string|null;result:Result|null;resultExpired:boolean};
-type State={role:Role;vaultConfigured:boolean;spendingPaused:boolean;connections:Array<{id:string;name:string;checkStatus:'untested'|'ok'|'error'}>;catalog:{updatedAt:string|null;markets:Market[]};runs:RunSummary[]};
+type State={role:Role;vaultConfigured:boolean;requestsPaused:boolean;connections:Array<{id:string;name:string;checkStatus:'untested'|'ok'|'error'}>;catalog:{updatedAt:string|null;markets:Market[]};runs:RunSummary[]};
 
 const isAbort=(e:unknown)=>(e as {name?:string}|null)?.name==='AbortError';
 const num=(v:number|null)=>v==null?'Unavailable':v.toLocaleString();
 const usd=(v:string|null)=>v==null?'Unavailable':'$'+v;
 const dt=(iso:string|null)=>iso?new Date(iso).toLocaleString():'Unavailable';
-const toSummary=(r:Run):RunSummary=>({id:r.id,mode:r.mode,keywords:r.keywords,locationCode:r.locationCode,languageCode:r.languageCode,status:r.status,createdAt:r.createdAt,completedAt:r.completedAt,estimateUsd:r.estimateUsd,actualUsd:r.actualUsd,chargeStatus:r.chargeStatus});
+const toSummary=(r:Run):RunSummary=>({id:r.id,mode:r.mode,keywords:r.keywords,locationCode:r.locationCode,languageCode:r.languageCode,status:r.status,createdAt:r.createdAt,completedAt:r.completedAt,preparationId:r.preparationId,requestStatus:r.requestStatus});
 const uuid=(v:unknown)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const date=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
 const nullableString=(v:unknown)=>v===null||typeof v==='string';
-const amount=(v:unknown)=>typeof v==='string'&&/^(?:0|[1-9][0-9]*)\.[0-9]{6}$/.test(v);
 const strings=(v:unknown):v is string[]=>Array.isArray(v)&&v.every(x=>typeof x==='string');
 const metric=(v:unknown,max=Number.MAX_SAFE_INTEGER,integer=false)=>v===null||typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=max&&(!integer||Number.isSafeInteger(v));
 function validRequest(value:unknown):value is Req{
@@ -38,7 +37,7 @@ function validRequest(value:unknown):value is Req{
 }
 function validSummary(value:unknown):value is RunSummary{
   const r=value as RunSummary|null;
-  return !!r&&uuid(r.id)&&['overview','ideas'].includes(r.mode)&&strings(r.keywords)&&Number.isSafeInteger(r.locationCode)&&r.locationCode>0&&typeof r.languageCode==='string'&&['queued','running','completed','failed','uncertain','cancelled','reconciled'].includes(r.status)&&date(r.createdAt)&&nullableDate(r.completedAt)&&amount(r.estimateUsd)&&(r.actualUsd===null||amount(r.actualUsd))&&['reserved','dispatched','settled','uncertain','cancelled'].includes(r.chargeStatus);
+  return !!r&&uuid(r.id)&&['overview','ideas'].includes(r.mode)&&strings(r.keywords)&&Number.isSafeInteger(r.locationCode)&&r.locationCode>0&&typeof r.languageCode==='string'&&['queued','running','completed','failed','uncertain','cancelled','reconciled'].includes(r.status)&&date(r.createdAt)&&nullableDate(r.completedAt)&&uuid(r.preparationId)&&['reserved','dispatched','settled','uncertain','cancelled'].includes(r.requestStatus);
 }
 function validResult(value:unknown):value is Result{
   const r=value as Result|null;
@@ -72,19 +71,17 @@ function statusLabel(r:RunSummary):string{
     case 'completed':return 'Completed';
     case 'failed':return 'Failed';
     case 'cancelled':return 'Cancelled';
-    case 'uncertain':return 'Uncertain (charge unknown)';
-    case 'reconciled':return 'Reconciled';
+    case 'uncertain':return 'Uncertain (provider outcome unknown)';
+    case 'reconciled':return 'Recovered';
   }
 }
 
-function chargeNote(r:RunSummary):string{
-  if(r.chargeStatus==='uncertain'||r.status==='uncertain')return 'The charge for this run is unknown. Recover this original request; unrelated features can continue.';
-  if(r.actualUsd!=null)return 'Actual charge $'+r.actualUsd+' (reserved estimate $'+r.estimateUsd+').'+(r.status==='failed'?' A failed run can still be charged by the provider.':'');
-  return 'Reserved estimate $'+r.estimateUsd+'; no settled charge yet.';
+function requestNote(r:RunSummary):string{
+  return r.requestStatus==='uncertain'||r.status==='uncertain'?'The provider outcome is unknown. Check this original request before starting it again.':'Provider request status: '+r.requestStatus+'.';
 }
 
 export function KeywordResearchPanel({workspaceId,projectId,userId,onUnauthorized}:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void}){
-  // Keyed remount clears all drafts, quotes, pending request keys and results on scope change.
+  // Keyed remount clears drafts, preparations, pending request keys and results on scope change.
   return <KeywordWorkspace key={userId+'|'+projectId} {...{workspaceId,projectId,userId,onUnauthorized}}/>;
 }
 
@@ -108,8 +105,8 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const [kwText,setKwText]=useState('');
   const [marketKey,setMarketKey]=useState('');
   const [limit,setLimit]=useState<25|50|100>(50);
-  const [quote,setQuote]=useState<Quote|null>(null);
-  const [quoteKey,setQuoteKey]=useState<string|null>(null);
+  const [preparation,setPreparation]=useState<Preparation|null>(null);
+  const [preparationKey,setPreparationKey]=useState<string|null>(null);
   const [lostStart,setLostStart]=useState(false);
   const [selected,setSelected]=useState<Run|null>(null);
   const [pollDead,setPollDead]=useState(false);
@@ -137,16 +134,16 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     activeRef.current=op;setBusy(true);setWriting(write);return op;
   }
   function finish(op:Operation){if(current(op)){activeRef.current=null;setBusy(false);setWriting(false);}}
-  function clearQuote(){setQuote(null);setQuoteKey(null);setLostStart(false);}
+  function clearPreparation(){setPreparation(null);setPreparationKey(null);setLostStart(false);}
   function edit(change:()=>void){
     if(activeRef.current?.write||lostStart)return;
     // Editing may interrupt a status read, but never an in-flight mutation.
     activeRef.current?.controller.abort();activeRef.current=null;genRef.current++;setBusy(false);
-    formGenRef.current++;clearQuote();setErr(null);setMsg(null);change();
+    formGenRef.current++;clearPreparation();setErr(null);setMsg(null);change();
   }
   function purge(message:string){
     formGenRef.current++;selectionRef.current=null;focusResult.current=false;
-    setSt(null);setSelected(null);clearQuote();setKwText('');setConnId('');setMarketKey('');
+    setSt(null);setSelected(null);clearPreparation();setKwText('');setConnId('');setMarketKey('');
     setReconConn('');setReconMsg(null);setMsg(null);setErr(null);setPollDead(true);setLoadErr(message);
   }
   function handleErr(e:unknown,op:Operation):boolean{
@@ -160,13 +157,13 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   }
   function applyState(s:State){
     setSt(s);setLoadErr(null);
-    if(s.role==='viewer'){formGenRef.current++;clearQuote();setKwText('');setReconConn('');setReconMsg(null);}
+    if(s.role==='viewer'){formGenRef.current++;clearPreparation();setKwText('');setReconConn('');setReconMsg(null);}
     else {setConnId(id=>id||s.connections[0]?.id||'');setReconConn(id=>id||s.connections[0]?.id||'');}
   }
   async function access(op:Operation){
     const s=await api<State>(B,{signal:op.controller.signal});
     if(!current(op))return null;
-    if(!workspaceRoles.includes(s?.role as WorkspaceRole)||typeof s.vaultConfigured!=='boolean'||typeof s.spendingPaused!=='boolean'||!Array.isArray(s.connections)||s.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(s.runs)||!s.runs.every(validSummary)||!Array.isArray(s.catalog?.markets)||!nullableDate(s.catalog.updatedAt)||s.catalog.markets.some(m=>!m||!Number.isSafeInteger(m.locationCode)||typeof m.locationName!=='string'||typeof m.languageCode!=='string'||typeof m.languageName!=='string'))throw new Error('The saved state could not be read. Reload access.');
+    if(!workspaceRoles.includes(s?.role as WorkspaceRole)||typeof s.vaultConfigured!=='boolean'||typeof s.requestsPaused!=='boolean'||!Array.isArray(s.connections)||s.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(s.runs)||!s.runs.every(validSummary)||!Array.isArray(s.catalog?.markets)||!nullableDate(s.catalog.updatedAt)||s.catalog.markets.some(m=>!m||!Number.isSafeInteger(m.locationCode)||typeof m.locationName!=='string'||typeof m.languageCode!=='string'||typeof m.languageName!=='string'))throw new Error('The saved state could not be read. Reload access.');
     applyState(s);return s;
   }
   function runFrom(value:unknown):Run{
@@ -233,7 +230,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   async function refreshCatalog(){
     if(lostStart)return;
     const op=begin(true,true);if(!op)return;
-    formGenRef.current++;clearQuote();setErr(null);setMsg(null);
+    formGenRef.current++;clearPreparation();setErr(null);setMsg(null);
     try{
       const state=await access(op);if(!state||!current(op))return;
       if(state.role==='viewer')throw new Error('Your current role can read research but cannot refresh markets.');
@@ -246,23 +243,23 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     ev.preventDefault();if(lostStart)return;
     const op=begin(true,true);if(!op)return;
     const formGeneration=formGenRef.current;
-    clearQuote();setErr(null);setMsg(null);
+    clearPreparation();setErr(null);setMsg(null);
     try{
       const problem=keywordProblem(parsed,mode);if(problem)throw new Error(problem);
       if(!market)throw new Error('Choose a country or territory and language. Refresh markets first if none are listed.');
       const body:Req={connectionId:connId,mode,keywords:parsed,locationCode:market.locationCode,languageCode:market.languageCode,limit:mode==='overview'?100:limit};
       const state=await access(op);if(!state||!current(op))return;
       if(state.role==='viewer')throw new Error('Your current role can read research but cannot run research.');
-      const response=await api<{quote:Quote}>(B+'/quote',{method:'POST',body,signal:op.controller.signal});
+      const response=await api<{preparation:Preparation}>(B+'/prepare',{method:'POST',body,signal:op.controller.signal});
       if(!current(op)||formGeneration!==formGenRef.current)return;
-      const q=response.quote;
-      if(!uuid(q?.id)||!date(q.expiresAt)||!validRequest(q.request)||!sameRequest(q.request,body)||typeof q.connectionName!=='string'||!amount(q.estimateUsd)||!amount(q.perTaskUsd)||!amount(q.perItemUsd)||!Number.isSafeInteger(q.upperItems)||q.upperItems<1||!date(q.priceAsOf))throw new Error('The research request could not be verified. Try Run again.');
-      setQuote(q);await startRun(q,op);
+      const q=response.preparation;
+      if(!uuid(q?.id)||!date(q.expiresAt)||!validRequest(q.request)||!sameRequest(q.request,body)||typeof q.connectionName!=='string'||(q.upperItems!==undefined&&(!Number.isSafeInteger(q.upperItems)||q.upperItems<1)))throw new Error('The research request could not be verified. Try Run again.');
+      setPreparation(q);await startRun(q,op);
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
-  async function startRun(prepared=quote,operation?:Operation){
+  async function startRun(prepared=preparation,operation?:Operation){
     if(!prepared)return;
-    const quote=prepared;
+    const preparation=prepared;
     const op=operation??begin(true,true);if(!op)return;
     const recovering=lostStart;
     let sent=false;
@@ -270,29 +267,29 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     try{
       const state=await access(op);if(!state||!current(op))return;
       if(state.role==='viewer'){setErr('Your current role can read research but cannot start it.');return;}
-      if(!recovering&&(state.spendingPaused||!state.vaultConfigured||Date.parse(quote.expiresAt)<=Date.now()))throw new Error('Research cannot run now. Check Connections and try again.');
-      const key=quoteKey??crypto.randomUUID();
-      setQuoteKey(key);
-      const body={quoteId:quote.id,requestKey:key};
+      if(!recovering&&(state.requestsPaused||!state.vaultConfigured||Date.parse(preparation.expiresAt)<=Date.now()))throw new Error('Research cannot run now. Check Connections and try again.');
+      const key=preparationKey??crypto.randomUUID();
+      setPreparationKey(key);
+      const body={preparationId:preparation.id,requestKey:key};
       sent=true;
       const response=await api<unknown>(B+'/runs',{method:'POST',body,signal:op.controller.signal});
       if(!current(op))return;
       const run=runFrom(response);
-      if(!sameRequest(run.request,quote.request))throw new Error('The start response did not match this quote.');
-      clearQuote();showRun(run,true);setMsg('The saved research run is shown below.');
+      if(run.preparationId!==preparation.id||!sameRequest(run.request,preparation.request))throw new Error('The start response did not match this preparation.');
+      clearPreparation();showRun(run,true);setMsg('The saved research run is shown below.');
     }catch(e){
       if(!current(op)||handleErr(e,op))return;
       const ambiguous=!(e instanceof ApiError)||e.status===0||e.status>=500;
       if((sent||recovering)&&ambiguous){
         setLostStart(true);setErr('The start may already have been accepted. Retry the same request, or inspect Recent runs before starting new research.');
       }else{
-        if(sent)clearQuote();
+        if(sent)clearPreparation();
         setErr(e instanceof ApiError&&e.status===409?'The server rejected this attempt. Inspect Recent runs before choosing Run again.':errMsg(e));
       }
     }finally{finish(op);}
   }
   async function cancelRun(){
-    if(!selected?.canCancel||!await confirm({title:'Cancel this queued run?',description:'Requests already sent may still be charged.',confirmLabel:'Cancel run'}))return;
+    if(!selected?.canCancel||!await confirm({title:'Cancel this queued run?',description:'Requests already sent may still finish.',confirmLabel:'Cancel run'}))return;
     const id=selected.id;const op=begin(true,true);if(!op)return;setErr(null);setMsg(null);
     try{
       const state=await access(op);if(!state||!current(op))return;
@@ -300,20 +297,20 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       const response=await api<unknown>(B+'/runs/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:{},signal:op.controller.signal});
       if(!current(op))return;
       const run=runFrom(response);if(run.id!==id)throw new Error('Reload this run to check its current state.');
-      showRun(run);setMsg('Run status updated. Requests already sent may still be charged.');
+      showRun(run);setMsg('Run status updated. Requests already sent may still finish.');
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
-  async function reconcile(){
+  async function recover(){
     if(!selected||selected.status!=='uncertain'||!reconConn)return;
     const id=selected.id;const op=begin(true,true);if(!op)return;setErr(null);setReconMsg(null);
     try{
       const state=await access(op);if(!state||!current(op))return;
-      if(state.role!=='owner')throw new Error('Only a current workspace owner can check provider charges.');
-      const response=await api<{run:Run;reconciliation:{status:'matched'|'inconclusive';message:string}}>(B+'/runs/'+encodeURIComponent(id)+'/reconcile',{method:'POST',body:{connectionId:reconConn},signal:op.controller.signal});
+      if(state.role!=='owner')throw new Error('Only a current workspace owner can check original provider requests.');
+      const response=await api<{run:Run;recovery:{status:'matched'|'inconclusive';message:string}}>(B+'/runs/'+encodeURIComponent(id)+'/recover',{method:'POST',body:{connectionId:reconConn},signal:op.controller.signal});
       if(!current(op))return;
       const run=runFrom(response);if(run.id!==id)throw new Error('Reload this run to check its current state.');
-      if(!response.reconciliation||!['matched','inconclusive'].includes(response.reconciliation.status)||typeof response.reconciliation.message!=='string')throw new Error('Reload this run to check its current state.');
-      showRun(run);setReconMsg(response.reconciliation.message);
+      if(!response.recovery||!['matched','inconclusive'].includes(response.recovery.status)||typeof response.recovery.message!=='string')throw new Error('Reload this run to check its current state.');
+      showRun(run);setReconMsg(response.recovery.message);
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
   if(!st){
@@ -329,8 +326,8 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
     <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers',provider:'dataforseo'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'Connections'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
-    {!isOwner&&<p className="hint">Ask a workspace owner to manage Connections or the paid-work pause. Your current role can still view saved results.</p>}
-    {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
+    {!isOwner&&<p className="hint">Ask a workspace owner to manage Connections or the request pause. Your current role can still view saved results.</p>}
+    {st.requestsPaused&&<div className="alert" role="alert">Provider requests are paused for this workspace. Saved history and results remain available.</div>}
     {msg&&<p role="status">{msg}</p>}
     {(err||loadErr)&&<div className="alert" role="alert">{err||loadErr}</div>}
 
@@ -383,30 +380,24 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           </div>
         </Disclosure>
         <div className="row">
-          <button type="submit" className="btn primary" disabled={writing||st.spendingPaused||!st.vaultConfigured}>Run</button>
+          <button type="submit" className="btn primary" disabled={writing||st.requestsPaused||!st.vaultConfigured}>Run</button>
         </div>
-        <Disclosure summary="How research runs" variant="plain"><p>Run sends the selected keywords and market to DataForSEO. Your provider account may be charged. Results and charge receipts are saved.</p></Disclosure>
+        <Disclosure summary="How research runs" variant="plain"><p>Run sends the selected keywords and market to DataForSEO. Results and request activity are saved. Provider billing is managed in DataForSEO.</p></Disclosure>
       </fieldset></form></details>
     )}
 
-    {canResearch&&quote&&lostStart&&<div className="alert" role="alert"><p>The run may already exist. Retry this exact request or inspect Recent runs before starting new research.</p><div className="row"><button type="button" className="btn primary" onClick={()=>void startRun()} disabled={writing}>Retry same request</button><button type="button" className="btn" onClick={()=>void (async()=>{if(await confirm({title:'Discard local retry controls?',description:'The server request may already exist; this does not cancel it.',confirmLabel:'Dismiss retry controls'})&&!activeRef.current?.write){clearQuote();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}})()} disabled={writing}>Dismiss retry controls</button></div></div>}
+    {canResearch&&preparation&&lostStart&&<div className="alert" role="alert"><p>The run may already exist. Retry this exact request or inspect Recent runs before starting new research.</p><div className="row"><button type="button" className="btn primary" onClick={()=>void startRun()} disabled={writing}>Retry same request</button><button type="button" className="btn" onClick={()=>void (async()=>{if(await confirm({title:'Discard local retry controls?',description:'The server request may already exist; this does not cancel it.',confirmLabel:'Dismiss retry controls'})&&!activeRef.current?.write){clearPreparation();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}})()} disabled={writing}>Dismiss retry controls</button></div></div>}
 
     {selected&&<div className="card stack" aria-label="Selected run">
       <h3 ref={resultHeading} tabIndex={-1}>{selected.mode==='overview'?'Keyword overview':'Keyword ideas'} results</h3>
       <p>{statusLabel(selected)} · created {dt(selected.createdAt)}{selected.completedAt?' · finished '+dt(selected.completedAt):''} · {selected.mode} · {selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</p>
-      <><Disclosure summary="Request details" variant="plain"><RunCostSummary title="Run cost" state={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?'uncertain':selected.actualUsd!=null?'settled':selected.chargeStatus==='reserved'||selected.chargeStatus==='dispatched'?'pending':selected.chargeStatus==='cancelled'?'blocked':'uncertain'}
-        scope={<span>{selected.mode} · {selected.keywords.join(', ')} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</span>}
-        units={<span>{selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · requested limit {selected.request.limit}</span>}
-        estimatedPrice={'$'+selected.estimateUsd}
-        settledPrice={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?undefined:selected.actualUsd!=null?'$'+selected.actualUsd:selected.chargeStatus==='cancelled'?'Charge cancelled; no settled charge reported.':undefined}
-        receipt={'Run '+selected.id}
-        reason={chargeNote(selected)}/></Disclosure></>
+      <><Disclosure summary="Request details" variant="plain"><div role="region" aria-label="Request activity"><p>Run {selected.id}</p><p>Preparation {selected.preparationId}</p><p>{selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · requested limit {selected.request.limit}</p><p>{requestNote(selected)}</p><p>Saved {dt(selected.createdAt)}</p></div></Disclosure></>
 
       {selected.diagnostic&&<p className="hint">Diagnostic: {selected.diagnostic}</p>}
       {(selected.status==='queued'||selected.status==='running')&&<p role="status" className="dim">{pollDead?'Automatic status checks stopped.':selected.status==='queued'?'Waiting in queue; checking status every 2 seconds.':'Running; checking status every 2 seconds.'}</p>}
       <div className="row"><button type="button" className="btn" onClick={()=>void selectRun(selected.id)} disabled={writing}>Check status</button></div>
       {canResearch&&selected.canCancel&&<div className="row"><button type="button" className="btn" onClick={cancelRun} disabled={writing}>Cancel run</button></div>}
-      {isOwner&&selected.status==='uncertain'&&selected.chargeStatus==='uncertain'&&<Disclosure summary="Check provider charge (owner)" variant="plain">
+      {isOwner&&selected.status==='uncertain'&&selected.requestStatus==='uncertain'&&<Disclosure summary="Check original request (owner)" variant="plain">
         <div className="stack">
           <p className="hint">Runs a free metadata check against the provider account; the server validates that the connection matches. This does not rerun research and cannot recover a missing live result.</p>
           <div>
@@ -415,16 +406,16 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
               {st.connections.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div className="row"><button type="button" className="btn" onClick={reconcile} disabled={writing||!reconConn}>Check provider charge</button></div>
+          <div className="row"><button type="button" className="btn" onClick={recover} disabled={writing||!reconConn}>Check original request</button></div>
           {reconMsg&&<p role="status">{reconMsg}</p>}
         </div>
       </Disclosure>}
       {selected.result&&!selected.resultExpired?
         <ResultView key={selected.id} run={selected} result={selected.result} canSave={canResearch&&selected.status==='completed'} disabled={writing||lostStart} onSave={indexes=>onSaveRows(selected,indexes)} marketName={selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.request.locationCode+', language '+selected.request.languageCode}/>
       :selected.resultExpired?
-        <p className="hint">The saved result for this run was purged and is no longer available. The charge record above is unaffected.</p>
+        <p className="hint">The saved result for this run was purged and is no longer available. Request activity remains available.</p>
       :selected.status==='reconciled'?
-        <p className="hint">Only the cost was reconciled for this run; no result was recovered. Getting a result needs a fresh explicit quote.</p>
+        <p className="hint">The original request was checked, but no result was recovered. Choose Run to request a new result.</p>
       :selected.status==='completed'?
         <p className="hint">This run completed but no saved result is available.</p>
       :selected.status==='failed'?
@@ -440,14 +431,14 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
         <p className="dim">No research runs have been saved for this project.</p>
       :
         <div className="table-wrap" role="region" aria-label="Recent keyword runs" tabIndex={0}><table style={{minWidth:760}}>
-          <thead><tr><th>Created</th><th>Mode</th><th>Keywords</th><th>Status</th><th>Charge</th><th>Open</th></tr></thead>
+          <thead><tr><th>Created</th><th>Mode</th><th>Keywords</th><th>Status</th><th>Request status</th><th>Open</th></tr></thead>
           <tbody>
             {st.runs.map(r=><tr key={r.id}>
               <td>{dt(r.createdAt)}</td>
               <td>{r.mode}</td>
               <td>{r.keywords.length} ({r.keywords.slice(0,2).join(', ')}{r.keywords.length>2?', …':''})</td>
               <td>{statusLabel(r)}</td>
-              <td>{r.chargeStatus==='uncertain'||r.status==='uncertain'?'Unknown':r.actualUsd!=null?'$'+r.actualUsd:'est. $'+r.estimateUsd}</td>
+              <td>{r.requestStatus}</td>
               <td><button type="button" className="btn" onClick={()=>selectRun(r.id)} disabled={writing||selected?.id===r.id}>View</button></td>
             </tr>)}
           </tbody>

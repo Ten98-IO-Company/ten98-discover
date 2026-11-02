@@ -1,13 +1,13 @@
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet,useLocation,defaultStringifySearch} from '@tanstack/react-router';
 import {AISearchPanel} from '../src/components/AISearchPanel';
-import {aiSearchPriceEvidence,aiSearchProfileId} from '../src/lib/ai-search';
+import {aiSearchProfileId} from '../src/lib/ai-search';
 import {parseNavigation,readAISearchIntent,aiSearchIntentQuery,type NavigationSearch} from '../src/lib/navigation';
 import '../src/styles.css';
 
 // Synthetic UI evidence only: no SQL DTO, native authorization or provider acceptance.
 const scope={workspace:'10000000-0000-4000-8000-000000000001',project:'20000000-0000-4000-8000-000000000001',user:'30000000-0000-4000-8000-000000000001',prompt:'50000000-0000-4000-8000-000000000001',version:'60000000-0000-4000-8000-000000000001',capture:'70000000-0000-4000-8000-000000000001',otherPrompt:'50000000-0000-4000-8000-000000000002',otherVersion:'60000000-0000-4000-8000-000000000002'};
-const overview={role:'owner',profileId:aiSearchProfileId,price:aiSearchPriceEvidence(),catalog:null,connections:[{id:'40000000-0000-4000-8000-000000000001',name:'Synthetic connection',revision:1,checkStatus:'ok'}],runs:[],nextCursor:null};
+const overview={role:'owner',profileId:aiSearchProfileId,catalog:null,connections:[{id:'40000000-0000-4000-8000-000000000001',name:'Synthetic connection',revision:1,checkStatus:'ok'}],runs:[],nextCursor:null};
 (window as unknown as {__researchFixture:unknown}).__researchFixture={scope,overview};
 const target=():NavigationSearch=>({workspace:scope.workspace,project:scope.project,view:'ai-search'});
 if(!window.location.search){const intent=readAISearchIntent()!;history.replaceState(null,'', '/'+defaultStringifySearch({...target(),aiSearchQuery:aiSearchIntentQuery({...intent,section:'captures',create:true})}));}

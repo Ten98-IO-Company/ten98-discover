@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { contentSupportStoredInputSchema, contentSupportSelectionSchema, contentSupportDependenciesSchema, contentSupportProposalSchema } from '../lib/ai-content-support.ts';
+import type { contentSupportSelectionSchema, contentSupportDependenciesSchema, contentSupportProposalSchema } from '../lib/ai-content-support.ts';
 import type { ContentSupportSnapshot } from './ai-content-support-input.ts';
 import type { RenderedInput, RouteSnapshot } from './openrouter-input.ts';
 
@@ -12,10 +12,10 @@ export type SupportQuoteRow = {
  source_kind: 'capture' | 'project'; audit_run_id: string; input_hash: string; payload_hash: string; schema_hash: string;
  query_receipt_hash: string; corpus_receipt_hash: string; source_context_revision: number | null; source_profile_hash: string | null;
  retention_revision: number; raw_days_at_quote: number; derived_days_at_quote: number;
- source_input: z.output<typeof contentSupportStoredInputSchema> | null;
+ source_input: Record<string,unknown> | null;
  snapshot: { evidence: ContentSupportSnapshot; selection: Selection } | null;
  messages: RenderedInput | null; dependencies: z.output<typeof contentSupportDependenciesSchema>; route: RouteSnapshot;
- estimate_micros: string; max_spend_micros: string; raw_expired_at: Date | null; input_purged_at: Date | null;
+ request_version: number; estimate_micros: string|null; max_spend_micros: string|null; raw_expired_at: Date | null; input_purged_at: Date | null;
  created_at: Date; expires_at: Date; raw_anchor_at: Date; derived_anchor_at: Date;
  quote_created: string; quote_expires: string; raw_anchor: string; derived_anchor: string; quote_expired: boolean;
 };
@@ -25,11 +25,11 @@ export type SupportRunRow = {
  lease_owner: string | null; lease_expires_at: Date | null; lease_expired: boolean | null;
  generation_id: string | null; dispatched_at: Date | null; completed_at: Date | null; created_at: Date;
  raw_result: string | null; proposal: z.output<typeof contentSupportProposalSchema> | null;
- financial_evidence: unknown; diagnostic: string | null; result_purged_at: Date | null;
+ request_evidence: Record<string,unknown>|null; diagnostic: string | null; result_purged_at: Date | null;
  run_created: string; run_dispatched: string | null; run_completed: string | null;
- charge_status: 'reserved' | 'dispatched' | 'settled' | 'uncertain' | 'cancelled';
- actual_micros: string | null; estimate_micros: string; ledger_input_hash: string;
- ledger_connection_id: string; ledger_user_id: string; ledger_connection_revision: number; ledger_operation: string;
+ request_status: 'reserved' | 'dispatched' | 'settled' | 'uncertain' | 'cancelled';
+ request_input_hash: string;
+ request_connection_id: string; request_user_id: string; request_connection_revision: number; request_operation: string;
 };
 // The pure identity hash accepts pre-insert and deliberately tampered records.
 // Its unknown fields grant no authority; persisted rows have the types above.
