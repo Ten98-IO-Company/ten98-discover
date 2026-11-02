@@ -4,13 +4,13 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget} from '../src/server/providers.ts';
+import {saveProvider,saveProviderRequestControls} from '../src/server/providers.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordReconcileEndpoint,keywordPayload,type KeywordRow} from '../src/server/keyword-research-input.ts';
-import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
+import {refreshKeywordMarkets,prepareKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from '../src/server/saved-keywords.ts';
-import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
+import {prepareSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,recoverSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
 import {getRetention,previewRetention,runRetentionBatch} from '../src/server/retention.ts';
 
 const failed=(status:number)=>(error:unknown)=>!!error&&typeof error==='object'&&'status'in error&&error.status===status;
@@ -23,6 +23,12 @@ function csvRows(text:string){
   assert.equal(quoted,false);if(row.length||cell){row.push(cell);rows.push(row);}return rows;
 }
 
+function assertNoApiMoney(value:unknown):void{
+ if(!value||typeof value!=='object')return;
+ const forbidden=new Set(['cost','price','balance','budget','actual_micros','estimate_micros','estimateUsd','actualUsd','estimateMicros','actualMicros','chargeStatus','spendingPaused','perTask','perItem','priceAsOf','priceSource','promptPrice','completionPrice','requestPrice','max_price','maxSpendUsd','fundedCredits']);
+ for(const [key,item]of Object.entries(value)){assert.equal(forbidden.has(key),false,'Unexpected API financial field: '+key);assertNoApiMoney(item);}
+}
+
 export async function runSavedKeywordChecks(){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),db=new URL(config.databaseUrl),app=new URL(config.appUrl);
   const hostedCi=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&db.pathname==='/ten98_saved_keywords_ci';
@@ -33,19 +39,17 @@ export async function runSavedKeywordChecks(){
   globalThis.fetch=async()=>{accidentalRequests++;throw new Error('Real provider traffic is forbidden in saved keyword acceptance.');};
   let paidCalls=0,freeCalls=0,mode:'ok'|'missing'|'unknown'='ok',volume=0;const paidBodies:any[]=[];let reconcileItems:unknown[]=[];
   const account='synthetic-saved-keywords@integration.test';
-  const free=(result:unknown[])=>Response.json({status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result}]});
+  const free=(result:unknown[])=>Response.json({status_code:20000,tasks_count:1,tasks:[{status_code:20000,result}]});
   const send:typeof fetch=async(url,init)=>{
     assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
-    if(url===keywordAccountEndpoint){freeCalls++;const prices={priority_normal:[{cost_type:'per_request',cost:0.012},{cost_type:'per_result',cost:0.00012}]};return free([{login:account,price:{dataforseo_labs:{keyword_overview:{live:prices},keyword_ideas:{live:prices}}}}]);}
+    if(url===keywordAccountEndpoint){freeCalls++;return free([{login:account}]);}
     if(url===keywordCatalogEndpoint){freeCalls++;return free([2840,2826].map(location_code=>({location_code,location_name:location_code===2840?'United States':'United Kingdom',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]})));}
     if(url===keywordReconcileEndpoint){freeCalls++;return free(reconcileItems);}
-    assert.equal(url,keywordEndpoints.overview,'No fallback paid endpoint is allowed in this fixture.');paidCalls++;
+    assert.equal(url,keywordEndpoints.overview,'No fallback provider endpoint is allowed in this fixture.');paidCalls++;
     const data=JSON.parse(init?.body as string)[0];paidBodies.push(data);
     if(mode==='unknown')throw new Error('Synthetic lost provider response.');
-    const keywords=mode==='missing'?[]:data.keywords,cost=0.012+data.keywords.length*0.00012;
-    // Fixed-point formatting avoids introducing binary-addition noise into the synthetic JSON charge.
-    const exactCost=Number(cost.toFixed(6));
-    return Response.json({status_code:20000,cost:exactCost,tasks_count:1,tasks:[{id:'synthetic-'+randomUUID(),status_code:20000,cost:exactCost,path:['v3','dataforseo_labs','google','keyword_overview','live'],data,result:[{se_type:'google',location_code:data.location_code,language_code:data.language_code,items_count:keywords.length,items:keywords.map((keyword:string)=>({keyword,keyword_info:{search_volume:volume,cpc:0.000001,competition:0,monthly_searches:[]},keyword_properties:{keyword_difficulty:0}}))}]}]});
+    const keywords=mode==='missing'?[]:data.keywords;
+    return Response.json({status_code:20000,tasks_count:1,tasks:[{id:'synthetic-'+randomUUID(),status_code:20000,path:['v3','dataforseo_labs','google','keyword_overview','live'],data,result:[{se_type:'google',location_code:data.location_code,language_code:data.language_code,items_count:keywords.length,items:keywords.map((keyword:string)=>({keyword,keyword_info:{search_volume:volume,cpc:0.000001,competition:0,monthly_searches:[]},keyword_properties:{keyword_difficulty:0}}))}]}]});
   };
   async function fixture(withProvider=false):Promise<Fixture>{
     const workspace=randomUUID(),project=randomUUID();await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Synthetic saved keywords')",[workspace]);
@@ -53,13 +57,13 @@ export async function runSavedKeywordChecks(){
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Saved keywords','https://'||$1||'.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
     const value:Fixture={workspace,project,connectionId:null};if(withProvider)await provider(value);return value;
   }
-  async function provider(f:Fixture){if(!f.connectionId){f.connectionId=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic provider',credentials:{login:account,password:'synthetic-never-live'}})).connection.id;await saveBudget(f.workspace,owner,{paused:false});await refreshKeywordMarkets(f.project,owner,{connectionId:f.connectionId},send);}return f.connectionId;}
+  async function provider(f:Fixture){if(!f.connectionId){f.connectionId=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic provider',credentials:{login:account,password:'synthetic-never-live'}})).connection.id;await saveProviderRequestControls(f.workspace,owner,{paused:false});await refreshKeywordMarkets(f.project,owner,{connectionId:f.connectionId},send);}return f.connectionId;}
   const list=(f:Fixture,raw:unknown={},user=owner)=>listSavedKeywords(f.project,user,raw);
   const selection=(ids:string[])=>({type:'ids',keywordIds:ids});
   async function manual(f:Fixture,keywords:string[],extra:Record<string,unknown>={}){return saveSavedKeywords(f.project,owner,{requestId:randomUUID(),revision:(await list(f)).revision,source:{type:'manual',keywords,locationCode:2840,languageCode:'en'},...extra});}
   async function retained(f:Fixture,keywords:string[],rows?:KeywordRow[]){
     const request={connectionId:await provider(f),mode:'overview',keywords,locationCode:2840,languageCode:'en',limit:100};
-    const q=(await quoteKeywordResearch(f.project,owner,request,send)).quote;const result=await startKeywordResearch(f.project,owner,{quoteId:q.id,requestKey:randomUUID()});await executeKeywordResearch(result.run.id,send);
+    const q=(await prepareKeywordResearch(f.project,owner,request,send)).preparation;const result=await startKeywordResearch(f.project,owner,{preparationId:q.id,requestKey:randomUUID()});await executeKeywordResearch(result.run.id,send);
     const run=(await getKeywordRun(f.project,owner,result.run.id)).run;assert.equal(run.status,'completed');
     if(rows)await pool.query('UPDATE keyword_research_run SET result=$2 WHERE id=$1',[run.id,JSON.stringify({...run.result,rows})]);
     return run.id;
@@ -137,117 +141,118 @@ export async function runSavedKeywordChecks(){
     assert.ok((await list(tagged)).tagsNextCursor);await updateSavedKeywordTag(tagged.project,owner,tags1.tags[0].id,{requestId:randomUUID(),revision:tags1.revision,color:'sky'});await assert.rejects(listSavedKeywordTags(tagged.project,viewer,{cursor:tags1.nextCursor}),failed(409));
     console.log('PASS tag management remains paginated beyond bounded keyword filter options');
 
-    const quote=(f:Fixture,ids:string[],user=owner)=>quoteSavedKeywordRefresh(f.project,user,{connectionId:f.connectionId,selection:selection(ids)},send);
-    const start=(f:Fixture,quoteId:string,user=owner,key=randomUUID())=>startSavedKeywordRefresh(f.project,user,{quoteId,requestKey:key});
+    const preparation=(f:Fixture,ids:string[],user=owner)=>prepareSavedKeywordRefresh(f.project,user,{connectionId:f.connectionId,selection:selection(ids)},send);
+    const start=(f:Fixture,preparationId:string,user=owner,key=randomUUID())=>startSavedKeywordRefresh(f.project,user,{preparationId,requestKey:key});
     async function childRuns(planId:string){return(await pool.query('SELECT r.id FROM keyword_research_run r JOIN keyword_quote q ON q.id=r.quote_id WHERE q.saved_refresh_plan_id=$1 ORDER BY r.id',[planId])).rows.map(row=>row.id as string);}
-    async function charge(id:string){return(await pool.query('SELECT status,actual_micros,estimate_micros,provider_reference FROM provider_request WHERE id=$1',[id])).rows[0];}
+    async function requestReceipt(id:string){const row=(await pool.query('SELECT status,actual_micros,estimate_micros,provider_reference FROM provider_request WHERE id=$1',[id])).rows[0];assert.equal(row.actual_micros,null);assert.equal(row.estimate_micros,null);return row;}
     const refresh=await fixture(true),us=await manual(refresh,Array.from({length:101},(_,i)=>'refresh '+String(i).padStart(3,'0'))),uk=await manual(refresh,['uk one','uk two'],{source:{type:'manual',keywords:['uk one','uk two'],locationCode:2826,languageCode:'en'}});
-    const beforeFree=freeCalls,beforePaid=paidCalls,q=(await quote(refresh,[...us.ids,...uk.ids])).quote;
-    assert.equal(freeCalls-beforeFree,1);assert.equal(paidCalls,beforePaid);assert.equal(q.targetCount,103);assert.equal(q.estimateUsd,'0.048360');
+    const beforeFree=freeCalls,beforePaid=paidCalls,q=(await preparation(refresh,[...us.ids,...uk.ids])).preparation;
+    assert.equal(freeCalls-beforeFree,1);assert.equal(paidCalls,beforePaid);assert.equal(q.targetCount,103);assertNoApiMoney(q);
     assert.deepEqual(q.children.map(child=>[child.request.locationCode,child.request.languageCode,child.request.keywords.length]),[[2826,'en',2],[2840,'en',100],[2840,'en',1]]);
     assert.equal(new Set(q.children.flatMap(child=>child.targetIds)).size,103);assert.ok(q.children.every(child=>child.request.mode==='overview'&&child.request.limit===100));
-    await assert.rejects(startKeywordResearch(refresh.project,owner,{quoteId:q.children[0].quoteId,requestKey:randomUUID()}),failed(409));
-    const later=(await manual(refresh,['added after quote'])).ids[0],requestKey=randomUUID();
+    await assert.rejects(startKeywordResearch(refresh.project,owner,{preparationId:q.children[0].preparationId,requestKey:randomUUID()}),failed(409));
+    const later=(await manual(refresh,['added after preparation'])).ids[0],requestKey=randomUUID();
     const starts=await Promise.all([start(refresh,q.id,owner,requestKey),start(refresh,q.id,owner,requestKey)]);assert.deepEqual(starts[0].plan.children.map(child=>child.runId),starts[1].plan.children.map(child=>child.runId));
     assert.equal((await childRuns(q.id)).length,3);
     for(const child of starts[0].plan.children){assert.ok(child.runId);await executeKeywordResearch(child.runId,send);}
     assert.equal(paidCalls-beforePaid,3);assert.equal((await getSavedKeywordRefresh(refresh.project,viewer,q.id)).plan.status,'completed');
-    assert.equal((await list(refresh,{filters:{metrics:'available'},pageSize:250})).total,103);assert.equal((await list(refresh,{filters:{search:'added after quote'}})).rows[0].id,later);assert.equal((await list(refresh,{filters:{search:'added after quote'}})).rows[0].metrics.status,'unavailable');
+    assert.equal((await list(refresh,{filters:{metrics:'available'},pageSize:250})).total,103);assert.equal((await list(refresh,{filters:{search:'added after preparation'}})).rows[0].id,later);assert.equal((await list(refresh,{filters:{search:'added after preparation'}})).rows[0].metrics.status,'unavailable');
     await pool.query("UPDATE saved_keyword_refresh_plan SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[q.id]);
     const retried=await start(refresh,q.id,owner,requestKey);assert.deepEqual(retried.plan.children.map(child=>child.runId),starts[0].plan.children.map(child=>child.runId));assert.equal(paidCalls-beforePaid,3);
     await assert.rejects(start(refresh,q.id,editor,requestKey),failed(409));await assert.rejects(start(refresh,q.id),failed(409));
-    const fresh=(await quote(refresh,[later])).quote;await assert.rejects(start(refresh,fresh.id,owner,requestKey),failed(409));
+    const fresh=(await preparation(refresh,[later])).preparation;await assert.rejects(start(refresh,fresh.id,owner,requestKey),failed(409));
     const readCalls=[freeCalls,paidCalls];await listSavedKeywordRefreshes(refresh.project,viewer);await getSavedKeywordRefresh(refresh.project,viewer,q.id);await exportSavedKeywords(refresh.project,viewer,{selection:{type:'filtered',filters:{}},format:'csv'});assert.deepEqual([freeCalls,paidCalls],readCalls);
-    await assert.rejects(quoteSavedKeywordRefresh(refresh.project,viewer,{connectionId:refresh.connectionId,selection:selection([later])},send),failed(404));await assert.rejects(getSavedKeywordRefresh(foreign.project,owner,q.id),failed(404));
-    console.log('PASS captured market/chunk grouping, exact estimates, ordinary-child guard, atomic replay and no calls from reads');
+    await assert.rejects(prepareSavedKeywordRefresh(refresh.project,viewer,{connectionId:refresh.connectionId,selection:selection([later])},send),failed(404));await assert.rejects(getSavedKeywordRefresh(foreign.project,owner,q.id),failed(404));
+    console.log('PASS captured market/chunk grouping, exact child requests, ordinary-child guard, atomic replay and no calls from reads');
 
     const limits=await fixture(true);await pool.query(`INSERT INTO saved_keyword(id,project_id,keyword,location_code,language_code)
       SELECT gen_random_uuid(),$1,CASE WHEN n<=2000 THEN 'capacity ' ELSE 'extra ' END||lpad(n::text,5,'0'),2840,'en' FROM generate_series(1,10001) n`,[limits.project]);
     assert.equal((await list(limits)).total,10001,'The list itself has no operation-sized lifetime cap.');
-    const boundCalls=[freeCalls,paidCalls];await assert.rejects(quoteSavedKeywordRefresh(limits.project,owner,{connectionId:limits.connectionId,selection:{type:'filtered',filters:{}}},send),failed(413));
+    const boundCalls=[freeCalls,paidCalls];await assert.rejects(prepareSavedKeywordRefresh(limits.project,owner,{connectionId:limits.connectionId,selection:{type:'filtered',filters:{}}},send),failed(413));
     await assert.rejects(exportSavedKeywords(limits.project,owner,{selection:{type:'filtered',filters:{}},format:'csv'}),failed(413));assert.deepEqual([freeCalls,paidCalls],boundCalls);
-    const capacity=(await quoteSavedKeywordRefresh(limits.project,owner,{connectionId:limits.connectionId,selection:{type:'filtered',filters:{search:'capacity '}}},send)).quote;assert.equal(capacity.targetCount,2000);assert.equal(capacity.children.length,20);assert.ok(capacity.children.every(child=>child.request.keywords.length===100));
+    const capacity=(await prepareSavedKeywordRefresh(limits.project,owner,{connectionId:limits.connectionId,selection:{type:'filtered',filters:{search:'capacity '}}},send)).preparation;assert.equal(capacity.targetCount,2000);assert.equal(capacity.children.length,20);assert.ok(capacity.children.every(child=>child.request.keywords.length===100));
     const markets=await fixture(true);await pool.query("INSERT INTO saved_keyword(id,project_id,keyword,location_code,language_code) SELECT gen_random_uuid(),$1,'market'||n,3000+n,'en' FROM generate_series(1,21) n",[markets.project]);
-    const marketCalls=[freeCalls,paidCalls];await assert.rejects(quoteSavedKeywordRefresh(markets.project,owner,{connectionId:markets.connectionId,selection:{type:'filtered',filters:{}}},send),failed(413));assert.deepEqual([freeCalls,paidCalls],marketCalls);
+    const marketCalls=[freeCalls,paidCalls];await assert.rejects(prepareSavedKeywordRefresh(markets.project,owner,{connectionId:markets.connectionId,selection:{type:'filtered',filters:{}}},send),failed(413));assert.deepEqual([freeCalls,paidCalls],marketCalls);
     const aborted=new AbortController();aborted.abort();await assert.rejects(exportSavedKeywords(pages.project,owner,{selection:{type:'filtered',filters:{}},format:'csv'},aborted.signal),failed(499));
     console.log('PASS 2,000-target/20-child boundaries, lifetime rows above operation limits and non-truncating export rejection');
 
-    const rollback=await fixture(true),rollbackIds=(await manual(rollback,Array.from({length:101},(_,i)=>'rollback '+i))).ids,rollbackQuote=(await quote(rollback,rollbackIds)).quote;
+    const rollback=await fixture(true),rollbackIds=(await manual(rollback,Array.from({length:101},(_,i)=>'rollback '+i))).ids,rollbackQuote=(await preparation(rollback,rollbackIds)).preparation;
     const boss=await getBoss(),originalSend=boss.send.bind(boss),queuedIds:string[]=[];
     boss.send=(async(...args:any[])=>{const result=await(originalSend as any)(...args);queuedIds.push(args[2].id);if(queuedIds.length===2)throw new Error('Synthetic failure after a real second queue insert.');return result;})as typeof boss.send;
     const rollbackKey=randomUUID();try{await assert.rejects(start(rollback,rollbackQuote.id,owner,rollbackKey));}finally{boss.send=originalSend;}
     assert.equal(queuedIds.length,2);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=ANY($1::uuid[])',[queuedIds])).rowCount,0);assert.equal((await childRuns(rollbackQuote.id)).length,0);
     assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,rollbackQuote.id)).plan.startedAt,null);
-    // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first child's reservation (N=1),
-    // so the second child meets the real ledger gate (409 SPENDING_BUDGET) and the whole start rolls back, sentinel included.
+    // Pause after the first reservation so the real manual-pause gate rolls back every child and the pause.
     await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
-        INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
-        VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+      IF NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id)=TG_ARGV[1]::int THEN
+        UPDATE workspace_provider_control SET paused=true WHERE workspace_id=NEW.workspace_id;
       END IF; RETURN NULL; END $$`);
     await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${rollback.workspace}','1')`);
-    try{await assert.rejects(start(rollback,rollbackQuote.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
-    assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
+    try{await assert.rejects(start(rollback,rollbackQuote.id),(error:any)=>failed(409)(error)&&error.code==='PROVIDER_REQUESTS_PAUSED'&&/paused/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
+    assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await pool.query('SELECT paused FROM workspace_provider_control WHERE workspace_id=$1',[rollback.workspace])).rows[0].paused,false);
     const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
     console.log('PASS actual queue insert rollback, all-child reservation atomicity and undispatched cancellation');
 
     const invalid=await fixture(true),invalidIds=(await manual(invalid,['allowed','x'.repeat(81)])).ids;
-    await assert.rejects(quote(invalid,invalidIds),failed(409));const allowed=(await list(invalid)).rows.find(row=>row.keyword==='allowed')!.id;
-    const expiredQuote=(await quote(invalid,[allowed])).quote;await pool.query("UPDATE saved_keyword_refresh_plan SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[expiredQuote.id]);await assert.rejects(start(invalid,expiredQuote.id),failed(409));
-    const changed=(await quote(invalid,[allowed])).quote;await saveProvider(invalid.workspace,owner,{name:'Rotated synthetic',credentials:{login:account,password:'synthetic-rotated'}},invalid.connectionId!);await assert.rejects(start(invalid,changed.id),failed(409));
-    // Owner decision D3(6): Start authorized every child. A plan and child quote that age past five minutes after Start
+    await assert.rejects(preparation(invalid,invalidIds),failed(409));const allowed=(await list(invalid)).rows.find(row=>row.keyword==='allowed')!.id;
+    const legacyPreparation=(await preparation(invalid,[allowed])).preparation;await pool.query('UPDATE saved_keyword_refresh_plan SET request_version=0 WHERE id=$1',[legacyPreparation.id]);await pool.query('UPDATE keyword_quote SET request_version=0 WHERE saved_refresh_plan_id=$1',[legacyPreparation.id]);
+    await assert.rejects(start(invalid,legacyPreparation.id),failed(409));assert.equal((await childRuns(legacyPreparation.id)).length,0);
+
+    const expiredQuote=(await preparation(invalid,[allowed])).preparation;await pool.query("UPDATE saved_keyword_refresh_plan SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[expiredQuote.id]);await assert.rejects(start(invalid,expiredQuote.id),failed(409));
+    const changed=(await preparation(invalid,[allowed])).preparation;await saveProvider(invalid.workspace,owner,{name:'Rotated synthetic',credentials:{login:account,password:'synthetic-rotated'}},invalid.connectionId!);await assert.rejects(start(invalid,changed.id),failed(409));
+    // Owner decision D3(6): Start authorized every child. A plan and child preparation that age past five minutes after Start
     // neither let the sweeper cancel the queued child nor stop its dispatch; it is sent exactly once and settles.
-    const queuedExpiry=(await start(invalid,(await quote(invalid,[allowed])).quote.id)).plan,agedRun=queuedExpiry.children[0].runId!;
+    const queuedExpiry=(await start(invalid,(await preparation(invalid,[allowed])).preparation.id)).plan,agedRun=queuedExpiry.children[0].runId!;
     await pool.query("UPDATE saved_keyword_refresh_plan SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[queuedExpiry.id]);
     await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE saved_refresh_plan_id=$1",[queuedExpiry.id]);
-    await reconcileKeywordJobs();assert.equal((await charge(agedRun)).status,'reserved');assert.equal((await pool.query('SELECT status FROM keyword_research_run WHERE id=$1',[agedRun])).rows[0].status,'queued');
+    await reconcileKeywordJobs();assert.equal((await requestReceipt(agedRun)).status,'reserved');assert.equal((await pool.query('SELECT status FROM keyword_research_run WHERE id=$1',[agedRun])).rows[0].status,'queued');
     const expiryPaid=paidCalls;await executeKeywordResearch(agedRun,send);assert.equal(paidCalls,expiryPaid+1);await executeKeywordResearch(agedRun,send);assert.equal(paidCalls,expiryPaid+1);
-    const agedCharge=await charge(agedRun);assert.equal(agedCharge.status,'settled');assert.equal(agedCharge.actual_micros,'12120');assert.equal((await getSavedKeywordRefresh(invalid.project,viewer,queuedExpiry.id)).plan.status,'completed');
-    const removed=(await start(invalid,(await quote(invalid,[allowed])).quote.id)).plan;await removeSavedKeywords(invalid.project,owner,{requestId:randomUUID(),revision:(await list(invalid)).revision,keywordIds:[allowed]});const replacement=(await manual(invalid,['allowed'])).ids[0];await executeKeywordResearch(removed.children[0].runId!,send);assert.equal(paidCalls,expiryPaid+1);assert.equal((await charge(removed.children[0].runId!)).status,'cancelled');assert.equal((await list(invalid)).rows.find(row=>row.id===replacement)!.metrics.status,'unavailable');
-    console.log('PASS unsupported refresh, expired/rotated quote refused at Start, a started child sent once after its quote aged (D3) and exact target deletion before paid dispatch');
+    const agedCharge=await requestReceipt(agedRun);assert.equal(agedCharge.status,'settled');assert.equal(agedCharge.actual_micros,null);assert.equal(agedCharge.estimate_micros,null);assert.equal((await getSavedKeywordRefresh(invalid.project,viewer,queuedExpiry.id)).plan.status,'completed');
+    const removed=(await start(invalid,(await preparation(invalid,[allowed])).preparation.id)).plan;await removeSavedKeywords(invalid.project,owner,{requestId:randomUUID(),revision:(await list(invalid)).revision,keywordIds:[allowed]});const replacement=(await manual(invalid,['allowed'])).ids[0];await executeKeywordResearch(removed.children[0].runId!,send);assert.equal(paidCalls,expiryPaid+1);assert.equal((await requestReceipt(removed.children[0].runId!)).status,'cancelled');assert.equal((await list(invalid)).rows.find(row=>row.id===replacement)!.metrics.status,'unavailable');
+    console.log('PASS unsupported refresh, expired/rotated preparation refused at Start, a started child sent once after its preparation aged (D3) and exact target deletion before provider dispatch');
 
     function barrier(){let release!:()=>void,ready!:()=>void;return{wait:new Promise<void>(resolve=>release=resolve),entered:new Promise<void>(resolve=>ready=resolve),release:()=>release(),ready:()=>ready()};}
     async function bounded<T>(promise:Promise<T>){let timer:ReturnType<typeof setTimeout>;try{return await Promise.race([promise,new Promise<never>((_,reject)=>timer=setTimeout(()=>reject(new Error('Synthetic race timed out.')),10_000))]);}finally{clearTimeout(timer!);}}
-    const afterDispatch=await fixture(true),oldId=(await manual(afterDispatch,['after dispatch'])).ids[0],oldPlan=(await start(afterDispatch,(await quote(afterDispatch,[oldId])).quote.id)).plan,gate=barrier();
+    const afterDispatch=await fixture(true),oldId=(await manual(afterDispatch,['after dispatch'])).ids[0],oldPlan=(await start(afterDispatch,(await preparation(afterDispatch,[oldId])).preparation.id)).plan,gate=barrier();
     const executing=executeKeywordResearch(oldPlan.children[0].runId!,async(...args)=>{const response=await send(...args);if(args[0]===keywordEndpoints.overview){gate.ready();await gate.wait;}return response;});
     try{await bounded(gate.entered);await removeSavedKeywords(afterDispatch.project,owner,{requestId:randomUUID(),revision:(await list(afterDispatch)).revision,keywordIds:[oldId]});await manual(afterDispatch,['after dispatch']);}finally{gate.release();await executing;}
-    assert.equal((await charge(oldPlan.children[0].runId!)).status,'settled');const recreated=(await list(afterDispatch)).rows[0];assert.notEqual(recreated.id,oldId);assert.equal(recreated.metrics.status,'unavailable');
-    const ordering=await fixture(true),orderedId=(await manual(ordering,['ordering'])).ids[0],firstPlan=(await start(ordering,(await quote(ordering,[orderedId])).quote.id)).plan,oldResponse=barrier();volume=11;
+    assert.equal((await requestReceipt(oldPlan.children[0].runId!)).status,'settled');const recreated=(await list(afterDispatch)).rows[0];assert.notEqual(recreated.id,oldId);assert.equal(recreated.metrics.status,'unavailable');
+    const ordering=await fixture(true),orderedId=(await manual(ordering,['ordering'])).ids[0],firstPlan=(await start(ordering,(await preparation(ordering,[orderedId])).preparation.id)).plan,oldResponse=barrier();volume=11;
     const olderExecution=executeKeywordResearch(firstPlan.children[0].runId!,async(...args)=>{const response=await send(...args);if(args[0]===keywordEndpoints.overview){oldResponse.ready();await oldResponse.wait;}return response;});
-    try{await bounded(oldResponse.entered);const newPlan=(await start(ordering,(await quote(ordering,[orderedId])).quote.id)).plan;volume=22;await executeKeywordResearch(newPlan.children[0].runId!,send);assert.equal((await list(ordering)).rows[0].metrics.row?.searchVolume,22);}finally{oldResponse.release();await olderExecution;}
+    try{await bounded(oldResponse.entered);const newPlan=(await start(ordering,(await preparation(ordering,[orderedId])).preparation.id)).plan;volume=22;await executeKeywordResearch(newPlan.children[0].runId!,send);assert.equal((await list(ordering)).rows[0].metrics.row?.searchVolume,22);}finally{oldResponse.release();await olderExecution;}
     assert.equal((await list(ordering)).rows[0].metrics.row?.searchVolume,22);volume=0;
-    const priorMetrics=(await list(ordering)).rows[0].metrics,missing=(await start(ordering,(await quote(ordering,[orderedId])).quote.id)).plan;mode='missing';await executeKeywordResearch(missing.children[0].runId!,send);mode='ok';const missingRow=(await list(ordering)).rows[0];assert.deepEqual(missingRow.metrics,priorMetrics);assert.equal(missingRow.refresh.lastAttemptStatus,'missing');
-    console.log('PASS post-dispatch deletion preserves charge without resurrection, reverse completions and omitted-row evidence');
+    const priorMetrics=(await list(ordering)).rows[0].metrics,missing=(await start(ordering,(await preparation(ordering,[orderedId])).preparation.id)).plan;mode='missing';await executeKeywordResearch(missing.children[0].runId!,send);mode='ok';const missingRow=(await list(ordering)).rows[0];assert.deepEqual(missingRow.metrics,priorMetrics);assert.equal(missingRow.refresh.lastAttemptStatus,'missing');
+    console.log('PASS post-dispatch deletion preserves its settled request without resurrection, reverse completions and omitted-row evidence');
 
     const access=await fixture(true),accessId=(await manual(access,['permission'])).ids[0];
-    const beforeRevocation=(await start(access,(await quote(access,[accessId],editor)).quote.id,editor)).plan;await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[access.workspace,editor]);const preRolePaid=paidCalls;await executeKeywordResearch(beforeRevocation.children[0].runId!,send);assert.equal(paidCalls,preRolePaid);assert.equal((await charge(beforeRevocation.children[0].runId!)).status,'cancelled');
-    await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'editor')",[access.workspace,editor]);const during=(await start(access,(await quote(access,[accessId],editor)).quote.id,editor)).plan,permissionGate=barrier();
+    const beforeRevocation=(await start(access,(await preparation(access,[accessId],editor)).preparation.id,editor)).plan;await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[access.workspace,editor]);const preRolePaid=paidCalls;await executeKeywordResearch(beforeRevocation.children[0].runId!,send);assert.equal(paidCalls,preRolePaid);assert.equal((await requestReceipt(beforeRevocation.children[0].runId!)).status,'cancelled');
+    await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'editor')",[access.workspace,editor]);const during=(await start(access,(await preparation(access,[accessId],editor)).preparation.id,editor)).plan,permissionGate=barrier();
     const permissionExecution=executeKeywordResearch(during.children[0].runId!,async(...args)=>{const response=await send(...args);if(args[0]===keywordEndpoints.overview){permissionGate.ready();await permissionGate.wait;}return response;});
     try{await bounded(permissionGate.entered);await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[access.workspace,editor]);}finally{permissionGate.release();await permissionExecution;}
-    assert.equal((await charge(during.children[0].runId!)).status,'settled');assert.equal((await list(access)).rows[0].metrics.status,'unavailable');
-    const uncertain=await fixture(true),uncertainId=(await manual(uncertain,['lost result'])).ids[0],uncertainPlan=(await start(uncertain,(await quote(uncertain,[uncertainId])).quote.id)).plan,uncertainRun=uncertainPlan.children[0].runId!;
-    mode='unknown';await executeKeywordResearch(uncertainRun,send);mode='ok';const uncertainPaid=paidCalls;assert.equal((await charge(uncertainRun)).status,'uncertain');await executeKeywordResearch(uncertainRun,send);assert.equal(paidCalls,uncertainPaid);
-    // Owner decision D3: the uncertain charge blocks Start through the ledger; the workspace was never paused, so there is no unpause step.
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[uncertain.workspace])).rows[0].paused,false);await assert.rejects(start(uncertain,(await quote(uncertain,[uncertainId])).quote.id),failed(409));
+    assert.equal((await requestReceipt(during.children[0].runId!)).status,'settled');assert.equal((await list(access)).rows[0].metrics.status,'unavailable');
+    const uncertain=await fixture(true),uncertainId=(await manual(uncertain,['lost result'])).ids[0],uncertainPlan=(await start(uncertain,(await preparation(uncertain,[uncertainId])).preparation.id)).plan,uncertainRun=uncertainPlan.children[0].runId!;
+    mode='unknown';await executeKeywordResearch(uncertainRun,send);mode='ok';const uncertainPaid=paidCalls;assert.equal((await requestReceipt(uncertainRun)).status,'uncertain');await executeKeywordResearch(uncertainRun,send);assert.equal(paidCalls,uncertainPaid);
+    // A new refresh plan is independent of the original unknown request outcome and can be cancelled before dispatch.
+    assert.equal((await pool.query('SELECT paused FROM workspace_provider_control WHERE workspace_id=$1',[uncertain.workspace])).rows[0].paused,false);const independentPlan=(await start(uncertain,(await preparation(uncertain,[uncertainId])).preparation.id)).plan;assert.ok(independentPlan.children.every(child=>child.runId));await cancelSavedKeywordRefresh(uncertain.project,owner,independentPlan.id,{});for(const child of independentPlan.children)await executeKeywordResearch(child.runId!,send);await executeKeywordResearch(uncertainRun,send);assert.deepEqual((await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[uncertainRun])).rows[0],{status:'uncertain',actual_micros:null});assert.equal(paidCalls,uncertainPaid);
     await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[uncertainRun]);
     const originalCompletedAt=(await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at;
     const originalRequest=(await getKeywordRun(uncertain.project,owner,uncertainRun)).run.request;
     reconcileItems=[{id:'saved-keyword-receipt',url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(originalRequest,uncertainRun),status:'20000',cost:0.01212}];
-    await assert.rejects(reconcileSavedKeywordRefresh(uncertain.project,editor,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send),failed(404));
-    assert.equal((await reconcileSavedKeywordRefresh(uncertain.project,owner,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send)).reconciliation.status,'matched');assert.equal((await charge(uncertainRun)).status,'settled');assert.equal((await list(uncertain)).rows[0].metrics.status,'unavailable');assert.equal(paidCalls,uncertainPaid);
-    assert.equal((await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at,originalCompletedAt,'Charge recovery cannot restart the provider evidence retention clock.');
-    console.log('PASS live permission rechecks, settlement after revocation, uncertain block and charge-only reconciliation');
+    await assert.rejects(recoverSavedKeywordRefresh(uncertain.project,editor,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send),failed(404));
+    assert.equal((await recoverSavedKeywordRefresh(uncertain.project,owner,uncertainPlan.id,{runId:uncertainRun,connectionId:uncertain.connectionId},send)).recovery.status,'matched');assert.equal((await requestReceipt(uncertainRun)).status,'settled');assert.equal((await list(uncertain)).rows[0].metrics.status,'unavailable');assert.equal(paidCalls,uncertainPaid);
+    assert.equal((await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at,originalCompletedAt,'Request recovery cannot restart the provider evidence retention clock.');
+    console.log('PASS live permission rechecks, settlement after revocation, independent starts during uncertainty and original-request recovery');
 
     const retention=await fixture(true),retainedRun=await retained(retention,['retained'],[metrics('retained',{searchVolume:0,cpcUsd:'0.000000'})]);const authored=await observed(retention,retainedRun,[0],{tags:['Authored tag']});
     await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[retainedRun]);await pool.query("UPDATE saved_keyword SET metric_observed_at=clock_timestamp()-interval '366 days' WHERE project_id=$1",[retention.project]);
-    const ledgerBefore=await charge(retainedRun),receiptBefore=(await pool.query('SELECT * FROM project_content_request WHERE project_id=$1',[retention.project])).rows;
+    const ledgerBefore=await requestReceipt(retainedRun),receiptBefore=(await pool.query('SELECT * FROM project_content_request WHERE project_id=$1',[retention.project])).rows;
     const policy=await pool.connect();try{await policy.query('BEGIN');await policy.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[retention.workspace]);await policy.query('UPDATE workspace SET derived_history_days=400 WHERE id=$1',[retention.workspace]);await runRetentionBatch(retention.project);await policy.query('COMMIT');}finally{await policy.query('ROLLBACK').catch(()=>{});policy.release();}
     await runRetentionBatch(retention.project);assert.equal((await list(retention)).rows[0].metrics.status,'available');
     const retentionSettings=await getRetention(retention.workspace,owner);
     const retentionPreview=await previewRetention(retention.workspace,owner,{revision:retentionSettings.revision,settings:{...retentionSettings.settings,derivedHistoryDays:365}});
     assert.deepEqual(retentionPreview.savedKeywordEstimate,{status:'available',metrics:1,atLeast:false},'Preview counts only the selected workspace saved metric copy.');
     await pool.query('UPDATE workspace SET derived_history_days=365 WHERE id=$1',[retention.workspace]);const cleanup=await runRetentionBatch(retention.project);assert.equal(cleanup?.expiredSavedKeywordMetrics,1);const expiredRow=(await list(retention)).rows[0];
-    assert.equal(expiredRow.id,authored.ids[0]);assert.equal(expiredRow.metrics.status,'expired');assert.equal(expiredRow.metrics.row,null);assert.equal(expiredRow.tags[0].name,'Authored tag');assert.deepEqual(await charge(retainedRun),ledgerBefore);assert.deepEqual((await pool.query('SELECT * FROM project_content_request WHERE project_id=$1',[retention.project])).rows,receiptBefore);
+    assert.equal(expiredRow.id,authored.ids[0]);assert.equal(expiredRow.metrics.status,'expired');assert.equal(expiredRow.metrics.row,null);assert.equal(expiredRow.tags[0].name,'Authored tag');assert.deepEqual(await requestReceipt(retainedRun),ledgerBefore);assert.deepEqual((await pool.query('SELECT * FROM project_content_request WHERE project_id=$1',[retention.project])).rows,receiptBefore);
     await pool.query('UPDATE workspace SET derived_history_days=400 WHERE id=$1',[retention.workspace]);await runRetentionBatch(retention.project);assert.equal((await list(retention)).rows[0].metrics.status,'expired');
     const expiredExport=await exportSavedKeywords(retention.project,viewer,{selection:selection(authored.ids),format:'csv'});assert.match(expiredExport.body,/expired/);assert.ok(!expiredExport.body.includes('0.000000'));
     // A bounded cleanup may clear the saved copy before the source run's batch.
@@ -270,6 +275,13 @@ export async function runSavedKeywordChecks(){
     assert.equal((await handleApi(new Request(endpoint+'/save',{method:'POST',headers:{cookie,origin:'https://foreign.integration.test','content-type':'application/json'},body:'{}'}))).status,403);
     console.log('PASS cookie-only saved-keyword API, Origin enforcement and secret-free metadata');
     assert.equal(accidentalRequests,0);
-  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
+
+  const fixtureUsers=[owner,editor],activityRows=(await pool.query('SELECT status,estimate_micros,actual_micros FROM provider_request WHERE user_id=ANY($1::text[])',[fixtureUsers])).rows;
+  for(const row of activityRows){assert.equal(row.estimate_micros,null);assert.equal(row.actual_micros,null);}
+  for(const table of ['keyword_quote','domain_research_quote','saved_keyword_refresh_plan']){
+   const rows=(await pool.query('SELECT to_jsonb(q) AS data FROM '+table+' q WHERE request_version=1 AND user_id=ANY($1::text[])',[fixtureUsers])).rows;
+   for(const {data}of rows)for(const key of ['estimate_micros','per_task_micros','per_item_micros','price_as_of'])if(Object.hasOwn(data,key))assert.equal(data[key],null,key);
+  }
+ }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
 }
 if(import.meta.main){try{await runSavedKeywordChecks();}finally{await closeDatabase();}}

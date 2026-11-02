@@ -1,55 +1,57 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {suggestionQuoteInput,suggestionAcceptInput,suggestionMessages,suggestionTextKey,suggestionProfiles,suggestionProfile,parseSuggestionProposal,type SuggestionSnapshot} from '../src/server/ai-suggestion-input.ts';
+import {suggestionQuoteInput,suggestionStartInput,suggestionAcceptInput,suggestionMessages,suggestionTextKey,suggestionProfiles,suggestionProfile,parseSuggestionProposal,type SuggestionSnapshot} from '../src/server/ai-suggestion-input.ts';
 import {executionInput,executionBody,parseOpenRouterJson} from '../src/server/openrouter-input.ts';
 import {readSuggestionRoute,requestSuggestionExecution,readOpenRouterRoutes,parseExecutionOutcome,reconcileOpenRouter} from '../src/server/openrouter.ts';
 import {requireCatalogModels,refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
 
 const model='openai/gpt-4o-mini' as const;
-const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,fundedCredits:true,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
+const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
 const snapshot=():SuggestionSnapshot=>({version:1,project:{id:randomUUID(),name:'Coffee',origin:'https://example.org'},contextRevision:1,profile:{name:'Coffee',aliases:[],citationDomains:[]},sections:[],competitors:[],topic:'Coffee',country:'Global',language:'English',existingPrompts:[],excludedPrompts:[],evidence:[{id:'profile',kind:'profile',sha256:'a'.repeat(64),value:{name:'Coffee'}}],topicLibraryHash:'b'.repeat(64),snapshotHash:'c'.repeat(64)});
 const proposal=()=>({version:1,limitation:'none',prompts:[{text:'Which grinder is easy to clean?',tags:['Maintenance'],rationale:'This helps evaluate the saved topic.',evidenceIds:['profile']}]});
 const endpoint=()=>({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:'0.00000015',completion:'0.0000006',discount:0}}]}});
 
-test('suggestion candidates have permanent identities; model syntax alone cannot authorize a quote',async()=>{
+test('suggestion candidates have permanent identities; model syntax alone cannot authorize a preparation',async()=>{
  assert.deepEqual(suggestionProfiles.map(p=>[p.id,p.model]),[['benchmark-mini-v1','openai/gpt-4o-mini'],['benchmark-standard-v1','openai/gpt-4o'],['benchmark-nano-v1','openai/gpt-4.1-nano'],['benchmark-4-1-mini-v1','openai/gpt-4.1-mini']]);
  for(const profile of suggestionProfiles){const parsed=suggestionQuoteInput.parse({...input(),profileId:profile.id});assert.equal(suggestionProfile(parsed.profileId).model,profile.model);assert.match(profile.label,/evaluation/);}
  for(const candidate of ['openai/gpt-4.1-nano','openai/gpt-4.1-mini']){
-  assert.equal(executionInput.safeParse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'',models:[candidate],maxCompletionTokens:16,fundedCredits:true}).success,true);
+  assert.equal(executionInput.safeParse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'',models:[candidate],maxCompletionTokens:16}).success,true);
   await refreshOpenRouterCatalog(async()=>Response.json({data:[],total_count:0,links:{next:null}}));
   await assert.rejects(requireCatalogModels([candidate],async()=>{throw Error('Fresh empty catalog cannot authorize an endpoint request.');}),{status:409});
   await refreshOpenRouterCatalog(async()=>Response.json({data:[{id:candidate,canonical_slug:candidate,name:'Synthetic candidate',context_length:128000,top_provider:{max_completion_tokens:4096},architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['max_tokens'],pricing:{prompt:'1e-7',completion:'4e-7'}}],total_count:1,links:{next:null}}));
-  let paid=0;await assert.rejects(readOpenRouterRoutes({apiKey:'synthetic'},[candidate],16,async(url)=>{
+  let paid=0;const routes=await readOpenRouterRoutes({apiKey:'synthetic'},[candidate],16,async(url)=>{
    const address=String(url);if(address.endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
    if(address.endsWith('/endpoints')){const body:any=endpoint();body.data.architecture={input_modalities:['text'],output_modalities:['text']};body.data.id=candidate;body.data.endpoints[0].model_id=candidate;body.data.endpoints[0].pricing.overrides=[];return Response.json(body);}
    paid++;throw Error('No paid request permitted.');
-  },openRouterTextProfile),{status:502});assert.equal(paid,0);
+  },openRouterTextProfile);assert.equal(routes[0].model,candidate);assert.equal(paid,0);
  }
 });
-test('every suggestion candidate verifies exact capabilities, arithmetic, dispatch and receipt identity',async()=>{
+test('every suggestion candidate verifies exact capabilities, capacity, dispatch and receipt identity',async()=>{
  for(const profile of suggestionProfiles){
   const data:any=endpoint();data.data.id=profile.model;data.data.endpoints[0].model_id=profile.model;
   data.data.endpoints[0].supported_parameters=['max_completion_tokens','response_format','structured_outputs'];
   data.data.endpoints[0].pricing={prompt:'1e-7',completion:'4e-7',request:'0.0000001',discount:0};
   const send:typeof fetch=async url=>{assert.ok(String(url).endsWith('/key')||String(url)===`https://openrouter.ai/api/v1/models/${profile.model}/endpoints`);return Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:data);};
-  const route=await readSuggestionRoute({apiKey:'synthetic'},profile.model,send);assert.equal(route.model,profile.model);assert.equal(route.estimateMicros,'13620');
+  const route=await readSuggestionRoute({apiKey:'synthetic'},profile.model,send);assert.equal(route.model,profile.model);assert.equal(route.promptCapacity,128000);assert.equal(route.completionCapacity,16384);assert.equal('estimateMicros'in route,false);
   const now=new Date(),runId=randomUUID(),actor='a'.repeat(64),body=executionBody(suggestionMessages(snapshot()),route,2048,runId,actor);
-  assert.equal(body.model,profile.model);assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.require_parameters,true);assert.equal(body.provider.allow_fallbacks,false);assert.match(JSON.stringify(body),/"prompt":0.1,"completion":0.4,"request":0.0000001/);
+  assert.equal(body.model,profile.model);assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.require_parameters,true);assert.equal(body.provider.allow_fallbacks,false);assert.equal('max_price'in body.provider,false);assert.equal(Object.keys(route).some(k=>/cost|price|estimate|fund/i.test(k)),false);
   let paid=0;const outcome=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,runId,actor,now,async()=>{},async(url,init)=>{
    paid++;assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');const sent=JSON.parse(String(init?.body));assert.equal(sent.model,profile.model);assert.equal(sent.response_format.json_schema.strict,true);assert.equal(sent.tools,undefined);assert.equal(sent.plugins,undefined);
-   return Response.json({id:'gen-candidate',created:Math.floor(now.getTime()/1000),model:profile.model,provider:'OpenAI',usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:JSON.stringify(proposal())}}]});
-  });assert.equal(paid,1);assert.equal(outcome.result?.resolvedModel,profile.model);assert.equal(outcome.cost,'0.000013');
-  const receipt={id:'gen-candidate',model:profile.model,provider_name:'OpenAI',session_id:runId,external_user:actor,created_at:now.toISOString(),finish_reason:'stop',is_byok:false,total_cost:0.000012345};
-  assert.equal((await reconcileOpenRouter({apiKey:'synthetic'},receipt.id,route,now,runId,actor,async()=>Response.json({data:receipt}))).cost,'0.000013');
-  const wrong=parseOpenRouterJson(JSON.stringify({id:receipt.id,model:'openai/other',provider:'OpenAI',created:Math.floor(now.getTime()/1000),usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:'text'}}]}));assert.equal(parseExecutionOutcome(wrong,200,null,route,now).cost,null);
-  for(const mutate of [(e:any)=>e.supported_parameters=['max_tokens'],(e:any)=>e.pricing.overrides=[],(e:any)=>e.pricing.prompt='-1',(e:any)=>e.pricing.prompt='1e99',(e:any)=>e.pricing.unknown='0',(e:any)=>e.max_completion_tokens=1024,(e:any)=>e.tag='openai/variant']){const broken=structuredClone(data);mutate(broken.data.endpoints[0]);await assert.rejects(readSuggestionRoute({apiKey:'synthetic'},profile.model,async url=>Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:broken)),{status:502});}
+   return Response.json({id:'gen-candidate',created:Math.floor(now.getTime()/1000),model:profile.model,provider:'OpenAI',usage:{prompt_tokens:37,completion_tokens:19},choices:[{finish_reason:'stop',message:{content:JSON.stringify(proposal())}}]});
+  });assert.equal(paid,1);assert.equal(outcome.result?.resolvedModel,profile.model);assert.equal(outcome.known,true);
+  const receipt={id:'gen-candidate',model:profile.model,provider_name:'OpenAI',session_id:runId,external_user:actor,created_at:now.toISOString(),finish_reason:'stop',tokens_prompt:37,tokens_completion:19};
+  assert.equal((await reconcileOpenRouter({apiKey:'synthetic'},receipt.id,route,now,runId,actor,async()=>Response.json({data:receipt}))).known,true);
+  const wrong=parseOpenRouterJson(JSON.stringify({id:receipt.id,model:'openai/other',provider:'OpenAI',created:Math.floor(now.getTime()/1000),usage:{prompt_tokens:37,completion_tokens:19},choices:[{finish_reason:'stop',message:{content:'text'}}]}));assert.equal(parseExecutionOutcome(wrong,200,null,route,now).known,false);
+  for(const mutate of [(e:any)=>e.supported_parameters=['max_tokens'],(e:any)=>e.max_completion_tokens=1024,(e:any)=>e.tag='openai/variant']){const broken=structuredClone(data);mutate(broken.data.endpoints[0]);await assert.rejects(readSuggestionRoute({apiKey:'synthetic'},profile.model,async url=>Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:broken)),{status:502});}
+  for(const pricing of [undefined,null,{prompt:'-1',completion:'1e99',request:'nonsense',overrides:[],unknown:'0'}]){const metadata=structuredClone(data);metadata.data.endpoints[0].pricing=pricing;const captured=await readSuggestionRoute({apiKey:'synthetic'},profile.model,async url=>Response.json(String(url).endsWith('/key')?{data:{is_free_tier:true,is_management_key:false}}:metadata));assert.deepEqual(captured,route);}
+
  }
 });
 
-test('only explicit benchmark profiles and bounded authored selections enter quotation',()=>{
- assert.ok(suggestionQuoteInput.safeParse(input()).success);
+test('only explicit benchmark profiles and bounded authored selections enter preparation',()=>{
+ assert.ok(suggestionQuoteInput.safeParse(input()).success);const start={requestId:randomUUID(),preparationId:randomUUID()};assert.equal(suggestionStartInput.safeParse(start).success,true);assert.equal(suggestionStartInput.safeParse({requestId:start.requestId,quoteId:start.preparationId}).success,false);
  for(const delta of [{profileId:'openrouter/auto'},{benchmark:false},{fundedCredits:false},{maxSpendUsd:'0'},{maxSpendUsd:'1'},{maxSpendUsd:'1\n'},{model:'new-model'},{country:'\ud800'},{topic:''},{competitorIds:Array(11).fill(randomUUID())},{sectionKeys:['positioning','positioning']},{excludedPrompts:Array(21).fill('text')}])assert.equal(suggestionQuoteInput.safeParse({...input(),...delta}).success,false);
  assert.ok(suggestionQuoteInput.safeParse({...input(),excludedPrompts:['😀'.repeat(1000),'controls\tallowed']}).success);
  assert.equal(suggestionQuoteInput.safeParse({...input(),excludedPrompts:['a'.repeat(2001)]}).success,false);
@@ -86,18 +88,18 @@ test('message capacity fails without truncation and acceptance cannot smuggle en
 });
 test('structured capability checks fail closed without changing existing monitored route behavior',async()=>{
  let data=endpoint(),calls=0;const send:typeof fetch=async(url,init)=>{calls++;assert.equal(init?.method,undefined);assert.equal(init?.redirect,'error');if(String(url).endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});assert.equal(String(url),`https://openrouter.ai/api/v1/models/${model}/endpoints`);return Response.json(data);};
- const route=await readSuggestionRoute({apiKey:'synthetic'},model,send);assert.equal(route.estimateMicros,'20429');assert.equal(calls,2);
+ const route=await readSuggestionRoute({apiKey:'synthetic'},model,send);assert.equal(route.promptCapacity,128000);assert.equal('estimateMicros'in route,false);assert.equal(calls,2);
  for(const capability of ['structured_outputs','response_format']){data=endpoint();data.data.endpoints[0].supported_parameters=data.data.endpoints[0].supported_parameters.filter(p=>p!==capability);await assert.rejects(readSuggestionRoute({apiKey:'synthetic'},model,send),{status:502});assert.equal((await readOpenRouterRoutes({apiKey:'synthetic'},[model],2048,send)).length,1);}
- data=endpoint();(data.data.endpoints[0].pricing as any).overrides=[];await assert.rejects(readSuggestionRoute({apiKey:'synthetic'},model,send),{status:502});
+ data=endpoint();(data.data.endpoints[0].pricing as any).overrides=[];assert.equal((await readSuggestionRoute({apiKey:'synthetic'},model,send)).model,model);delete (data.data.endpoints[0] as {pricing?:unknown}).pricing;assert.equal((await readSuggestionRoute({apiKey:'synthetic'},model,send)).model,model);
 });
-test('one fixed structured request preserves financial proof and never retries a lost response',async()=>{
+test('one fixed structured request preserves request and token evidence and never retries a lost response',async()=>{
  const route=await readSuggestionRoute({apiKey:'synthetic'},model,async url=>Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:endpoint()));
  let calls=0,captured:string|null=null;const now=new Date(),id=randomUUID();
  const result=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,id,'a'.repeat(64),now,async value=>{captured=value;},async(url,init)=>{
   calls++;assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');assert.equal(init?.redirect,'error');const body=JSON.parse(String(init?.body));
   assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.allow_fallbacks,false);assert.equal(body.response_format.json_schema.strict,true);assert.equal(body.max_completion_tokens,2048);assert.equal(body.plugins,undefined);assert.equal(body.tools,undefined);
-  return Response.json({id:'gen-suggestion',created:Math.floor(now.getTime()/1000),model,provider:'OpenAI',usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:'not valid proposal JSON'}}]},{headers:{'x-generation-id':'gen-suggestion'}});
+  return Response.json({id:'gen-suggestion',created:Math.floor(now.getTime()/1000),model,provider:'OpenAI',usage:{prompt_tokens:37,completion_tokens:19},choices:[{finish_reason:'stop',message:{content:'not valid proposal JSON'}}]},{headers:{'x-generation-id':'gen-suggestion'}});
  });
- assert.equal(calls,1);assert.equal(captured,'gen-suggestion');assert.equal(result.cost,'0.000013');assert.equal(result.result?.text,'not valid proposal JSON');
- const lost=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,id,'a'.repeat(64),now,async()=>{},async()=>{calls++;throw new Error('Synthetic lost acknowledgement');});assert.equal(calls,2);assert.equal(lost.cost,null);assert.ok(!('pause' in lost));// Owner decision D3: unknown cost stays uncertain; no outcome pauses spending.
+ assert.equal(calls,1);assert.equal(captured,'gen-suggestion');assert.equal(result.known,true);assert.equal(result.result?.text,'not valid proposal JSON');assert.equal(result.result?.promptTokens,37);assert.equal(result.result?.completionTokens,19);assert.equal('cost'in result,false);assert.equal(Object.keys(result.evidence).some(k=>/cost|price|fund|budget|charge/i.test(k)),false);
+ const lost=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,id,'a'.repeat(64),now,async()=>{},async()=>{calls++;throw new Error('Synthetic lost acknowledgement');});assert.equal(calls,2);assert.equal(lost.known,false);assert.ok(!('pause' in lost));// Ambiguous transport remains unknown; the original request is never resent.
 });

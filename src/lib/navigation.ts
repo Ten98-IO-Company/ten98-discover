@@ -14,6 +14,13 @@ export type AppView = typeof views[number]
 export type ProviderIntent = 'openrouter' | 'dataforseo'
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
+export type AIInsightsMode='summary'|'comparison'|'citations'|'specialized';
+export type AIInsightsNavigation={aiInsightsMode?:AIInsightsMode;aiInsightsQuery?:string;aiInsightsInvalid?:'1'};
+export function aiInsightsNavigation(raw:Record<string,unknown>):AIInsightsNavigation{
+ const mode=raw.aiInsightsMode,query=raw.aiInsightsQuery;
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.aiInsightsInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','aiInsightsMode','aiInsightsQuery','aiInsightsInvalid'].includes(key))||mode!==undefined&&!['summary','comparison','citations','specialized'].includes(mode as string)||query!==undefined&&(typeof query!=='string'||!query.length||query.length>6144||/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(query)))return{aiInsightsInvalid:'1'};
+ return{...mode!==undefined&&mode!=='summary'?{aiInsightsMode:mode as AIInsightsMode}:{},...query!==undefined?{aiInsightsQuery:query as string}:{}};
+}
 export type AISearchNavigation={aiSearchQuery?:string;aiSearchInvalid?:'1'};
 export type AISearchIntent={section:'analysis'|'captures';tab:'prompts'|'top'|'words';filters:AiQueryFilters;captureId:string|null;create:boolean};
 export function readAISearchIntent(query?:string):AISearchIntent|null{
@@ -112,7 +119,7 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & AIInsightsNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -220,6 +227,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='journeys'?journeysNavigation(raw):{}),
     ...(view==='revenue'?revenueNavigation(raw):{}),
     ...(view==='ai-search'?aiSearchNavigation(raw):{}),
+    ...(view==='ai-insights'?aiInsightsNavigation(raw):{}),
     ...(view==='attribution'?attributionNavigation(raw):{}),
     ...(view==='explore'?explorerNavigation(raw):{}),
     ...(view==='performance'?performanceNavigation(raw):{}),
@@ -243,7 +251,7 @@ export function resolveNavigation(requested:NavigationSearch,workspace:string|un
 
 export function navigationKey(search: NavigationSearch): string {
   if(search.view==='links'||search.view==='pixels')return `${search.workspace??''}:${search.view}:${JSON.stringify(trackedAssetNavigation(search))}`;
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='ai-insights'?':'+JSON.stringify(aiInsightsNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {

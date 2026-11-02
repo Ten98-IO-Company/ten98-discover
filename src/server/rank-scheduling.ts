@@ -5,19 +5,19 @@ import {FoundationError} from './auth.ts';
 import {canonicalHash,cleanText,parse,revision} from './context-input.ts';
 import {contentReceipt} from './project-context.ts';
 import {withKeywordProject,keywordConnection} from './keyword-research.ts';
-import {readRankPlan,rankPlanTotal,type RankPlan,type RankPlanTask} from './rank-execution-plan.ts';
+import {readRankPlan,type RankPlan,type RankPlanTask} from './rank-execution-plan.ts';
 import {parseRankSerpRequest} from './rank-serp-input.ts';
 import {workspaceRoles} from '@ten98/runtime';
 
 const readers=[...workspaceRoles];
 const calendarFields={interval:z.enum(['daily','weekly','monthly']),timezone:z.string().min(1).max(100).refine(v=>cleanText(v)&&v.trim()===v&&!/[\x00-\x1f\x7f]/.test(v)),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),weekday:z.number().int().min(0).max(6).nullable().default(null)};
 const calendar=z.object(calendarFields).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
-const approveInput=z.object({requestId:z.uuid(),revision,quoteId:z.uuid(),...calendarFields}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
+const approveInput=z.object({requestId:z.uuid(),revision,preparationId:z.uuid(),...calendarFields}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
 const disableInput=z.object({requestId:z.uuid(),revision}).strict();
 type Calendar=z.output<typeof calendar>;
 type Definition={target:RankPlan['target'];tasks:Pick<RankPlanTask,'keywordId'|'keyword'|'matchCase'|'device'>[]};
 
-/** Stable paid scope, deliberately independent of fresh price/random job IDs.
+/** Stable request scope, independent of generated job IDs.
  * Only the full queued definition may receive standing approval. */
 export function rankApprovalRequestHash(input:Definition):string{
   if(!Array.isArray(input.tasks)||input.tasks.length<1||input.tasks.length>2000)throw new FoundationError(409,'The rank approval definition is unavailable.');
@@ -82,25 +82,24 @@ export async function approveRankSchedule(projectId:string,userId:string,tracker
   return withKeywordProject(projectId,userId,['owner'],async(client,wid,role)=>{
     const receipt=await contentReceipt(client,projectId,input.requestId,'rank.schedule.approve:'+trackerId,{userId,...input}),row=await tracker(client,projectId,trackerId);
     if(receipt.replayed)return dto(client,row,role,true);checkRevision(row,input.revision);
-    if(row.archived_at)throw new FoundationError(409,'Reactivate this tracker and review a new quote before approving a schedule.');
-    const quote=(await client.query('SELECT * FROM rank_run WHERE id=$1 AND project_id=$2 AND config_id=$3',[input.quoteId,projectId,trackerId])).rows[0];
-    if(!quote)throw new FoundationError(404,'Rank quote not found or unavailable.');if(quote.user_id!==userId)throw new FoundationError(403,'Only the owner who requested this quote can approve its schedule.');
-    if(quote.trigger!=='manual'||quote.method!=='queued'||quote.status!=='quoted'||quote.started_at||quote.is_subset||quote.config_revision!==row.revision||quote.keywords_revision!==row.keywords_revision||quote.account_fingerprint_version!==2)throw new FoundationError(409,'Review a current full queued quote for this schedule.');
+    if(row.archived_at)throw new FoundationError(409,'Reactivate this tracker and review a new preparation before approving a schedule.');
+    const quote=(await client.query('SELECT * FROM rank_run WHERE id=$1 AND project_id=$2 AND config_id=$3',[input.preparationId,projectId,trackerId])).rows[0];
+    if(!quote)throw new FoundationError(404,'Rank preparation not found or unavailable.');if(quote.user_id!==userId)throw new FoundationError(403,'Only the owner who requested this preparation can approve its schedule.');
+    if(quote.request_version!==1||quote.trigger!=='manual'||quote.method!=='queued'||quote.status!=='quoted'||quote.started_at||quote.is_subset||quote.config_revision!==row.revision||quote.keywords_revision!==row.keywords_revision||quote.account_fingerprint_version!==2)throw new FoundationError(409,'Review a current full queued preparation for this schedule.');
     await keywordConnection(client,wid,quote.connection_id,quote.connection_revision);
-    const plan=readRankPlan(quote.request,quote.request_hash),estimate=rankPlanTotal(plan),hash=rankApprovalRequestHash(plan);
-    if(plan.method!=='queued'||plan.tasks.length!==quote.task_count||estimate.toString()!==quote.estimate_micros||hash!==await currentHash(client,row))throw new FoundationError(409,'The quote no longer covers this exact full tracker definition.');
+    const plan=readRankPlan(quote.request,quote.request_hash),hash=rankApprovalRequestHash(plan);
+    if(plan.method!=='queued'||plan.tasks.length!==quote.task_count||hash!==await currentHash(client,row))throw new FoundationError(409,'The preparation no longer covers this exact full tracker definition.');
     await validateZone(client,input);const approvalId=randomUUID();
-    // ponytail: since D3 approval_max_micros is a dormant record of the approved quote total, not a limit; a later contract migration may drop it.
     // Expiry is checked against the database clock immediately before approval;
-    // waiting for W→P→tracker locks never renews a five-minute quote.
+    // waiting for W→P→tracker locks never renews a five-minute preparation.
     const saved=await client.query(`WITH approval_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
       UPDATE rank_config SET schedule_interval=$2,schedule_timezone=$3,schedule_hour=$4::integer,schedule_minute=$5::integer,schedule_weekday=$6::integer,
       schedule_enabled=true,next_due_at=rank_next_due($2,$3,$4,$5,$6,(SELECT at FROM approval_clock)),approval_id=$7,approval_user_id=$8,approval_config_revision=revision,approval_keywords_revision=keywords_revision,
       approval_request_hash=$9,approval_connection_id=$10,approval_connection_revision=$11,approval_account_fingerprint=$12,approval_account_fingerprint_version=2,
       approval_max_micros=$13,approved_at=(SELECT at FROM approval_clock),last_skip_reason=NULL,authored_revision=authored_revision+1,updated_at=(SELECT at FROM approval_clock)
       WHERE id=$1 AND $14::timestamptz>(SELECT at FROM approval_clock)`,
-      [trackerId,input.interval,input.timezone,input.hour,input.minute,input.weekday,approvalId,userId,hash,quote.connection_id,quote.connection_revision,quote.account_fingerprint,estimate.toString(),quote.expires_at]);
-    if(!saved.rowCount)throw new FoundationError(409,'This quote expired. Review another quote before approving a schedule.');
+      [trackerId,input.interval,input.timezone,input.hour,input.minute,input.weekday,approvalId,userId,hash,quote.connection_id,quote.connection_revision,quote.account_fingerprint,null,quote.expires_at]);
+    if(!saved.rowCount)throw new FoundationError(409,'This preparation expired. Prepare again before approving a schedule.');
     await receipt.save({id:trackerId});return dto(client,await tracker(client,projectId,trackerId),role,false);
   });
 }

@@ -52,7 +52,7 @@ export function parseDomainResearchRequest(raw:unknown):DomainResearchRequest{
  const report=raw&&typeof raw==='object'&&!Array.isArray(raw)?(raw as Record<string,unknown>).report:undefined;
  return backlinkReports.some(value=>value===report)?parseBacklinkRequest(raw):parseDomainRequest(raw);
 }
-export function domainResearchPriceMode(r:DomainResearchRequest){return isBacklinkRequest(r)?r.report==='backlinks_overview_v1'?'backlinks_summary':r.report==='backlinks_profile_v1'?'backlinks_profile':r.report==='backlinks_referring_domains_v1'?'backlinks_referring_domains':'backlinks_anchors':domainEndpointName(r);}
+export function domainResearchOperation(r:DomainResearchRequest){return isBacklinkRequest(r)?r.report==='backlinks_overview_v1'?'backlinks_summary':r.report==='backlinks_profile_v1'?'backlinks_profile':r.report==='backlinks_referring_domains_v1'?'backlinks_referring_domains':'backlinks_anchors':domainEndpointName(r);}
 export function backlinkEndpointName(r:BacklinkRequest){return r.report==='backlinks_overview_v1'?'summary':r.report==='backlinks_profile_v1'?'backlinks':r.report==='backlinks_referring_domains_v1'?'referring_domains':'anchors';}
 export function backlinkEndpoint(r:BacklinkRequest){return 'https://api.dataforseo.com/v3/backlinks/'+backlinkEndpointName(r)+'/live';}
 export const backlinkReconcileEndpoint='https://api.dataforseo.com/v3/backlinks/id_list';

@@ -56,7 +56,7 @@ export async function assertLayout(page,name){
     await page.waitForTimeout(100);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No page-wide horizontal overflow.');
     for(const region of await page.getByRole('region').all()){
-      const table=region.locator('table');if(!await table.count())continue;
+      const ownsTable=await region.evaluate(el=>Array.from(el.querySelectorAll('table')).some(table=>table.closest('[role="region"],section[aria-label],section[aria-labelledby]')===el));if(!ownsTable)continue;
       const overflowing=await region.evaluate(el=>el.scrollWidth>el.clientWidth+1);
       if(overflowing){assert.equal(await region.getAttribute('tabindex'),'0');await region.evaluate(el=>{el.scrollLeft=0;});await region.focus();await region.press('ArrowRight');
         await page.waitForFunction(el=>el.scrollLeft>0,await region.elementHandle(),{timeout:3000});

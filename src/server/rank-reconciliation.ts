@@ -10,9 +10,9 @@ import {rankDispatchSnapshot,rankRecoveryAvailable,applyReconciledRankOutcome} f
 import {getRankRun} from './rank-execution.ts';
 
 const inputSchema=z.object({requestId:z.uuid(),dispatchId:z.uuid(),connectionId:z.uuid()}).strict();
-const inconclusive='The provider evidence could not uniquely confirm every captured task. The recorded charges are unchanged.';
-export async function reconcileRankCheck(projectId:string,userId:string,runId:string,raw:unknown,send:typeof fetch=fetch){
-  runId=parse(z.uuid(),runId);const input=parse(inputSchema,raw),operation='rank.reconcile:'+runId,receiptInput={userId,...input};
+const inconclusive='The provider evidence could not uniquely confirm every captured task. The original request remains unresolved.';
+export async function recoverRankCheck(projectId:string,userId:string,runId:string,raw:unknown,send:typeof fetch=fetch){
+  runId=parse(z.uuid(),runId);const input=parse(inputSchema,raw),operation='rank.recover:'+runId,receiptInput={userId,...input};
   const before=await withKeywordProject(projectId,userId,['owner'],async(client,wid)=>{
     const receipt=await contentReceipt(client,projectId,input.requestId,operation,receiptInput);
     if(receipt.replayed)return {replay:true as const};
@@ -21,7 +21,7 @@ export async function reconcileRankCheck(projectId:string,userId:string,runId:st
     if(!row.dispatched_at||!await rankRecoveryAvailable(client,row))throw new FoundationError(409,'This rank dispatch does not require recovery. Reload the check.');
     const age=Date.now()-row.dispatched_at.getTime();
     if(age<120_000)throw new FoundationError(409,'Wait two minutes after dispatch before recovering the provider task. This allows the complete request window to close.');
-    if(age>28*86400000)throw new FoundationError(409,'The provider metadata recovery window ended. The recorded charge cannot be changed automatically.');
+    if(age>28*86400000)throw new FoundationError(409,'The provider metadata recovery window ended. The original request cannot be recovered automatically.');
     const plan=readRankPlan(row.run_request,row.run_hash),group=plan.groups[row.ordinal];
     if(!group)throw new FoundationError(409,'The saved rank dispatch is inconsistent.');
     const saved=(await client.query('SELECT id,provider_task_id FROM rank_task WHERE dispatch_id=$1',[row.id])).rows;
@@ -34,8 +34,8 @@ export async function reconcileRankCheck(projectId:string,userId:string,runId:st
     const connection=await keywordConnection(client,wid,input.connectionId);
     return {replay:false as const,row,expected,connectionRevision:connection.revision as number,credentials:keywordCredentials(connection)};
   });
-  if(before.replay)return {...await getRankRun(projectId,userId,runId),reconciliation:{status:'matched' as const,message:'The saved recovery request was already applied.',replayed:true}};
-  // Both requests are free fixed provider endpoints. Never resend a paid POST.
+  if(before.replay)return {...await getRankRun(projectId,userId,runId),recovery:{status:'matched' as const,message:'The saved recovery request was already applied.',replayed:true}};
+  // Both requests are free fixed provider endpoints. Never resend the original POST.
   const account=await readRankAccount(before.credentials,send);
   if(account.fingerprint!==before.row.account_fingerprint||before.row.account_fingerprint_version!==2)throw new FoundationError(409,'Choose credentials for the provider account that received this check.');
   const response=await readRankReconciliation(before.credentials,{dispatchedAt:before.row.dispatched_at!},send);
@@ -51,6 +51,6 @@ export async function reconcileRankCheck(projectId:string,userId:string,runId:st
     await applyReconciledRankOutcome(client,row.id,row.generation,outcome,{connectionId:input.connectionId,connectionRevision:before.connectionRevision,approvedBy:userId});
     await receipt.save({id:runId});return {replayed:false,matched:true};
   });
-  return {...await getRankRun(projectId,userId,runId),reconciliation:{status:result.matched?'matched' as const:'inconclusive' as const,
-    message:result.matched?'Provider task evidence was recovered. Available results can be fetched without submitting another paid check.':inconclusive,replayed:result.replayed}};
+  return {...await getRankRun(projectId,userId,runId),recovery:{status:result.matched?'matched' as const:'inconclusive' as const,
+    message:result.matched?'Provider task evidence was recovered. Available results can be fetched without submitting another check.':inconclusive,replayed:result.replayed}};
 }

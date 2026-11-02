@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema,aiSearchQuoteInput,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
+import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchRequestSchema,aiSearchPreparationInput,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
 import {parseAiSearchCountries,parseAiSearchLanguages,assertAiSearchMarket,parseAiSearchAccount,parseAiSearchOutcome,requestAiSearch,parseAiSearchReconciliation} from '../src/server/dataforseo-ai-search.ts';
 import {dataforseoJson,dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {deriveSearchQueries,normalizeDfsChatgptSearchEvidence,readSearchEvidence} from '../src/server/ai-search-evidence.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {initializeProviderAccountIdentity} from '../src/server/provider-account-identity.ts';
 import {providerTransaction} from '../src/server/providers.ts';
-import {dispatchSpend} from '../src/server/spending.ts';
+import {dispatchRequest} from '../src/server/provider-requests.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import type {PoolClient} from 'pg';
 
@@ -20,9 +20,7 @@ function free(url:string,rows:unknown[]){return {httpStatus:200,body:{status_cod
 const copy=<T>(v:T):T=>structuredClone(v);
 function body(value:unknown){return new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});}
 
-test('closed fixed profile and published tariff are estimates with no account-price claim',()=>{
- const price=aiSearchPriceEvidence();assert.deepEqual(price,{version:'dfs-chatgpt-live-published-2026-10-15-v1',profileId:aiSearchProfileId,mode:'published-tariff',sourceUrl:'https://dataforseo.com/pricing/ai-optimization/llm-scraper',checkedOn:'2026-10-15',billingUnit:'result',maximumResults:1,unitMicros:'4000',estimateMicros:'4000',estimateUsd:'0.004000',limitation:'Published-price estimate; not an account-enforced maximum.'});
- price.estimateUsd='9';assert.equal(aiSearchPriceEvidence().estimateUsd,'0.004000');
+test('closed fixed search profile validates complete request scope',()=>{
  for(const changed of [{...request,model:'gpt-4o'},{...request,profileId:'llm-responses'},{...request,capturedPrompt:''},{...request,capturedPrompt:' \t'},{...request,capturedPrompt:'bad\ud800'},{...request,capturedPrompt:'bad\ntext'},{...request,languageCode:'en\n'},{...request,locationCode:0}])assert.equal(aiSearchRequestSchema.safeParse(changed).success,false);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'😀'.repeat(1000)}).success,true);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'a'.repeat(2000)}).success,true);
@@ -30,14 +28,15 @@ test('closed fixed profile and published tariff are estimates with no account-pr
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(666)+'ab'}).success,true);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(667)}).success,false);
 });
-test('quotes carry no estimate-admission ceiling (D3) while stored legacy snapshots keep theirs and their hash',()=>{
- const quote={requestId:randomUUID(),connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),locationCode:2840,languageCode:'en',expectedCatalogRevision:'a'.repeat(64),acceptPublishedEstimate:true};
- assert.equal(aiSearchQuoteInput.safeParse(quote).success,true);for(const maxSpendUsd of ['0.004000','1','0'])assert.equal(aiSearchQuoteInput.safeParse({...quote,maxSpendUsd}).success,false);
- const current={version:1,request,promptId:randomUUID(),versionId:randomUUID(),country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString(),price:aiSearchPriceEvidence()},legacy={...current,maxSpendUsd:'0.004000'};
- for(const stored of [current,legacy]){const parsed=aiSearchSnapshotSchema.parse(copy(stored));assert.deepEqual(parsed,stored);assert.equal(canonicalHash(parsed),canonicalHash(stored));}
- assert.equal(Object.hasOwn(aiSearchSnapshotSchema.parse(copy(current)),'maxSpendUsd'),false);assert.notEqual(canonicalHash(current),canonicalHash(legacy));
- for(const maxSpendUsd of ['1\n','-1','0.0000001'])assert.equal(aiSearchSnapshotSchema.safeParse({...legacy,maxSpendUsd}).success,false);assert.equal(aiSearchSnapshotSchema.safeParse({...current,extra:true}).success,false);
+test('preparation captures exact request identity and excludes financial inputs',()=>{
+ const preparation={requestId:randomUUID(),connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),locationCode:2840,languageCode:'en',expectedCatalogRevision:'a'.repeat(64)};
+ assert.deepEqual(aiSearchPreparationInput.parse(preparation),preparation);
+ for(const extra of [{maxSpendUsd:'1'},{acceptPublishedEstimate:true},{priceVersion:'old'}])assert.equal(aiSearchPreparationInput.safeParse({...preparation,...extra}).success,false);
+ const current={version:2,request,promptId:randomUUID(),versionId:randomUUID(),country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString()};
+ const parsed=aiSearchSnapshotSchema.parse(copy(current));assert.deepEqual(parsed,current);assert.equal(canonicalHash(parsed),canonicalHash(current));
+ for(const extra of [{maxSpendUsd:'1'},{price:{}},{extra:true},{version:1}])assert.equal(aiSearchSnapshotSchema.safeParse({...current,...extra}).success,false);
 });
+
 test('one exact immutable payload escapes literal percent/plus once, with own run tag',()=>{
  assert.deepEqual(aiSearchPayload(request,id),{keyword:'Best C%2B%2B %2520 shoes',location_code:2840,language_code:'en',force_web_search:true,tag:'ten98:ai-search:'+id});
  assert.equal(aiSearchPayload({...request,capturedPrompt:'%2B + %25'},id).keyword,'%252B %2B %2525');
@@ -61,8 +60,8 @@ test('authentic AI language region and script codes stay exact across catalog, q
  for(const language of languages){
   const selected=assertAiSearchMarket({...request,languageCode:language.code},[{code:2840,name:'United States',countryCode:'US'}],languages);
   assert.equal(aiSearchPayload(selected,id).language_code,language.code);
-  assert.equal(aiSearchQuoteInput.parse({requestId:id,connectionId:id,promptId:id,versionId:id,locationCode:2840,languageCode:language.code,expectedCatalogRevision:'a'.repeat(64),acceptPublishedEstimate:true}).languageCode,language.code);
-  const snapshot=aiSearchSnapshotSchema.parse({version:1,request:selected,promptId:id,versionId:id,country:{code:2840,name:'United States',countryCode:'US'},language,catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString(),price:aiSearchPriceEvidence()});assert.equal(snapshot.language.code,language.code);
+  assert.equal(aiSearchPreparationInput.parse({requestId:id,connectionId:id,promptId:id,versionId:id,locationCode:2840,languageCode:language.code,expectedCatalogRevision:'a'.repeat(64)}).languageCode,language.code);
+  const snapshot=aiSearchSnapshotSchema.parse({version:2,request:selected,promptId:id,versionId:id,country:{code:2840,name:'United States',countryCode:'US'},language,catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString()});assert.equal(snapshot.language.code,language.code);
  }
  for(const language_code of ['es-419\n','sr-latn','es-41','es-419-extra','en_US','EN',3,null])assert.throws(()=>parseAiSearchLanguages(free(aiSearchEndpoints.languages,[...rows,{language_name:'Invalid',language_code}])));
  assert.throws(()=>parseAiSearchLanguages(free(aiSearchEndpoints.languages,[...rows,rows[2]])));
@@ -71,12 +70,12 @@ test('reuses project-independent keyed v2 account identity, never interprets a p
  const account=free('https://api.dataforseo.com/v3/appendix/user_data',[{login:'Test@Example.invalid',price:{unexpected:{value:'untrusted'}}}]);
  const a=parseAiSearchAccount(account,{key:'a'.repeat(32),version:2}),b=parseAiSearchAccount(account,{key:'b'.repeat(32),version:2});
  assert.match(a.fingerprint,/^[a-f0-9]{64}$/);assert.notEqual(a.fingerprint,b.fingerprint);assert.deepEqual(Object.keys(a),['fingerprint']);assert.equal(JSON.stringify(a).includes('Test@'),false);
- assert.throws(()=>parseAiSearchAccount(account,{key:'short',version:2}));const paid=copy(account);paid.body.cost=1;assert.throws(()=>parseAiSearchAccount(paid,{key:'a'.repeat(32),version:2}));
+ assert.throws(()=>parseAiSearchAccount(account,{key:'short',version:2}));const untrusted=copy(account);untrusted.body.cost=1;assert.deepEqual(parseAiSearchAccount(untrusted,{key:'a'.repeat(32),version:2}),a);
  assert.throws(()=>parseAiSearchAccount(free('https://api.dataforseo.com/v3/appendix/user_data',[Object.create({login:'inherited@example.invalid'})]),{key:'a'.repeat(32),version:2}));
 });
 test('admitted exact envelope wires the existing leaf and immutable prompt derivation without new citations',()=>{
- const raw=response(),outcome=parseAiSearchOutcome(raw,request,id,now);assert.deepEqual(outcome.charge,{state:'known',costUsd:'0.004000',providerTaskId:reference});assert.equal(outcome.content.state,'available');
- if(outcome.content.state!=='available')throw Error();const result=outcome.content.value;
+ const raw=response(),outcome=parseAiSearchOutcome(raw,request,id,now);assert.equal(outcome.known,true);assert.equal(outcome.reference,reference);assert.equal(outcome.result!==null,true);
+ if(outcome.result===null)throw Error();const result=outcome.result!;
  assert.equal(result.source,'DataForSEO / ChatGPT consumer interface');assert.equal(result.reportedModel,'reported-consumer-model');assert.equal(result.providerObservedAt,'2026-10-15T08:59:00.000Z');
  assert.deepEqual(result.evidence,normalizeDfsChatgptSearchEvidence(raw.body.tasks[0].result[0]));
  const derived=deriveSearchQueries({evidence:result.evidence,capturedPrompt:result.capturedPrompt,subjects:[{id:'brand',name:'Acme',aliases:[],domains:[]}],method:'unicode-boundary-v1'});
@@ -86,29 +85,29 @@ test('admitted exact envelope wires the existing leaf and immutable prompt deriv
 test('missing, empty and malformed query/answer fields remain independent after real envelope admission',()=>{
  const metadata={keyword:request.capturedPrompt,location_code:2840,language_code:'en'};
  for(const [fields,state,answerState] of [[{markdown:'Acme',fan_out_queries:[]},'reported_empty','available'],[{markdown:'Acme'},'not_recorded','available'],[{markdown:'Acme',fan_out_queries:[3]},'invalid','available'],[{markdown:4,fan_out_queries:['Acme']},'reported','invalid'],[{markdown:' ',fan_out_queries:['Acme']},'reported','empty'],[{fan_out_queries:['query']},'reported','not_recorded']] as const){
-  const out=parseAiSearchOutcome(response({...metadata,...fields}),request,id,now);assert.equal(out.content.state,'available');if(out.content.state==='available'){assert.equal(out.content.value.evidence.queries.state,state);assert.equal(out.content.value.evidence.answer.state,answerState);}
+  const out=parseAiSearchOutcome(response({...metadata,...fields}),request,id,now);assert.equal(out.result!==null,true);if(out.result!==null){assert.equal(out.result!.evidence.queries.state,state);assert.equal(out.result!.evidence.answer.state,answerState);}
  }
  const out=parseAiSearchOutcome(response({...metadata,markdown:'Different company',fan_out_queries:['Acme'],sources:[{url:'https://example.invalid/?q=fake'}],search_results:[{query:'invented'}],followups:['invented']}),request,id,now);
- if(out.content.state!=='available')throw Error();const d=deriveSearchQueries({evidence:out.content.value.evidence,capturedPrompt:request.capturedPrompt,subjects:[{id:'brand',name:'Acme',aliases:[],domains:[]}],method:'unicode-boundary-v1'});assert.equal(d.answerMentions?.[0].mentioned,false);assert.deepEqual(d.queries?.map(q=>q.key),['acme']);
+ if(out.result===null)throw Error();const d=deriveSearchQueries({evidence:out.result!.evidence,capturedPrompt:request.capturedPrompt,subjects:[{id:'brand',name:'Acme',aliases:[],domains:[]}],method:'unicode-boundary-v1'});assert.equal(d.answerMentions?.[0].mentioned,false);assert.deepEqual(d.queries?.map(q=>q.key),['acme']);
 });
 test('dedicated leaf capacity and markdown fallback positives survive admitted provider projection',()=>{
  const metadata={keyword:request.capturedPrompt,location_code:2840,language_code:'en'};
  const cases=[{...metadata,markdown:'x'.repeat(250000),fan_out_queries:Array(100).fill('😀'.repeat(2000))},{...metadata,markdown:' ',items:Array.from({length:1000},()=>({markdown:' block '})),fan_out_queries:['']},{...metadata,markdown:null,items:[{markdown:' first '},{markdown:' second '}],fan_out_queries:null}];
- for(const input of cases){const out=parseAiSearchOutcome(response(input),request,id,now);assert.equal(out.charge.state,'known');assert.equal(out.content.state,'available');if(out.content.state==='available')assert.deepEqual(out.content.value.evidence,normalizeDfsChatgptSearchEvidence(input));}
- const fallback=parseAiSearchOutcome(response(cases[2]),request,id,now);if(fallback.content.state!=='available')throw Error();assert.deepEqual(fallback.content.value.evidence.answer,{state:'available',text:'first\n\nsecond',basis:'items'});
+ for(const input of cases){const out=parseAiSearchOutcome(response(input),request,id,now);assert.equal(out.known,true);assert.equal(out.result!==null,true);if(out.result!==null)assert.deepEqual(out.result!.evidence,normalizeDfsChatgptSearchEvidence(input));}
+ const fallback=parseAiSearchOutcome(response(cases[2]),request,id,now);if(fallback.result===null)throw Error();assert.deepEqual(fallback.result!.evidence.answer,{state:'available',text:'first\n\nsecond',basis:'items'});
 });
-test('financial admission requires own identity/path/task/payload/final status and equal exact costs',()=>{
- for(const mutate of [(r:ReturnType<typeof response>)=>r.httpStatus=500,(r:ReturnType<typeof response>)=>r.body.tasks_count=2,(r:ReturnType<typeof response>)=>r.body.tasks_error=1,(r:ReturnType<typeof response>)=>r.body.tasks[0].id='not-an-id',(r:ReturnType<typeof response>)=>r.body.tasks[0].path[2]='gemini',(r:ReturnType<typeof response>)=>r.body.tasks[0].data.tag+='foreign',(r:ReturnType<typeof response>)=>r.body.tasks[0].data.keyword='changed',(r:ReturnType<typeof response>)=>r.body.tasks[0].status_code=20100,(r:ReturnType<typeof response>)=>r.body.cost=0.005,(r:ReturnType<typeof response>)=>r.body.cost=0.0000001]){
-  const raw=response();mutate(raw);const result=parseAiSearchOutcome(raw,request,id,now);assert.equal(result.charge.state,'unknown');assert.equal(result.content.state,'unavailable');
+test('request admission requires own identity/path/task/payload and terminal status',()=>{
+ for(const mutate of [(r:ReturnType<typeof response>)=>r.httpStatus=500,(r:ReturnType<typeof response>)=>r.body.tasks_count=2,(r:ReturnType<typeof response>)=>r.body.tasks_error=1,(r:ReturnType<typeof response>)=>r.body.tasks[0].id='not-an-id',(r:ReturnType<typeof response>)=>r.body.tasks[0].path[2]='gemini',(r:ReturnType<typeof response>)=>r.body.tasks[0].data.tag+='foreign',(r:ReturnType<typeof response>)=>r.body.tasks[0].data.keyword='changed',(r:ReturnType<typeof response>)=>r.body.tasks[0].status_code=20100]){
+  const raw=response();mutate(raw);const result=parseAiSearchOutcome(raw,request,id,now);assert.equal(result.known,false);assert.equal(result.result,null);
  }
- const inherited=response();inherited.body.tasks[0].data=Object.create(aiSearchPayload(request,id));assert.equal(parseAiSearchOutcome(inherited,request,id,now).charge.state,'unknown');
- const missing=copy(response()) as any;delete missing.body.cost;assert.equal(parseAiSearchOutcome(missing,request,id,now).charge.state,'unknown');
- const sparse=response() as any;sparse.body.tasks=new Array(1);assert.equal(parseAiSearchOutcome(sparse,request,id,now).charge.state,'unknown');
+ const inherited=response();inherited.body.tasks[0].data=Object.create(aiSearchPayload(request,id));assert.equal(parseAiSearchOutcome(inherited,request,id,now).known,false);
+ const missing=copy(response()) as any;delete missing.body.cost;assert.equal(parseAiSearchOutcome(missing,request,id,now).known,true);
+ const sparse=response() as any;sparse.body.tasks=new Array(1);assert.equal(parseAiSearchOutcome(sparse,request,id,now).known,false);
 });
 test('echoed request admits only exact requested fields and documented harmless consumer defaults',()=>{
  const accepted=response() as any;Object.assign(accepted.body.tasks[0].data,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',postback_data:'advanced',device:'desktop',os:'windows'});
- assert.equal(parseAiSearchOutcome(accepted,request,id,now).charge.state,'known');
- for(const extra of [{api:'serp'},{function:'llm_responses'},{device:'mobile'},{postback_data:'html'},{postback_data:'advanced\n'},{postback_data:null},{postback_url:'https://example.invalid/callback'},{model_name:'other-model'},{max_output_tokens:100000},{priority:2},{web_search:true}]){const raw=response() as any;Object.assign(raw.body.tasks[0].data,extra);assert.equal(parseAiSearchOutcome(raw,request,id,now).charge.state,'unknown');}
+ assert.equal(parseAiSearchOutcome(accepted,request,id,now).known,true);
+ for(const extra of [{api:'serp'},{function:'llm_responses'},{device:'mobile'},{postback_data:'html'},{postback_data:'advanced\n'},{postback_data:null},{postback_url:'https://example.invalid/callback'},{model_name:'other-model'},{max_output_tokens:100000},{priority:2},{web_search:true}]){const raw=response() as any;Object.assign(raw.body.tasks[0].data,extra);assert.equal(parseAiSearchOutcome(raw,request,id,now).known,false);}
 });
 test('authentic advanced receipt format echo is admitted by exact request and retained receipt recovery',()=>{
  // Observed free ID-list wire fields 2026-10-19; synthetic prompt and UUIDs. The original paid body was not retained.
@@ -116,51 +115,58 @@ test('authentic advanced receipt format echo is admitted by exact request and re
  const selected={profileId:aiSearchProfileId,capturedPrompt:prompt,locationCode:2784,languageCode:'en'};
  const captured={httpStatus:200,body:{status_code:20000,tasks_count:1,tasks_error:0,cost:0,tasks:[{id:'00000000-0000-4000-8000-000000000003',status_code:20000,path:['v3','ai_optimization','id_list'],cost:0,result_count:1,data:{api:'ai_optimization',function:'id_list',datetime_from:'2026-10-19 12:00:37 +00:00',datetime_to:'2026-10-19 12:04:07 +00:00',limit:1000,offset:0,sort:'asc',include_metadata:true},result:[{id:taskId,url:'v3/ai_optimization/chat_gpt/llm_scraper/live/advanced',datetime_posted:'2026-10-19 12:01:37 +00:00',datetime_done:'2026-10-19 12:02:02 +00:00',status:20000,cost:0.004,metadata:{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',keyword:prompt,location_code:2784,language_code:'en',force_web_search:true,tag:'ten98:ai-search:00000000-0000-4000-8000-000000000001',postback_data:'advanced',device:'desktop',os:'windows'}}]}]}};
  const binding={profileId:aiSearchProfileId,runId,payloadHash:canonicalHash({keyword:prompt,location_code:2784,language_code:'en',force_web_search:true,tag:'ten98:ai-search:00000000-0000-4000-8000-000000000001'}),dispatchedAt:'2026-10-19T12:01:37.135Z',asOf:'2026-10-19T12:04:07.203Z',providerTaskId:null};
- const expected={providerTaskId:taskId,costUsd:'0.004000',statusCode:20000};
+ const expected={reference:taskId,statusCode:20000};
  assert.deepEqual(parseAiSearchReconciliation(captured,selected,runId),expected);assert.deepEqual(parseAiSearchReconciliation(captured,binding),expected);
  for(const patch of [{postback_data:'html'},{postback_data:'advanced\n'},{postback_data:null},{postback_url:'https://example.invalid/callback'},{priority:2},{force_web_search:false},{language_code:'fr'},{location_code:2840},{tag:'foreign'}]){const bad=copy(captured);Object.assign(bad.body.tasks[0].result[0].metadata,patch);assert.throws(()=>parseAiSearchReconciliation(bad,selected,runId));assert.throws(()=>parseAiSearchReconciliation(bad,binding));}
  const duplicated=copy(captured);duplicated.body.tasks[0].result.push(copy(duplicated.body.tasks[0].result[0]));duplicated.body.tasks[0].result_count=2;assert.throws(()=>parseAiSearchReconciliation(duplicated,binding));
- const charged=copy(captured);charged.body.cost=0.004;assert.throws(()=>parseAiSearchReconciliation(charged,binding));
+ const noisy=copy(captured);noisy.body.cost=0.004;assert.deepEqual(parseAiSearchReconciliation(noisy,binding),expected);
 });
 
-test('known charge survives invalid content, final paid error, capacity and decoded-echo mismatch',()=>{
+test('known request outcome survives invalid content, provider failure, capacity and decoded-echo mismatch',()=>{
  for(const result of [{keyword:'changed',location_code:2840,language_code:'en'},{keyword:request.capturedPrompt,location_code:1,language_code:'en'},{keyword:request.capturedPrompt,location_code:2840,language_code:'en',markdown:'x'.repeat(250001)},{keyword:request.capturedPrompt,location_code:2840,language_code:'en',fan_out_queries:Array(101).fill('query')}]){
-  const out=parseAiSearchOutcome(response(result),request,id,now);assert.equal(out.charge.state,'known');assert.deepEqual(out.content,{state:'unavailable',reason:'content_invalid'});
+  const out=parseAiSearchOutcome(response(result),request,id,now);assert.equal(out.known,true);assert.equal(out.result,null);assert.equal(out.diagnostic,'content_invalid');
  }
- const bad=response();bad.body.tasks[0].result_count=2;assert.equal(parseAiSearchOutcome(bad,request,id,now).content.state,'unavailable');
+ const bad=response();bad.body.tasks[0].result_count=2;assert.equal(parseAiSearchOutcome(bad,request,id,now).result,null);
  const failed=response() as any;failed.body.tasks_error=1;failed.body.tasks[0].status_code=40501;failed.body.tasks[0].result=null;failed.body.tasks[0].result_count=0;
- assert.deepEqual(parseAiSearchOutcome(failed,request,id,now).content,{state:'unavailable',reason:'provider_error'});assert.equal(parseAiSearchOutcome(failed,request,id,now).charge.state,'known');
- const overrun=response();overrun.body.cost=overrun.body.tasks[0].cost=0.008;const out=parseAiSearchOutcome(overrun,request,id,now);assert.deepEqual(out.charge,{state:'known',costUsd:'0.008000',providerTaskId:reference});
+ assert.equal(parseAiSearchOutcome(failed,request,id,now).result,null);assert.equal(parseAiSearchOutcome(failed,request,id,now).diagnostic,'provider_error');assert.equal(parseAiSearchOutcome(failed,request,id,now).known,true);
+ const overrun=response();overrun.body.cost=overrun.body.tasks[0].cost=0.008;const out=parseAiSearchOutcome(overrun,request,id,now);assert.equal(out.known,true);assert.equal(out.reference,reference);assert.ok(out.result);assert.doesNotMatch(JSON.stringify(out),/cost|price|spend|charge/i);
 });
-test('a zero-cost wallet refusal is a known $0 charge with no provider task and the fixed text; a charged or other refusal stays unknown (D3)',async()=>{
- const out=parseAiSearchOutcome({httpStatus:200,body:{status_code:40200,status_message:'Payment Required.',cost:0,tasks_count:0,tasks_error:0,tasks:null}},request,id,now);
- assert.deepEqual(out,{charge:{state:'known',costUsd:'0.000000',providerTaskId:null},content:{state:'unavailable',reason:'provider_error'},diagnostic:dataforseoRefusalMessage.payment,
-  evidence:{httpStatus:200,statusCode:40200,taskStatus:null,totalCostUsd:'0.000000',taskCostUsd:null}});
- const task=parseAiSearchOutcome({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks_error:1,tasks:[{id:reference,status_code:40203,cost:0,result:null}]}},request,id,now);
- assert.deepEqual(task.charge,{state:'known',costUsd:'0.000000',providerTaskId:null});assert.equal(task.diagnostic,dataforseoRefusalMessage.cost_limit);assert.deepEqual(task.evidence,{httpStatus:200,statusCode:20000,taskStatus:40203,totalCostUsd:'0.000000',taskCostUsd:'0.000000'});
- for(const body of [{status_code:40200,cost:0.004,tasks:null},{status_code:40200,tasks:null},{status_code:40204,cost:0,tasks:null},{status_code:40201,cost:0,tasks:null}]){
-  const unknown=parseAiSearchOutcome({httpStatus:200,body},request,id,now);assert.equal(unknown.charge.state,'unknown',JSON.stringify(body));assert.equal(unknown.diagnostic,undefined);
+test('provider refusals are known failed requests independent of financial metadata',async()=>{
+ for(const cost of [undefined,0,0.004,-1,'invalid']){
+  const out=parseAiSearchOutcome({httpStatus:200,body:{status_code:40200,status_message:'Provider refusal',cost,tasks_count:0,tasks_error:0,tasks:null}},request,id,now);
+  assert.deepEqual(out,{known:true,reference:null,result:null,diagnostic:dataforseoRefusalMessage.provider,evidence:{httpStatus:200,statusCode:40200,taskStatus:null}});
  }
- let sends=0;const sent=await requestAiSearch(credentials,request,id,(async()=>{sends++;return new Response(JSON.stringify({status_code:40210,cost:0,tasks:null}),{status:402,headers:{'content-type':'application/json'}});}) as typeof fetch);
- assert.deepEqual(sent.charge,{state:'known',costUsd:'0.000000',providerTaskId:null});assert.equal(sent.diagnostic,dataforseoRefusalMessage.payment);assert.equal(sent.evidence.httpStatus,402);assert.equal(sends,1);
+ const task=parseAiSearchOutcome({httpStatus:200,body:{status_code:20000,tasks_count:1,tasks_error:1,tasks:[{id:reference,status_code:40203,result:null}]}},request,id,now);
+ assert.equal(task.known,true);assert.equal(task.result,null);assert.equal(task.diagnostic,dataforseoRefusalMessage.provider);
+ for(const status_code of [40204,40201])assert.equal(parseAiSearchOutcome({httpStatus:200,body:{status_code,tasks:null}},request,id,now).known,false);
+ let sends=0;const sent=await requestAiSearch(credentials,request,id,(async()=>{sends++;return new Response(JSON.stringify({status_code:40210,tasks:null}),{status:402,headers:{'content-type':'application/json'}});}) as typeof fetch);
+ assert.equal(sent.known,true);assert.equal(sent.result,null);assert.equal(sent.diagnostic,dataforseoRefusalMessage.provider);assert.equal(sent.evidence.httpStatus,402);assert.equal(sends,1);
 });
+
+test('successful request ignores absent, malformed or conflicting billing metadata',()=>{
+ for(const cost of [undefined,null,'bad',-1,NaN,0.0000001,{unexpected:true}]){
+  const raw=response() as any;raw.body.cost=cost;raw.body.tasks[0].cost='conflict';const out=parseAiSearchOutcome(raw,request,id,now);
+  assert.equal(out.known,true);assert.equal(out.reference,reference);assert.ok(out.result);assert.doesNotMatch(JSON.stringify(out),/cost|price|charge|spend/i);
+ }
+});
+
 test('untrusted provider timestamps/models stay unknown, not current defaults or invalid calendar dates',()=>{
  const input={keyword:request.capturedPrompt,location_code:2840,language_code:'en',model:{name:'fake'},datetime:'2026-02-30 10:00:00 +00:00',markdown:'Answer'};
- const out=parseAiSearchOutcome(response(input),request,id,now);assert.equal(out.content.state,'available');if(out.content.state==='available'){assert.equal(out.content.value.providerObservedAt,null);assert.equal(out.content.value.reportedModel,null);assert.equal(out.content.value.receivedAt,now.toISOString());}
+ const out=parseAiSearchOutcome(response(input),request,id,now);assert.equal(out.result!==null,true);if(out.result!==null){assert.equal(out.result!.providerObservedAt,null);assert.equal(out.result!.reportedModel,null);assert.equal(out.result!.receivedAt,now.toISOString());}
 });
-test('reconciliation uniquely binds own tag/payload/endpoint and never repairs answer evidence',()=>{
+test('recovery uniquely binds own tag/payload/endpoint and never repairs answer evidence',()=>{
  const row={id:reference,status:'20000',cost:0.004,url:path(aiSearchEndpoints.live).join('/'),metadata:aiSearchPayload(request,id)};
- assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[row]),request,id),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
- assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[{...row,status:20000}]),request,id),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[row]),request,id),{reference,statusCode:20000});
+ assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[{...row,status:20000}]),request,id),{reference,statusCode:20000});
  for(const status of [20000.1,20100,50000,NaN,Infinity,null,true,['20000'],'20000\n',' 20000','2e4'])assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[{...row,status}]),request,id));
- for(const rows of [[],[row,row],[{...row,metadata:{...row.metadata,tag:'foreign'}}],[{...row,status:'20100'}],[{...row,cost:-1}],[{...row,url:'v3/serp/google/organic/live/advanced'}]])assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,rows),request,id));
+ for(const rows of [[],[row,row],[{...row,metadata:{...row.metadata,tag:'foreign'}}],[{...row,status:'20100'}],[{...row,url:'v3/serp/google/organic/live/advanced'}]])assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,rows),request,id));
  assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,Array.from({length:1000},(_,i)=>({...row,id:i===0?reference:randomUUID()}))),request,id));
 });
 test('fake send is explicit, exactly once, fixed route/body and no automatic retry on unknown transport',async()=>{
  const seen:{url:string;options:RequestInit}[]=[];
  const send=(async(url,options)=>{seen.push({url:String(url),options:options!});return body(response().body);}) as typeof fetch;
- const out=await requestAiSearch(credentials,request,id,send);assert.equal(out.charge.state,'known');assert.equal(seen.length,1);assert.equal(seen[0].url,aiSearchEndpoints.live);assert.deepEqual(JSON.parse(seen[0].options.body as string),[aiSearchPayload(request,id)]);assert.equal(seen[0].options.redirect,'error');assert.equal(seen[0].options.credentials,'omit');assert.equal(new Headers(seen[0].options.headers).get('accept-encoding'),'identity');
- let failed=0;const failure=(async()=>{failed++;throw new Error('synthetic transport failure');}) as typeof fetch;assert.deepEqual((await requestAiSearch(credentials,request,id,failure)).content,{state:'unavailable',reason:'transport_unverified'});assert.equal(failed,1);
+ const out=await requestAiSearch(credentials,request,id,send);assert.equal(out.known,true);assert.equal(seen.length,1);assert.equal(seen[0].url,aiSearchEndpoints.live);assert.deepEqual(JSON.parse(seen[0].options.body as string),[aiSearchPayload(request,id)]);assert.equal(seen[0].options.redirect,'error');assert.equal(seen[0].options.credentials,'omit');assert.equal(new Headers(seen[0].options.headers).get('accept-encoding'),'identity');
+ let failed=0;const failure=(async()=>{failed++;throw new Error('synthetic transport failure');}) as typeof fetch;const failedOutcome=await requestAiSearch(credentials,request,id,failure);assert.equal(failedOutcome.known,false);assert.equal(failedOutcome.result,null);assert.equal(failedOutcome.diagnostic,'transport_unverified');assert.equal(failed,1);
  await assert.rejects(requestAiSearch(credentials,request,id,undefined as unknown as typeof fetch));
 });
 test('fixed transport rejects unknown AI products/paths/queries/methods before send; original routes work',async()=>{
@@ -186,19 +192,19 @@ test('catalog limits and free-envelope failures are closed rather than silently 
  assert.equal(parseAiSearchLanguages(free(aiSearchEndpoints.languages,languages)).length,1000);assert.throws(()=>parseAiSearchLanguages(free(aiSearchEndpoints.languages,[...languages,{language_code:'zzz',language_name:'Extra'}])));
  const countries=Array.from({length:301},(_,i)=>({location_code:i+1,location_name:'Country '+i,location_type:'Country',country_iso_code:String.fromCharCode(65+Math.floor(i/26),65+i%26)}));assert.throws(()=>parseAiSearchCountries(free(aiSearchEndpoints.locations,countries)));
  const sparse=new Array(250001);assert.throws(()=>parseAiSearchCountries(free(aiSearchEndpoints.locations,sparse)));
- for(const change of ['tasks','cost','path','count']){const raw=free(aiSearchEndpoints.languages,[languages[0]]) as any;if(change==='tasks')raw.body.tasks_count=2;if(change==='cost')raw.body.tasks[0].cost=0.004;if(change==='path')raw.body.tasks[0].path.push('unexpected');if(change==='count')raw.body.tasks[0].result_count=2;assert.throws(()=>parseAiSearchLanguages(raw));}
+ for(const change of ['tasks','path','count']){const raw=free(aiSearchEndpoints.languages,[languages[0]]) as any;if(change==='tasks')raw.body.tasks_count=2;if(change==='path')raw.body.tasks[0].path.push('unexpected');if(change==='count')raw.body.tasks[0].result_count=2;assert.throws(()=>parseAiSearchLanguages(raw));}
 });
-test('retained receipt proves charge after raw prompt purge only with complete exact dispatch-window evidence',()=>{
+test('retained receipt proves original request after raw prompt purge only with complete exact dispatch-window evidence',()=>{
  const binding={profileId:aiSearchProfileId,runId:id,payloadHash:canonicalHash(aiSearchPayload(request,id)),dispatchedAt:'2026-10-15T08:57:00.000Z',asOf:'2026-10-15T09:00:00.000Z',providerTaskId:reference};
  const row={id:reference,status:'20000',cost:0.004,url:path(aiSearchEndpoints.live).join('/'),metadata:aiSearchPayload(request,id),datetime_posted:'2026-10-15 08:57:00 +00:00'};
  function page(rows:unknown[]=[row]){const raw=free(aiSearchEndpoints.reconciliation,rows) as any;raw.body.tasks[0].data={api:'ai_optimization',function:'id_list',datetime_from:'2026-10-15 08:56:00 +00:00',datetime_to:'2026-10-15 08:59:30 +00:00',limit:1000,offset:0,sort:'asc',include_metadata:true};return raw;}
  const parse=parseAiSearchReconciliation as unknown as (response:unknown,binding:unknown)=>unknown;
- assert.deepEqual(parse(page(),binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
- assert.deepEqual(parse(page([{...row,status:20000}]),binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ assert.deepEqual(parse(page(),binding),{reference,statusCode:20000});
+ assert.deepEqual(parse(page([{...row,status:20000}]),binding),{reference,statusCode:20000});
  for(const patch of [{profileId:'other'},{payloadHash:'0'.repeat(64)},{providerTaskId:randomUUID()},{asOf:'2026-10-15T08:59:29.999Z'},{dispatchedAt:'2026-09-01T08:57:00.000Z'},{rawPrompt:request.capturedPrompt}])assert.throws(()=>parse(page(),{...binding,...patch}));
  for(const rows of [[row,row],[{...row,metadata:{...row.metadata,max_output_tokens:100000}}],[row,{...row,metadata:{...row.metadata,keyword:'different'}}],[{...row,datetime_posted:'2026-10-15 08:55:59 +00:00'}],[{...row,datetime_posted:'2026-10-15 08:59:31 +00:00'}],[{...row,datetime_posted:'2026-02-30 08:57:00 +00:00'}]])assert.throws(()=>parse(page(rows),binding));
  for(const patch of [{offset:1000},{limit:1},{include_metadata:false},{datetime_to:'2026-10-15 08:59:00 +00:00'},{priority:2}]){const raw=page();Object.assign(raw.body.tasks[0].data,patch);assert.throws(()=>parse(raw,binding));}
- const defaults=page();Object.assign(defaults.body.tasks[0].result[0].metadata,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',device:'desktop',os:'windows'});assert.deepEqual(parse(defaults,binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ const defaults=page();Object.assign(defaults.body.tasks[0].result[0].metadata,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',device:'desktop',os:'windows'});assert.deepEqual(parse(defaults,binding),{reference,statusCode:20000});
  assert.equal(Object.hasOwn(parse(page(),binding) as object,'metadata'),false);assert.equal(Object.hasOwn(binding,'capturedPrompt'),false);
 });
 test('AI-only account recovery fails closed and historical pre42 checks never query an absent relation',async()=>{
@@ -216,12 +222,12 @@ test('provider deadlines are explicit only and precede the first workspace lock 
  const names=['APP_URL','DATABASE_URL','AUTH_SECRET','ANALYTICS_NETWORK_MODE'] as const,saved=Object.fromEntries(names.map(k=>[k,process.env[k]]));
  Object.assign(process.env,{APP_URL:'http://localhost:3099',DATABASE_URL:'postgres://127.0.0.1:55501/ten98_ai_search_unit',AUTH_SECRET:'a'.repeat(64),ANALYTICS_NETWORK_MODE:'off'});
  const pool=getDatabase().pool,connect=pool.connect,workspace=randomUUID(),user=randomUUID(),request=randomUUID();let statements:string[]=[];
- const client={release(){},query:async(sql:string)=>{statements.push(sql);if(sql.includes('SELECT role FROM membership'))return{rows:[{role:'editor'}]};if(sql.includes('SELECT * FROM provider_request'))return{rows:[{id:request,workspace_id:workspace,user_id:user,status:'reserved',connection_id:randomUUID(),connection_revision:1,estimate_micros:'4000'}]};if(sql.includes('FROM provider_connection'))return{rows:[{revoked_at:null,revision:1}]};if(sql.includes('AS uncertain'))return{rows:[{month:'2026-10-01',paused:false,uncertain:false}]};return{rows:[]};}};// Owner decision D3: the gate reads the connection, then month/pause/uncertainty; there is no cap read.
+ const client={release(){},query:async(sql:string)=>{statements.push(sql);if(sql.includes('SELECT role FROM membership'))return{rows:[{role:'editor'}]};if(sql.includes('FROM provider_request'))return{rows:[{id:request,workspace_id:workspace,user_id:user,status:'reserved',connection_id:randomUUID(),connection_revision:1}]};if(sql.includes('FROM provider_connection'))return{rows:[{revoked_at:null,revision:1}]};if(sql.includes('AS paused'))return{rows:[{paused:false}]};return{rows:[]};}};// Dispatch rechecks the current connection and operational request pause.
  pool.connect=(async()=>client) as unknown as typeof pool.connect;
  try{
   await providerTransaction(workspace,user,['editor'],async()=>{});assert.deepEqual(statements,['BEGIN','SELECT id FROM workspace WHERE id=$1 FOR UPDATE','SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2','COMMIT']);
-  statements=[];await dispatchSpend(workspace,user,request,async()=>{statements.push('PREPARE');},'5s');assert.equal(statements[0],'BEGIN');assert.equal(statements[1],"SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");assert.equal(statements[2],'SELECT id FROM workspace WHERE id=$1 FOR UPDATE');assert.ok(statements.indexOf('PREPARE')>2);assert.equal(statements.at(-1),'COMMIT');
-  statements=[];await dispatchSpend(workspace,user,request);assert.equal(statements.some(s=>s.startsWith('SET LOCAL')),false);
+  statements=[];await dispatchRequest(workspace,user,request,async()=>{statements.push('PREPARE');},'5s');assert.equal(statements[0],'BEGIN');assert.equal(statements[1],"SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");assert.equal(statements[2],'SELECT id FROM workspace WHERE id=$1 FOR UPDATE');assert.ok(statements.indexOf('PREPARE')>2);assert.equal(statements.at(-1),'COMMIT');
+  statements=[];await dispatchRequest(workspace,user,request);assert.equal(statements.some(s=>s.startsWith('SET LOCAL')),false);
  }finally{pool.connect=connect;await closeDatabase();for(const name of names)if(saved[name]===undefined)delete process.env[name];else process.env[name]=saved[name];}
 });
 test('closed retained evidence reads independently of the separate word derivation ceiling',()=>{

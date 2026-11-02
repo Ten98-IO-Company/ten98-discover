@@ -37,7 +37,7 @@ export async function deleteProject(workspaceId:string,projectId:string,userId:s
    UNION ALL SELECT id FROM ai_search_run WHERE project_id=$1 UNION ALL SELECT id FROM ai_content_support_run WHERE project_id=$1
    UNION ALL SELECT id FROM domain_research_run WHERE project_id=$1)
    SELECT 1 FROM provider_request p JOIN ids ON ids.id=p.id WHERE p.workspace_id=$2 AND p.status IN('reserved','dispatched','uncertain') LIMIT 1`,[projectId,workspaceId]);
-  if(active.rowCount)throw new FoundationError(409,'Finish or cancel reserved work and reconcile uncertain provider charges before deleting this website.');
+  if(active.rowCount)throw new FoundationError(409,'Finish or cancel pending work and check uncertain provider requests before deleting this website.');
   // Same W gate serializes all reserve/dispatch/settle paths. No financial row is modified: each paid-work row of the
   // website is copied to the archive first (#292), in this transaction, so a failed copy deletes nothing.
   await archivePaidWork(client,{workspaceId,projectId});

@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { credentialKeys, decryptCredentials, encryptCredentials } from '../src/server/credential-vault.ts';
-import { providerAccountCheck, saveBudget, saveProvider, usd, usdMicros } from '../src/server/providers.ts';
-import { reserveSpend, settleSpend } from '../src/server/spending.ts';
+import { providerAccountCheck, providerRequestDiagnostic, saveProviderRequestControls, saveProvider } from '../src/server/providers.ts';
 
 test('versioned authenticated encryption rejects tampering, missing keys and cross-resource substitution', () => {
   const first = randomBytes(32).toString('base64'), next = randomBytes(32).toString('base64');
@@ -42,34 +41,14 @@ test('credential encryption refuses data that its bounded decryptor could not re
   }
 });
 
-test('USD micro-unit arithmetic preserves cents and rejects ambiguous or unbounded amounts', () => {
-  assert.equal(usdMicros('0.000001'), 1n);
-  assert.equal(usd(usdMicros('10.20') + usdMicros('0.000001')), '10.200001');
-  assert.equal(usdMicros('1000000'), 1_000_000_000_000n);
-  for (const value of ['-1','01','1e3','NaN','1,000',' 1','1.0000001','1000000.000001','','1\n','1.2\r','1.25\u2028']) assert.throws(() => usdMicros(value), { name: 'ZodError' }, 'Bad money must be a validation error, not a native BigInt failure.');
-});
-
-test('settlement rejects trailing line terminators before reading or changing a financial receipt', async () => {
-  for (const amount of ['1\n','1.2\r','1.25\u2028','0.1\u2029']) {
-    await assert.rejects(settleSpend(null as never, randomUUID(), randomUUID(), amount), {name:'ZodError'});
-  }
-});
-
-test('reservation validation rejects malformed and zero estimates before touching the database', async () => {
-  for (const estimateUsd of ['1e3', 'NaN', 'x', '0', '0.000000']) {
-    await assert.rejects(reserveSpend(randomUUID(), randomUUID(), { connectionId: randomUUID(), requestKey: randomUUID(), operation: 'unit.check', inputHash: 'a'.repeat(64), estimateUsd }), { name: 'ZodError' });
-  }
-});
-
-// Owner decision D3: the cap route and fields are gone; strict schemas refuse them instead of ignoring them.
-test('removed cap fields and malformed pause bodies are refused before database access', async () => {
+test('financial fields and malformed request controls are refused before database access', async () => {
   const connection = { name: 'Synthetic', credentials: { apiKey: 'never-read' } };
   for (const amount of ['0', '10', '1e3', null]) {
     await assert.rejects(saveProvider(randomUUID(), randomUUID(), { ...connection, provider: 'openrouter', monthlyLimitUsd: amount }), { name: 'ZodError' });
     await assert.rejects(saveProvider(randomUUID(), randomUUID(), { ...connection, monthlyLimitUsd: amount }, randomUUID()), { name: 'ZodError' });
-    await assert.rejects(saveBudget(randomUUID(), randomUUID(), { paused: true, monthlyLimitUsd: amount }), { name: 'ZodError' });
+    await assert.rejects(saveProviderRequestControls(randomUUID(), randomUUID(), { paused: true, monthlyLimitUsd: amount }), { name: 'ZodError' });
   }
-  for (const input of [{ paused: 'yes' }, { paused: false, extra: true }, {}, null]) await assert.rejects(saveBudget(randomUUID(), randomUUID(), input), { name: 'ZodError' });
+  for (const input of [{ paused: 'yes' }, { paused: false, extra: true }, {}, null]) await assert.rejects(saveProviderRequestControls(randomUUID(), randomUUID(), input), { name: 'ZodError' });
 });
 
 test('provider account checks use fixed read-only URLs, reject redirects, bound responses and redact errors', async () => {
@@ -88,6 +67,7 @@ test('provider account checks use fixed read-only URLs, reject redirects, bound 
   const { signal, ...dataForSeoInit } = calls[1].init ?? {};
   assert.ok(signal instanceof AbortSignal);
   assert.deepEqual(dataForSeoInit, { headers: { authorization: `Basic ${Buffer.from(`test@example.test:${secret}`).toString('base64')}`, accept: 'application/json' }, redirect: 'error', credentials: 'omit' });
+  assert.equal((await providerAccountCheck('openrouter', { apiKey: secret }, send({ data: {} }))).checkStatus, 'ok', 'Accepted credentials do not require any funding or financial account metadata.');
   for (const status of [401,403,429,500]) {
     const result = await providerAccountCheck('openrouter', { apiKey: secret }, send({ error: secret }, status));
     assert.equal(result.checkStatus, 'error'); assert.ok(!JSON.stringify(result).includes(secret));
@@ -103,4 +83,11 @@ test('provider credential validation rejects strings the shared authenticated tr
     await assert.rejects(providerAccountCheck('dataforseo',{login:'synthetic@example.com',password},send),{name:'ZodError'});
   }
   assert.equal(calls,0);
+});
+
+test('historical financial diagnostics project to request outcomes while technical failures remain actionable',()=>{
+ for(const diagnostic of ['Charge recovered; unavailable content is not recreated.','No credit left','Wallet unavailable','Billing declined','Price changed','USD 0.01 incurred','$0.01 estimate'])assert.equal(providerRequestDiagnostic(diagnostic),'Inspect the original provider request for its outcome and available results.');
+ for(const diagnostic of ['The provider timed out.','Connection credentials changed.','No result was returned.'])assert.equal(providerRequestDiagnostic(diagnostic),diagnostic);
+ for(const missing of [null,undefined,'',42])assert.equal(providerRequestDiagnostic(missing),null);
+ assert.equal(providerRequestDiagnostic('Old charge text','uncertain'),'The original provider request outcome is unknown. Check this request before starting it again.');
 });

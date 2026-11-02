@@ -12,7 +12,7 @@ import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './goog
 import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { auditOperatorPaidWorkExport, clearEmailSuppressionAsOperator, setInstanceOperator } from './instance-operators.ts';
 import { closeAccountFromHost } from './account-security.ts';
-import { quarantineRestoredSpending } from './restore-quarantine.ts';
+import { quarantineRestoredRequests } from './restore-quarantine.ts';
 import { exportPaidWorkArchive } from './paid-work-archive.ts';
 
 class CliError extends Error {}
@@ -161,8 +161,8 @@ try {
     case 'migrate': await migrate(); break;
     case 'restore-quarantine': {
       await assertSchema();
-      const result = await quarantineRestoredSpending();
-      console.log(`Restore spending quarantine applied: ${result.pausedBudgets} budgets paused, ${result.cancelledReservations} reservations cancelled, ${result.disabledSchedules} schedules disabled.`);
+      const result = await quarantineRestoredRequests();
+      console.log(`Restore request quarantine applied: ${result.pausedRequestControls} request controls paused, ${result.cancelledReservations} reservations cancelled, ${result.disabledSchedules} schedules disabled.`);
       console.log('Keep workers stopped until restored imports, crawls and provider receipts are reviewed. No provider requests were made.');
       break;
     }

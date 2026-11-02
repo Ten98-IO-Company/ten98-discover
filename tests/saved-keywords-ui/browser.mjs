@@ -51,14 +51,16 @@ async function manual(page,base,words,tags=''){
   const form=await fillManual(page,words,tags),result=await post(page,base,()=>form.getByRole('button',{name:'Save keywords',exact:true}).click());
   await form.waitFor({state:'hidden'});await table(page).locator('tbody tr').filter({hasText:words.split('\n')[0].trim().toLowerCase()}).waitFor();return result;
 }
-async function refreshQuote(page,base){
+async function openRefresh(page){
   await savedPanel(page).getByRole('button',{name:'Refresh all matching metrics',exact:true}).click();
-  const result=await post(page,base+'/refresh-quote',()=>refresh(page).getByRole('button',{name:'Prepare refresh quote',exact:true}).click());
-  await refresh(page).getByRole('heading',{name:'Review metric refresh',exact:true}).waitFor();return result.quote;
+  await refresh(page).getByRole('button',{name:'Run',exact:true}).waitFor();
 }
 async function startRefresh(page,base,double=false){
-  const button=refresh(page).getByRole('button',{name:'Start quoted refresh (paid)',exact:true});
+  const prepared=page.waitForResponse(matchingResponse(base+'/refresh-prepare'));
+  const button=refresh(page).getByRole('button',{name:'Run',exact:true});
   const result=await post(page,base+'/refreshes',()=>double?button.evaluate(element=>{element.click();element.click();}):button.click(),202);
+  const response=await prepared;assert.equal(response.status(),200);const preparation=(await response.json()).preparation;
+  assert.equal(result.plan.id,preparation.id);assert.deepEqual(result.plan.children.map(c=>c.preparationId),preparation.children.map(c=>c.preparationId));
   await selectedRefresh(page).waitFor();return result.plan;
 }
 async function holdList(page,path,status){
@@ -74,8 +76,10 @@ try{
     const {group,page,base}=await phase('core'),research=researchPanel(page),B='/api/projects/'+group.main.id+'/keyword-research';
     await openKeywordForm(research);await research.getByLabel('Keywords (one per line)',{exact:true}).fill('Saved source\nOmitted source');
     await research.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
-    await post(page,B+'/quote',()=>research.getByRole('button',{name:'Prepare quote',exact:true}).click());
-    const run=(await post(page,B+'/runs',()=>research.getByRole('button',{name:'Run quoted research (paid)',exact:true}).click(),202)).run;
+    const prepared=page.waitForResponse(matchingResponse(B+'/prepare'));
+    const run=(await post(page,B+'/runs',()=>research.getByRole('button',{name:'Run',exact:true}).click(),202)).run;
+    const response=await prepared;assert.equal(response.status(),200);const preparation=(await response.json()).preparation;
+    assert.equal(run.preparationId,preparation.id);assert.equal(Object.hasOwn(preparation,'estimateUsd'),false);
     await runKeyword(run.id);await research.getByRole('button',{name:'Check status',exact:true}).click();
     await research.getByRole('region',{name:'Keyword data table',exact:true}).waitFor();
     const beforeSave=await providerCounts();await research.getByLabel('Select research keyword saved source',{exact:true}).check();
@@ -145,24 +149,25 @@ try{
   for(const fault of ['lost','changed']){
     stage='refresh '+fault+' acknowledgement, expired replay and double click';
     const {group,page,base}=await phase('refresh-'+fault);await openSaved(page);await manual(page,base,'Refresh '+fault+' target');
-    const quote=await refreshQuote(page,base),bodies=[];let first=true;const before=await providerCounts();
+    await openRefresh(page);let preparation;const prepared=page.waitForResponse(matchingResponse(base+'/refresh-prepare')).then(async response=>{assert.equal(response.status(),200);preparation=(await response.json()).preparation;return preparation;});
+    const bodies=[];let first=true;const before=await providerCounts();
     const handler=async route=>{
       if(route.request().method()!=='POST')return route.continue();
       bodies.push(route.request().postDataJSON());const response=await route.fetch();assert.equal(response.status(),202);const accepted=await response.json();
-      if(first){first=false;for(const child of accepted.plan.children)await runKeyword(child.runId);
-        // Only the browser clock advances: immutable server quote metadata stays
+      if(first){first=false;await prepared;assert.equal(accepted.plan.id,preparation.id);assert.deepEqual(Object.keys(bodies[0]).sort(),['preparationId','requestKey']);assert.equal(bodies[0].preparationId,preparation.id);for(const child of accepted.plan.children)await runKeyword(child.runId);
+        // Only the browser clock advances: immutable server preparation metadata stays
         // intact. Independent PG acceptance covers actual server-expired replay.
-        await page.evaluate(expires=>{const now=Date.parse(expires)+1000;Date.now=()=>now;},quote.expiresAt);
+        await page.evaluate(expires=>{const now=Date.parse(expires)+1000;Date.now=()=>now;},preparation.expiresAt);
         if(fault==='lost')return route.abort('connectionreset');
         const child=accepted.plan.children[0];return route.fulfill({status:202,json:{...accepted,plan:{...accepted.plan,children:[{...child,request:{...child.request,keywords:['wrong acknowledged keyword']},targetIds:[randomUUID()]}]}}});
       }
       assert.deepEqual(bodies.at(-1),bodies[0]);return route.fulfill({response});
     };
     await page.route('**'+base+'/refreshes',handler);cleanup.push(()=>page.unroute('**'+base+'/refreshes',handler));
-    await refresh(page).getByRole('button',{name:'Start quoted refresh (paid)',exact:true}).evaluate(element=>{element.click();element.click();});
+    await refresh(page).getByRole('button',{name:'Run',exact:true}).evaluate(element=>{element.click();element.click();});
     const retry=refresh(page).getByRole('button',{name:'Retry same refresh request',exact:true});await retry.waitFor();assert.equal(bodies.length,1);
     assert.equal(await page.getByRole('button',{name:'Research',exact:true}).isDisabled(),true);
-    const result=await post(page,base+'/refreshes',()=>retry.click(),202);assert.equal(result.plan.id,quote.id);await retry.waitFor({state:'hidden'});
+    const result=await post(page,base+'/refreshes',()=>retry.click(),202);assert.equal(result.plan.id,preparation.id);await retry.waitFor({state:'hidden'});
     await selectedRefresh(page).getByRole('heading',{name:'Refresh completed',exact:true}).waitFor();
     assert.equal(bodies.length,2);assert.deepEqual(bodies[0],bodies[1]);assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'1');
     assert.equal((await providerCounts())['keyword-dispatch']-(before['keyword-dispatch']??0),1);
@@ -172,7 +177,7 @@ try{
   }
 
   stage='held status read interrupted by queued cancellation';{
-    const {group,page,base}=await phase('cancel');await openSaved(page);await manual(page,base,'Cancel target');await refreshQuote(page,base);const plan=await startRefresh(page,base);
+    const {group,page,base}=await phase('cancel');await openSaved(page);await manual(page,base,'Cancel target');await openRefresh(page);const plan=await startRefresh(page,base);
     const before=await providerCounts(),held=await holdNextGet(page,'**'+base+'/refreshes/'+plan.id);cleanup.push(held.dispose);
     await refresh(page).getByRole('button',{name:'Check refresh status',exact:true}).click();await bounded(held.entered);
     await post(page,base+'/refreshes/'+plan.id+'/cancel',()=>refresh(page).getByRole('button',{name:'Cancel undispatched requests',exact:true}).click());
@@ -203,7 +208,7 @@ try{
     await changeRole(group.workspace.id,fixture.bootstrap.id,group.owner.id,{role:'viewer'});
     const listResponse=page.waitForResponse(matchingResponse(base+'/list'));await savedPanel(page).getByRole('button',{name:'Reload list',exact:true}).click();assert.equal((await (await listResponse).json()).role,'viewer');
     await savedPanel(page).getByRole('button',{name:'Add keywords',exact:true}).waitFor({state:'hidden'});
-    await page.getByRole('button',{name:'Research',exact:true}).click();await researchPanel(page).getByText(/Ask a workspace owner/).waitFor();assert.equal(await researchPanel(page).getByRole('button',{name:'Prepare quote',exact:true}).count(),0);
+    await page.getByRole('button',{name:'Research',exact:true}).click();await researchPanel(page).getByText(/Ask a workspace owner/).waitFor();assert.equal(await researchPanel(page).getByRole('button',{name:'Run',exact:true}).count(),0);
     await openSaved(page);await removeMember(group.workspace.id,fixture.bootstrap.id,group.owner.id);
     await savedPanel(page).getByRole('button',{name:'Reload list',exact:true}).click();await savedPanel(page).getByRole('alert').waitFor();await table(page).waitFor({state:'hidden'});
     await page.getByRole('button',{name:'Research',exact:true}).click();await researchPanel(page).getByRole('alert').waitFor();

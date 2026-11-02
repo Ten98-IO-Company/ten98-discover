@@ -363,7 +363,7 @@ export async function runMcpChecks(){
           const {listRankRuns,getLatestRankResults,getRankKeywordHistory}=await import('../src/server/rank-history.ts');
           const {listSavedKeywords,listSavedKeywordTags}=await import('../src/server/saved-keywords.ts');
           const {saveProvider}=await import('../src/server/providers.ts');
-          const {compileRankPlan,rankPlanTotal}=await import('../src/server/rank-execution-plan.ts');
+          const {compileRankPlan}=await import('../src/server/rank-execution-plan.ts');
           const {canonicalHash}=await import('../src/server/context-input.ts');
           const rp=await makeProject(),rankKey=await makeKey(ru,['rank:read']),keywordsKey=await makeKey(ru,['keywords:read']),trackerId=randomUUID(),runId=randomUUID(),tagId=randomUUID(),keywordId=randomUUID();
           assert.deepEqual((await rpc('tools/list',{},rankKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_rank_trackers','ten98_read_rank_tracker','ten98_read_rank_distribution','ten98_read_rank_matrix','ten98_list_rank_runs','ten98_read_rank_results','ten98_read_rank_keyword_history']);
@@ -374,9 +374,9 @@ export async function runMcpChecks(){
           const keywords=[{id:randomUUID(),keyword:'mcp rank one',matchCase:false},{id:randomUUID(),keyword:'mcp rank two',matchCase:false}];
           await pool.query('INSERT INTO rank_keyword(id,workspace_id,project_id,config_id,keyword,match_case) SELECT k.id,$2,$3,$4,k.keyword,k."matchCase" FROM jsonb_to_recordset($1::jsonb) k(id uuid,keyword text,"matchCase" boolean)',[JSON.stringify(keywords),rw,rp,trackerId]);
           // One started run without dispatches or tasks: every captured pair reads as unavailable and no provider_request row exists.
-          const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1},devices:'desktop',keywords,baseMicros:1000n});
-          await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at,request_key,started_at,completed_at)
-            VALUES($1,$2,$3,$4,$5,'manual','queued','completed',1,1,$6,1,$7,'MCP synthetic',$8,$9,$10,$11,clock_timestamp(),clock_timestamp()+interval '5 minutes',$12,clock_timestamp(),clock_timestamp())`,[runId,rw,rp,trackerId,ru,connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,rankPlanTotal(plan).toString(),randomUUID()]);
+          const plan=compileRankPlan({method:'queued',target:{domain:'example.com',locationCode:2840,languageCode:'en',depth:100,maxCrawlPages:1},devices:'desktop',keywords});
+          await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,request_version,expires_at,request_key,started_at,completed_at)
+            VALUES($1,$2,$3,$4,$5,'manual','queued','completed',1,1,$6,1,$7,'MCP synthetic',$8,$9,$10,1,clock_timestamp()+interval '5 minutes',$11,clock_timestamp(),clock_timestamp())`,[runId,rw,rp,trackerId,ru,connection,'a'.repeat(64),JSON.stringify(plan),canonicalHash(plan),plan.tasks.length,randomUUID()]);
           await pool.query("INSERT INTO saved_keyword_tag(id,project_id,name,normalized_name) VALUES($1,$2,'MCP Tag','mcp tag')",[tagId,rp]);
           await pool.query("INSERT INTO saved_keyword(id,project_id,keyword,location_code,language_code) VALUES($1,$2,'mcp saved keyword',2840,'en')",[keywordId,rp]);
           await pool.query('INSERT INTO saved_keyword_tag_assignment(project_id,keyword_id,tag_id) VALUES($1,$2,$3)',[rp,keywordId,tagId]);
@@ -410,10 +410,10 @@ export async function runMcpChecks(){
           assert.equal(results[distributionPath].totals.counts.neverChecked,2);assert.equal(results[distributionPath].mode,'latest');
           assert.equal(results[distributionPath+'?runId='+runId].totals.counts.unavailable,2);assert.equal(results[distributionPath+'?runId='+runId].run.id,runId);
           assert.deepEqual(results[matrixPath].columns.map((c:any)=>c.runId),[runId]);assert.deepEqual(results[matrixPath].rows.map((r:any)=>r.cells[0].state),['unavailable','unavailable']);
-          // Runs under a key omit the provider-ledger amounts and the cost-restating diagnostic the cookie reader keeps; every other run field is identical.
+          // Both readers omit financial fields; operational request status and diagnostics remain cookie-only.
           const keyRuns=results[runsPath].runs,cookieRuns=wire(await listRankRuns(rp,ru,trackerId)).runs;assert.deepEqual(keyRuns.map((r:any)=>r.id),[runId]);
-          for(const field of ['estimateUsd','knownChargeUsd','costStatus','diagnostic'])assert.equal(Object.hasOwn(keyRuns[0],field),false,field);
-          const {estimateUsd,knownChargeUsd,costStatus,diagnostic,...cookieRest}=cookieRuns[0];assert.match(estimateUsd,/^\d+\.\d{6}$/);assert.equal(knownChargeUsd,'0.000000');assert.equal(costStatus,'not_started');assert.equal(diagnostic,null);assert.deepEqual(cookieRest,keyRuns[0]);
+          for(const run of [keyRuns[0],cookieRuns[0]])for(const field of ['estimateUsd','knownChargeUsd','costStatus'])assert.equal(Object.hasOwn(run,field),false,field);for(const field of ['requestStatus','diagnostic'])assert.equal(Object.hasOwn(keyRuns[0],field),false,field);
+          const {requestStatus,diagnostic,...cookieRest}=cookieRuns[0];assert.equal(requestStatus,'not_started');assert.equal(diagnostic,null);assert.deepEqual(cookieRest,keyRuns[0]);
           assert.deepEqual(results[resultsPath].rows.map((r:any)=>r.observationStatus),['not_checked','not_checked']);assert.ok(results[resultsPath].rows.every((r:any)=>r.device==='desktop'&&r.latestAttempt===null));
           assert.deepEqual(results[historyPath].keyword,{id:keywords[0].id,keyword:keywords[0].keyword,matchCase:false,removed:false});assert.deepEqual(results[historyPath].observations,[]);
           assert.equal(results['saved-keywords/list'].total,1);assert.deepEqual(results['saved-keywords/list'].rows[0].tags.map((t:any)=>t.id),[tagId]);assert.equal(results['saved-keywords/list'].rows[0].metrics.status,'unavailable');

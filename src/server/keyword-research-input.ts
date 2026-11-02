@@ -31,15 +31,15 @@ export function parseKeywordRequest(raw:unknown):KeywordRequest {
 }
 
 // Parse JSON's canonical decimal/exponent spelling without multiplying binary floats.
-// Reject finer-than-micro costs rather than quietly changing financial evidence.
+// CPC is a business search metric; preserve its exact micro-dollar precision.
 export function providerMicros(value:unknown):bigint {
-  if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>1_000_000)throw new Error('Unsupported provider cost.');
+  if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>1_000_000)throw new Error('Unsupported CPC value.');
   const match=/^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/.exec(String(value));
-  if(!match)throw new Error('Unsupported provider cost.');
+  if(!match)throw new Error('Unsupported CPC value.');
   const fraction=match[2]??'',digits=BigInt(match[1]+fraction),scale=fraction.length-Number(match[3]??0);
   if(scale<=6)return digits*10n**BigInt(6-scale);
   const divisor=10n**BigInt(scale-6);
-  if(digits%divisor!==0n)throw new Error('Unsupported provider cost precision.');
+  if(digits%divisor!==0n)throw new Error('Unsupported CPC precision.');
   return digits/divisor;
 }
 export function microUsd(value:bigint):string {return `${value/1_000_000n}.${String(value%1_000_000n).padStart(6,'0')}`;}
