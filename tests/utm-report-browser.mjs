@@ -24,10 +24,11 @@ async function release(record,status=record.status,body=record.body){
   catch(error){record.fulfillError=error.name;assert.ok(record.request.failure(),'Only an observed aborted native request may reject fulfillment');}
   record.transportAborted=!!record.request.failure();
 }
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/utm-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/utm-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/utm-report-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-runtime','react/jsx-dev-runtime','@tanstack/react-router','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((request,response,next)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('Content-Type','text/html');response.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UTM synthetic transport fixture</title><div id="root"></div><script type="module" src="/tests/utm-report-browser-fixture.tsx"></script></html>');});
 try{
   await mkdir(out,{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
+  await server.warmupRequest('/tests/utm-report-browser-fixture.tsx');await server.waitForRequestsIdle();
   browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));page.on('requestfailed',request=>{const record=requests.get(request);if(record){record.transportAborted=true;record.failure=request.failure()?.errorText;if(record.counted){record.counted=false;active--;}}});
   await context.route('**/*',async route=>{
