@@ -7,7 +7,7 @@ import {getBoss,startWorker,stopJobs} from '../src/server/jobs.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {saveBudget,saveProvider,revokeProvider} from '../src/server/providers.ts';
-import {reserveSpend} from '../src/server/spending.ts';
+import {reserveSpend,cancelReservation,dispatchSpend} from '../src/server/spending.ts';
 import {getRankTracker,changeRankKeywords} from '../src/server/rank-tracking.ts';
 import {quoteRankCheck,startRankCheck,getRankRun,rankQueue} from '../src/server/rank-execution.ts';
 import {executeRankDispatch,pollRankDispatch,reconcileRankJobs,cancelRankRun,rankPollQueue,rankDispatchSnapshot,applyReconciledRankOutcome} from '../src/server/rank-worker.ts';
@@ -104,9 +104,9 @@ export async function runRankWorkerChecks(){
     assert.equal((await charge(q.dispatches[0])).actual_micros,'1000');assert.equal((await getRankRun(q.project,owner,q.run)).run.status,'completed');assert.equal(queued.state.paid,1);assert.equal(queued.state.gets,3);
     console.log('PASS queued acknowledgement, durable one-task free collection, pending evidence and final refund settlement after role change');
 
-    // Owner decision D3: the lost POST leaves the charge uncertain without pausing; the ledger itself refuses new paid work until it is resolved.
+    // A lost POST keeps its original charge recoverable while independent reservations remain available.
     const lost=transport(),u=await fixture(lost,'queued',2);lost.state.paidMode='lost';await executeRankDispatch(u.dispatches[0],lost.send);assert.equal((await charge(u.dispatches[0])).status,'uncertain');assert.equal(await paused(u),false);await executeRankDispatch(u.dispatches[0],lost.send);await reconcileRankJobs();assert.equal(lost.state.paid,1);
-    await assert.rejects(reserveSpend(u.workspace,owner,{connectionId:u.connection,requestKey:randomUUID(),operation:'rank.queued',inputHash:'0'.repeat(64),estimateUsd:'0.001'}),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));
+    const independent=await reserveSpend(u.workspace,owner,{connectionId:u.connection,requestKey:randomUUID(),operation:'rank.queued',inputHash:'0'.repeat(64),estimateUsd:'0.001'});assert.equal(independent.created,true);await cancelReservation(u.workspace,owner,independent.id);assert.equal((await charge(independent.id)).status,'cancelled');await assert.rejects(dispatchSpend(u.workspace,owner,u.dispatches[0]),failed(409));await executeRankDispatch(u.dispatches[0],lost.send);assert.equal((await charge(u.dispatches[0])).status,'uncertain');assert.equal((await charge(u.dispatches[0])).actual_micros,null);assert.equal(lost.state.paid,1);
     const replacement=(await saveProvider(u.workspace,owner,{provider:'dataforseo',name:'Replacement same account',credentials:{login:'rank-worker@integration.test',password:'replacement-never-live'}})).connection.id;await revokeProvider(u.workspace,owner,u.connection);
     await recover(u,lost,replacement);assert.equal((await charge(u.dispatches[0])).actual_micros,'1000');assert.equal((await dispatch(u.dispatches[0])).phase,'collecting');
     await pollRankDispatch(u.dispatches[0],undefined,lost.send);await pollRankDispatch(u.dispatches[0],undefined,lost.send);assert.equal((await getRankRun(u.project,owner,u.run)).run.status,'completed');assert.equal(lost.state.paid,1);assert.equal(await paused(u),false);

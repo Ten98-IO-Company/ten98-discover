@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {Alert, BarList, Card, DataTable, MetricCard, ReportToolbar, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
+import {Alert, BarList, Button, Card, DataTable, Inline, MetricCard, ReportToolbar, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
@@ -188,14 +188,13 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                   onChange={(e) => { if (draftOff) return; onChange('timeZone', e.target.value); }} />
               </div>
               <div className="field" style={{ margin: 0 }}>
-                <label htmlFor={prefix + 'model'}>Model</label>
+                <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'model'}>Model</label><Tooltip content={<>Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</>}><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About model options" disabled={busy}>?</Button></Tooltip></Inline>
                 <select id={prefix + 'model'} value={draft.model} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('model', e.target.value); }}>
                   <option value="">All observed models</option>
                   {draft.model&&!props.modelOptions?.values.includes(draft.model)&&<option value={draft.model}>{draft.model} — selected, outside these options</option>}
                   {(props.modelOptions?.values??[]).map(model=><option key={model} value={model}>{model}</option>)}
                 </select>
-                <Tooltip content={<>Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</>}><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About model options</button></Tooltip>
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'prompt'}>Prompt</label>
@@ -207,19 +206,17 @@ export function AIInsightsView(props: AIInsightsViewProps) {
               </div>
             </>} advanced={<>
               <div className="field" style={{ margin: 0 }}>
-                <label htmlFor={prefix + 'tag'}>Current tag</label>
+                <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'tag'}>Current tag</label><Tooltip content="Matches current user tags; historical tags were not recorded."><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About current tags" disabled={busy}>?</Button></Tooltip></Inline>
                 <input id={prefix + 'tag'} type="text" value={draft.tag} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('tag', e.target.value); }} />
-                <Tooltip content="Matches current user tags; historical tags were not recorded."><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About current tags</button></Tooltip>
               </div>
               <div className="field" style={{ margin: 0 }}>
-                <label htmlFor={prefix + 'matcher'}>Matching method</label>
+                <Inline align="center" justify="between" gap={1}><label htmlFor={prefix + 'matcher'}>Matching method</label><Tooltip content="Substring matching can include parts of unrelated words."><Button type="button" variant="ghost" style={{...controlStyle,minWidth:44}} aria-label="About matching methods" disabled={busy}>?</Button></Tooltip></Inline>
                 <select id={prefix + 'matcher'} value={draft.matcher} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('matcher', e.target.value); }}>
                   <option value="unicode-boundary-v1">Unicode word boundaries</option>
                   <option value="elmo-substring-v1">Elmo substring baseline</option>
                 </select>
-                <Tooltip content="Substring matching can include parts of unrelated words."><button type="button" className="btn ghost" style={controlStyle} disabled={busy}>About matching methods</button></Tooltip>
               </div>
 
             <div className="row" style={{ flexWrap: 'wrap', alignItems: 'flex-end', gap: 8 }}>
