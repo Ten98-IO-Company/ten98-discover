@@ -410,10 +410,10 @@ export async function runMcpChecks(){
           assert.equal(results[distributionPath].totals.counts.neverChecked,2);assert.equal(results[distributionPath].mode,'latest');
           assert.equal(results[distributionPath+'?runId='+runId].totals.counts.unavailable,2);assert.equal(results[distributionPath+'?runId='+runId].run.id,runId);
           assert.deepEqual(results[matrixPath].columns.map((c:any)=>c.runId),[runId]);assert.deepEqual(results[matrixPath].rows.map((r:any)=>r.cells[0].state),['unavailable','unavailable']);
-          // Runs under a key omit the provider-ledger amounts and the cost-restating diagnostic the cookie reader keeps; every other run field is identical.
+          // Both readers omit financial fields; operational request status and diagnostics remain cookie-only.
           const keyRuns=results[runsPath].runs,cookieRuns=wire(await listRankRuns(rp,ru,trackerId)).runs;assert.deepEqual(keyRuns.map((r:any)=>r.id),[runId]);
-          for(const field of ['estimateUsd','knownChargeUsd','costStatus','diagnostic'])assert.equal(Object.hasOwn(keyRuns[0],field),false,field);
-          const {estimateUsd,knownChargeUsd,costStatus,diagnostic,...cookieRest}=cookieRuns[0];assert.match(estimateUsd,/^\d+\.\d{6}$/);assert.equal(knownChargeUsd,'0.000000');assert.equal(costStatus,'not_started');assert.equal(diagnostic,null);assert.deepEqual(cookieRest,keyRuns[0]);
+          for(const run of [keyRuns[0],cookieRuns[0]])for(const field of ['estimateUsd','knownChargeUsd','costStatus'])assert.equal(Object.hasOwn(run,field),false,field);for(const field of ['requestStatus','diagnostic'])assert.equal(Object.hasOwn(keyRuns[0],field),false,field);
+          const {requestStatus,diagnostic,...cookieRest}=cookieRuns[0];assert.equal(requestStatus,'not_started');assert.equal(diagnostic,null);assert.deepEqual(cookieRest,keyRuns[0]);
           assert.deepEqual(results[resultsPath].rows.map((r:any)=>r.observationStatus),['not_checked','not_checked']);assert.ok(results[resultsPath].rows.every((r:any)=>r.device==='desktop'&&r.latestAttempt===null));
           assert.deepEqual(results[historyPath].keyword,{id:keywords[0].id,keyword:keywords[0].keyword,matchCase:false,removed:false});assert.deepEqual(results[historyPath].observations,[]);
           assert.equal(results['saved-keywords/list'].total,1);assert.deepEqual(results['saved-keywords/list'].rows[0].tags.map((t:any)=>t.id),[tagId]);assert.equal(results['saved-keywords/list'].rows[0].metrics.status,'unavailable');
