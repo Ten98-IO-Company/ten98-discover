@@ -240,12 +240,16 @@ try {
 
   stage = 'installation snippet, clipboard recovery and scoped native link';
   await open('installation'); await snippetRegion().waitFor();
-  // With an empty history, Install polls for the first event on its own and announces it; a manual empty check clears the announcement.
+  // Polling can discover old retained history; it does not establish current tracker health.
   eventReply = {body:populated};
-  await main.getByRole('status').filter({hasText:'Tracking works: visits are arriving'}).waitFor({timeout:10_000});
+  await main.getByRole('status').filter({hasText:'The last successful check found retained events.'}).waitFor({timeout:10_000});
+  assert.equal(await main.getByText(/Tracking works|visits are arriving/).count(), 0);
+  assert.equal(await page.locator('.t98-sidebar-status--connected').count(), 0);
+  await page.locator('.t98-sidebar-status').getByText('Retained visits available', {exact:true}).waitFor();
   eventReply = {body:empty}; await button('Check for events').click();
   await main.getByText('Waiting for the first visit.', {exact:false}).waitFor();
-  assert.equal(await main.getByText('Tracking works: visits are arriving', {exact:false}).count(), 0);
+  assert.equal(await main.getByText('The last successful check found retained events.', {exact:true}).count(), 0);
+  assert.equal(await main.getByText(/Tracking works|visits are arriving/).count(), 0);
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
