@@ -720,7 +720,7 @@ function App() {
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Add website',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.',project:'Website',noProjects:'No websites yet',choose:'Choose a website',loading:'Loading websites…'}} />
         {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
         <SidebarFooter version={appVersion}>
-          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Visit history unavailable':lastReceived?'Receiving visits':'Waiting for the first visit'}/>}
+          {project&&<SidebarStatus tone='idle' label={eventsError?'Visit history unavailable':eventsBusy?'Checking visit history':lastReceived?'Retained visits available':events===null?'Visit history not checked':'Waiting for the first visit'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target(project?'installation':'preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
@@ -890,7 +890,7 @@ function App() {
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
-                {(events?.total ?? 0) > 0 && <><StatusLine tone='success'>Tracking works: visits are arriving from {project.origin}.</StatusLine><Button style={{minHeight:44,whiteSpace:'normal'}} href='project' component={ShellLink}>Go to dashboard</Button></>}
+                {(events?.total ?? 0) > 0 && <><StatusLine>The last successful check found retained events.</StatusLine><Button style={{minHeight:44,whiteSpace:'normal'}} href='project' component={ShellLink}>Go to dashboard</Button></>}
                 {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt} title={events.events[0].receivedAt}>{formatReportInstant(events.events[0].receivedAt,'UTC')}</time>.</p>}
                 {events !== null && events.total === 0 && <StatusLine>Waiting for the first visit. Open your website in another tab; this page checks again for 10 minutes. If your site asks visitors for consent, accept analytics first.</StatusLine>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
