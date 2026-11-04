@@ -2,11 +2,11 @@ import {deriveSearchQueries,SearchEvidenceError,searchEvidenceVersion,queryDeriv
 import {matchAnswer,type MentionSubject} from './answer-mentions.ts';
 import type {AiSearchCapturedResult} from './dataforseo-ai-search.ts';
 import type {AiSearchRawState,AiSearchRunStatus} from '../lib/ai-search.ts';
-import {aiQueryStatuses,aiQueryRawStates,aiQueryStates,aiQueryAnswerStates,type AiQueryFilters,type AiQueryCoverage,type AiQueryTotals,type AiQueryRow,type AiQueryCapture} from '../lib/ai-search-analysis.ts';
+import {aiQueryStatuses,aiQueryRawStates,aiQueryStates,aiQueryAnswerStates,type AiQueryFilters,type AiQueryCoverage,type AiQueryTotals,type AiQueryRow,type AiQueryCapture,type AiQueryMarket} from '../lib/ai-search-analysis.ts';
 
 export class AiQueryCapacityError extends Error {}
 export class AiQueryDataError extends Error {}
-export type AiQueryInput={id:string;promptId:string;versionId:string;requestedAt:string;status:AiSearchRunStatus;rawState:AiSearchRawState;capturedPrompt:string|null;result:AiSearchCapturedResult|null};
+export type AiQueryInput={id:string;promptId:string;versionId:string;requestedAt:string;status:AiSearchRunStatus;rawState:AiSearchRawState;capturedPrompt:string|null;result:AiSearchCapturedResult|null;requestedMarket?:AiQueryMarket|null};
 const cap=()=>{throw new AiQueryCapacityError('Narrow the selection. Query analysis exceeds its complete-report capacity.');};
 const lexical=(a:string,b:string)=>a<b?-1:a>b?1:0;
 const fraction=(numerator:number,denominator:number)=>({numerator,denominator,value:denominator?numerator/denominator:null});
@@ -36,22 +36,29 @@ export function aggregateAiSearchQueryPopulation(rows:AiQueryInput[],filters:AiQ
  if(queryLimit!==undefined&&(!Number.isInteger(queryLimit)||queryLimit<0||queryLimit>100000))throw new AiQueryDataError('Invalid query capacity.');
  const keys=queryLimit===undefined?null:new Set<string>();
  matchAnswer({text:'',subjects:[brand],citationUrls:[],method:filters.matcher});
- const coverageBeforeModel=coverage(),selected:Observation[]=[];let work=0,instances=0;
+ const coverageBeforeModel=coverage(),selected:Observation[]=[],markets=new Map<string,AiQueryMarket>();let work=0,instances=0;
  const terms=Math.max(1,1+brand.aliases.length+(filters.matcher==='elmo-substring-v1'?brand.domains.length:0));
  const maps={cloud:new Map<string,{count:number;isStop:boolean}>(),added:new Map<string,{count:number;isStop:boolean}>(),preserved:new Map<string,{count:number;isStop:boolean}>(),dropped:new Map<string,{count:number;isStop:boolean}>()};let wordEntries=0;
- for(const row of rows){if((row.rawState==='retained')!==(row.result!==null)||row.result&&row.result.capturedPrompt!==row.capturedPrompt)throw new AiQueryDataError('Invalid retained capture state.');addCoverage(coverageBeforeModel,row);
+ for(const row of rows){if((row.rawState==='retained')!==(row.result!==null)||row.result&&row.result.capturedPrompt!==row.capturedPrompt)throw new AiQueryDataError('Invalid retained capture state.');
+  const requestedMarket=['expired','invalid'].includes(row.rawState)?null:row.requestedMarket??null;
+  if(requestedMarket&&row.result&&(requestedMarket.locationCode!==row.result.locationCode||requestedMarket.languageCode!==row.result.languageCode))throw new AiQueryDataError('Conflicting requested capture market.');
+  if(requestedMarket)markets.set(JSON.stringify(requestedMarket),requestedMarket);
+  // Keep the bounded pre-market population in the receipt so metadata-only
+  // publication checks never need to reload raw provenance to confirm this scope.
+  if(filters.market&&JSON.stringify(requestedMarket)!==JSON.stringify(filters.market))continue;
+  addCoverage(coverageBeforeModel,row);
   const model=row.result?.reportedModel??null,filter=filters.reportedModel;if(filter&&(filter.state==='not_recorded'?model!==null:model!==filter.value))continue;
   let derived:SearchDerivation|null=null;
   if(row.result){work+=(row.result.evidence.answer.text?.length??0)*terms;if(work>100_000_000)cap();try{derived=deriveSearchQueries({evidence:row.result.evidence,capturedPrompt:row.result.capturedPrompt,subjects:[brand],method:filters.matcher});}catch(error){if(error instanceof SearchEvidenceError)cap();throw error;}instances+=derived!.queries?.length??0;if(instances>100000)cap();}
   if(keys)for(const q of derived?.queries??[]){keys.add(q.key);if(keys.size>queryLimit!)cap();}
   if(derived?.words){for(const kind of ['cloud','added','preserved','dropped'] as const)for(const word of derived.words[kind]){const old=maps[kind].get(word.word);if(!old){if(++wordEntries>20000)cap();maps[kind].set(word.word,{count:word.count,isStop:word.isStop});}else old.count+=word.count;}derived.words=null;}
-  selected.push({row,derived,capture:{runId:row.id,promptId:row.promptId,versionId:row.versionId,requestedAt:row.requestedAt,status:row.status,rawState:row.rawState,reportedModel:model,queryState:derived?.queryState??'raw_unavailable',answerState:derived?.answerState??'raw_unavailable',brandMention:derived?.answerMentions?.[0]?.mentioned??null}});
+  selected.push({row,derived,capture:{runId:row.id,promptId:row.promptId,versionId:row.versionId,requestedAt:row.requestedAt,status:row.status,rawState:row.rawState,reportedModel:model,queryState:derived?.queryState??'raw_unavailable',answerState:derived?.answerState??'raw_unavailable',brandMention:derived?.answerMentions?.[0]?.mentioned??null,requestedMarket}});
  }
  const selectedCoverage=coverage();for(const {row}of selected)addCoverage(selectedCoverage,row);
  const allQueries=queries(selected),byPrompt=new Map<string,Observation[]>(),byModel=new Map<string|null,Observation[]>();
  for(const o of selected){const p=o.row.promptId+':'+o.row.versionId;if(!byPrompt.has(p))byPrompt.set(p,[]);byPrompt.get(p)!.push(o);const m=o.row.result?.reportedModel??null;if(!byModel.has(m))byModel.set(m,[]);byModel.get(m)!.push(o);}
  const wordRows=(map:typeof maps.cloud)=>{const rows=[...map].map(([word,v])=>({word,...v})).sort((a,b)=>b.count-a.count||lexical(a.word,b.word)).slice(0,60);return {totalDistinct:map.size,returned:rows.length,rows};};
- const report={versions:{evidence:searchEvidenceVersion,derivation:queryDerivationVersion,words:queryWordsVersion},coverageBeforeModel,coverage:selectedCoverage,totals:summary(selected),captures:selected.map(o=>o.capture),
+ const report={marketOptions:[...markets].sort(([a],[b])=>lexical(a,b)).map(([,market])=>market),versions:{evidence:searchEvidenceVersion,derivation:queryDerivationVersion,words:queryWordsVersion},coverageBeforeModel,coverage:selectedCoverage,totals:summary(selected),captures:selected.map(o=>o.capture),
   byModel:[...byModel].map(([reportedModel,obs])=>{const c=coverage();for(const o of obs)addCoverage(c,o.row);return {reportedModel,coverage:c,totals:summary(obs)};}).sort((a,b)=>b.totals.queryInstances-a.totals.queryInstances||lexical(a.reportedModel??'',b.reportedModel??'')||Number(a.reportedModel!==null)-Number(b.reportedModel!==null)),
   byPromptVersion:[...byPrompt.values()].map(obs=>{const first=obs[0].row,texts=[...new Set(obs.map(o=>o.row.capturedPrompt).filter((v):v is string=>v!==null))];if(texts.length>1)throw new AiQueryDataError('Conflicting immutable prompt text.');const variations=queries(obs).slice(0,filters.promptId?2000:10);return {promptId:first.promptId,versionId:first.versionId,capturedTextState:texts.length?'retained' as const:obs.every(o=>o.row.rawState==='expired')?'expired' as const:obs.some(o=>o.row.rawState==='invalid')?'invalid' as const:'not_recorded' as const,capturedText:texts[0]??null,totals:summary(obs),variations,returned:variations.length};}).sort((a,b)=>b.totals.queryInstances-a.totals.queryInstances||lexical(a.promptId,b.promptId)||lexical(a.versionId,b.versionId)),
   topQueries:allQueries.slice(0,filters.promptId?2000:25),topByRuns:allQueries.slice(0,20),topByPrompts:[...allQueries].sort((a,b)=>b.distinctPromptCount-a.distinctPromptCount||b.observations-a.observations||lexical(a.key,b.key)).slice(0,20),

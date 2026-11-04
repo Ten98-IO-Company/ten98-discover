@@ -61,7 +61,7 @@ export function readAISearchIntent(query?:string):AISearchIntent|null{
 export function aiSearchIntentQuery(intent:AISearchIntent):string{
  const p=new URLSearchParams({section:intent.section,tab:intent.tab,lookback:intent.filters.lookback,timeZone:intent.filters.timeZone,matcher:intent.filters.matcher});
  for(const k of ['promptId','versionId','tag'] as const)if(intent.filters[k]!==null)p.set(k,intent.filters[k]);
- if(intent.filters.reportedModel)p.set('reportedModel',JSON.stringify(intent.filters.reportedModel));if(intent.captureId)p.set('captureId',intent.captureId);if(intent.create)p.set('create','1');return p.toString();
+ if(intent.filters.reportedModel)p.set('reportedModel',JSON.stringify(intent.filters.reportedModel));if(intent.filters.market)p.set('market',JSON.stringify(intent.filters.market));if(intent.captureId)p.set('captureId',intent.captureId);if(intent.create)p.set('create','1');return p.toString();
 }
 export function aiSearchNavigation(raw:Record<string,unknown>):AISearchNavigation{
  if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.aiSearchInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','aiSearchQuery','aiSearchInvalid'].includes(key))||raw.aiSearchQuery!==undefined&&typeof raw.aiSearchQuery!=='string'||!readAISearchIntent(raw.aiSearchQuery as string|undefined))return{aiSearchInvalid:'1'};

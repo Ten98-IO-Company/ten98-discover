@@ -76,11 +76,13 @@ function readResult(raw:unknown):AiSearchCapturedResult{
  return {...value,evidence:readSearchEvidence(value.evidence)};
 }
 function analysisInput(row:any):AiQueryInput{
- let rawState:AiQueryInput['rawState']=row.expired?'expired':'not_recorded',result:AiSearchCapturedResult|null=null,capturedPrompt:string|null=null;
+ let rawState:AiQueryInput['rawState']=row.expired?'expired':'not_recorded',result:AiSearchCapturedResult|null=null,capturedPrompt:string|null=null,requestedMarket:AiQueryInput['requestedMarket']=null;
  if(!row.expired)try{const input=snapshot(row.input,row.input_hash);if(input.promptId!==row.prompt_id||input.versionId!==row.version_id)throw new Error();capturedPrompt=input.request.capturedPrompt;
+  if(input.country.code!==input.request.locationCode||input.language.code!==input.request.languageCode)throw new Error();
+  requestedMarket={locationCode:input.request.locationCode,countryCode:input.country.countryCode,languageCode:input.request.languageCode};
   if(row.result!==null){result=readResult(row.result);if(result.capturedPrompt!==capturedPrompt||result.locationCode!==input.request.locationCode||result.languageCode!==input.request.languageCode)throw new Error();rawState='retained';}
- }catch{rawState='invalid';result=null;capturedPrompt=null;}
- return {id:row.id,promptId:row.prompt_id,versionId:row.version_id,requestedAt:row.requested_at,status:row.status,rawState,capturedPrompt,result};
+ }catch{rawState='invalid';result=null;capturedPrompt=null;requestedMarket=null;}
+ return {id:row.id,promptId:row.prompt_id,versionId:row.version_id,requestedAt:row.requested_at,status:row.status,rawState,capturedPrompt,result,requestedMarket};
 }
 /** Internal read leaf: caller already holds authorized workspace/project locks. */
 export async function readAiSearchCoverageSource(c:PoolClient,projectId:string,captureId:string,materialize=true){

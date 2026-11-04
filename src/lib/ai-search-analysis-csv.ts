@@ -22,8 +22,8 @@ export function aiSearchAnalysisCsv(value:unknown):string{
  const totals=(group:string,identity:string,t:AiQueryTotals)=>{for(const [key,n]of Object.entries(t))if(typeof n==='number')row(['Group totals',group,identity,key,n,null,n]);else row(['Group totals',group,identity,key,n.numerator,n.denominator,n.value]);};
  for(const p of report.byPromptVersion)totals('prompt/version',p.promptId+'/'+p.versionId,p.totals);
  for(const m of report.byModel){append('Model coverage',m.reportedModel===null?'Model not recorded':JSON.stringify(m.reportedModel),m.coverage);totals('reported model',m.reportedModel===null?'Model not recorded':JSON.stringify(m.reportedModel),m.totals);}
- row(['Capture states','Capture ID','Prompt ID','Version ID','Requested at','Lifecycle','Raw evidence','Reported model','Query state','Answer state','Brand mentioned']);
- for(const c of report.captures)row(['Capture states',c.runId,c.promptId,c.versionId,c.requestedAt,c.status,c.rawState,c.reportedModel,c.queryState,c.answerState,c.brandMention]);
+ row(['Capture states','Capture ID','Prompt ID','Version ID','Requested at','Lifecycle','Raw evidence','Reported model','Query state','Answer state','Brand mentioned','Requested location code','Requested country code','Requested language code']);
+ for(const c of report.captures)row(['Capture states',c.runId,c.promptId,c.versionId,c.requestedAt,c.status,c.rawState,c.reportedModel,c.queryState,c.answerState,c.brandMention,c.requestedMarket?.locationCode??null,c.requestedMarket?.countryCode??null,c.requestedMarket?.languageCode??null]);
  row(['Word limits','Category','Total distinct','Returned','Cap','Query-instance denominator','Counting unit']);
  for(const kind of ['cloud','added','preserved','dropped'] as const){const w=report.words[kind];row(['Word limits',kind,w.totalDistinct,w.returned,60,report.words.denominator,kind==='cloud'?'Token occurrences':'Once per query instance']);}
  row(['Returned words','Category','Word','Count','Stopword','Query-instance denominator']);
