@@ -17714,13 +17714,39 @@ function replayLayoutSupported(node,doc,view){
 }
 /** @param {Element} node @returns {number[]} */
 function replayLayoutRect(node){if(!node.getClientRects().length)return[];var r=node.getBoundingClientRect(),v=[r.left,r.top,r.width,r.height];if(!v.every(Number.isFinite))throw Error('Invalid layout box.');return v;}
-/** @param {Ten98Tracker.RrwebEvent} event */
-function replayCaptureLayout(event){
+// Only plain block text is restored. Mixed inline content, decoration and complex boxes keep the existing fail-closed path.
+/** @param {Element} node @param {Window} view */
+function replayTextBlock(node,view){
+  if(!['P','DIV','H1','H2','H3','H4','H5','H6'].includes(node.tagName)||!node.childNodes||!node.childNodes.length||Array.from(node.childNodes).some(function(n){return n.nodeType!==3;}))return false;
+  var s=view.getComputedStyle(node);
+  return s.display==='block'&&s.position==='static'&&s.whiteSpace==='normal'&&s.overflowX==='visible'&&s.overflowY==='visible'&&
+    /** @type {const} */ (['paddingTop','paddingRight','paddingBottom','paddingLeft','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth']).every(function(k){return parseFloat(s[k])===0;})&&
+    s.minHeight==='0px'&&s.maxHeight==='none'&&['::before','::after'].every(function(p){return ['none','normal'].includes(view.getComputedStyle(node,p).content);});
+}
+/** @param {Ten98Tracker.RrwebEvent} event @param {boolean} strict */
+function replayCaptureLayout(event,strict){
   try{
     var offset=/** @type {{left:number;top:number}} */ (event.data.initialOffset);
     if(!offset||offset.left!==window.scrollX||offset.top!==window.scrollY)throw Error('Snapshot moved.');
-    var boxes=replayLayoutNodes(event.data.node).map(function(n){var node=core.record.mirror.getNode(n.id);if(!node||node.nodeType!==1||!replayLayoutSupported(/** @type {Element} */ (node),document,window))throw Error('Unsupported layout.');return[n.id].concat(replayLayoutRect(/** @type {Element} */ (node)));});
-    event.data.ten98Layout={version:1,boxes:boxes};
+    var layoutNodes=replayLayoutNodes(event.data.node);
+    /** @type {Map<number,Element>} */
+    var liveNodes=new Map();
+    var boxes=layoutNodes.map(function(n){var node=core.record.mirror.getNode(n.id);if(!node||node.nodeType!==1||!replayLayoutSupported(/** @type {Element} */ (node),document,window))throw Error('Unsupported layout.');var element=/** @type {Element} */ (node);liveNodes.set(n.id,element);return[n.id].concat(replayLayoutRect(element));});
+    /** @type {Ten98Tracker.TextRedaction[]} */
+    var texts=[];var rectangleCount=0,characters=0;
+    if(strict)for(var n of layoutNodes){
+      var leaf=liveNodes.get(n.id);if(!leaf||!replayTextBlock(leaf,window))continue;
+      var element=/** @type {Element} */ (leaf),length=(element.textContent||'').length;if(!length)continue;
+      characters+=length;if(length>8192||characters>32768||texts.length===256)throw Error('Text evidence limit.');
+      var range=document.createRange();range.selectNodeContents(element);var box=element.getBoundingClientRect();
+      var rects=Array.from(range.getClientRects()).map(function(r){return[r.left-box.left,r.top-box.top,r.width,r.height];});
+      rectangleCount+=rects.length;if(!rects.length||rects.length>64||rectangleCount>512||rects.some(function(r){return!r.every(Number.isFinite)||r.some(function(v){return v<0;})||r[2]===0||r[3]===0||r[0]+r[2]>box.width+1||r[1]+r[3]>box.height+1;}))throw Error('Unsupported text rectangles.');
+      texts.push({id:n.id,rects:rects});
+    }
+    /** @type {Ten98Tracker.LayoutEvidence} */
+    var evidence=texts.length?{version:2,boxes:boxes,texts:texts}:{version:1,boxes:boxes};
+    if(new TextEncoder().encode(JSON.stringify(evidence)).length>131072)throw Error('Layout evidence limit.');
+    event.data.ten98Layout=evidence;
     var pending=/** @type {unknown[]} */ ([event]),count=0;
     while(pending.length){var value=pending.pop();if(++count>20000)throw Error('Layout structure limit.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
     if(new TextEncoder().encode(JSON.stringify(event)).length>4194304)throw Error('Layout byte limit.');
@@ -17762,7 +17788,7 @@ function replaySafeEvent(original, strict) {
     for (var field of ['replace','replaceSync']) if (typeof event.data[field] === 'string') event.data[field] = replayCss(/** @type {string} */ (event.data[field]),strict);
     if (event.data.set && typeof event.data.set.property === 'string' && typeof event.data.set.value === 'string') event.data.set.value = replayCss(event.data.set.value,strict,event.data.set.property);
   }
-  if(event.type===2)replayCaptureLayout(event);
+  if(event.type===2)replayCaptureLayout(event,strict);
   // The integer event kind was bounded above; metadata is replaced with the local safe viewport.
   return /** @type {Ten98Tracker.RecorderEvent} */ (event);
 }
@@ -17812,6 +17838,9 @@ if (mode === 'record') {
   var heatmapAttempts = 0;
   /** @type {Record<string,unknown>|null} */
   var heatmapSnapshot=null;
+  var heatmapTextRestored=false;
+  /** @type {(()=>boolean)|null} */
+  var heatmapTextCheck=null;
   /** @type {(()=>boolean)|null} */
   var heatmapLayoutCheck=null;
   /** @type {MutationObserver|null} */
@@ -17822,7 +17851,7 @@ if (mode === 'record') {
   var heatmapExtent = null;
   /** @param {Ten98Tracker.ReplayPlayerMessage} value */
   function send(value) { if (port) port.postMessage(value); }
-  function destroy() { playing = false; heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
+  function destroy() { playing = false; heatmapTextCheck=null;heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
   function fail() { destroy(); send({type:'error',message:'This recording could not be played safely.'}); }
   function position() { return player ? playing ? Math.max(0,Math.min(duration,player.getCurrentTime())) : pausedOffset : 0; }
   // rrweb 2.1.7 pauses before equal-timestamp events; recorded timestamps are integer ms.
@@ -17886,17 +17915,44 @@ if (mode === 'record') {
     }catch(_){release();return false;}
   }
 
+  /** @param {Document} doc @param {Window} view */
+  function restoreHeatmapText(doc,view){
+    try{
+      var data=/** @type {Record<string,unknown>} */ (heatmapSnapshot),e=/** @type {Ten98Tracker.LayoutEvidence} */ (data.ten98Layout);
+      if(!e||e.version!==2)return true;
+      if(Object.keys(e).sort().join(',')!=='boxes,texts,version'||!Array.isArray(e.boxes)||!Array.isArray(e.texts)||!e.texts.length||e.texts.length>256||new TextEncoder().encode(JSON.stringify(e)).length>131072)return false;
+      /** @type {Map<number,number[]>} */
+      var boxes=new Map();for(var b of e.boxes){if(!Array.isArray(b)||![1,5].includes(b.length)||!b.every(Number.isFinite)||!Number.isSafeInteger(b[0])||b[0]<1||boxes.has(b[0]))return false;boxes.set(b[0],b.slice(1));}
+      var nodes=new Map(replayLayoutNodes(data.node).map(function(n){return[n.id,n];})),seen=new Set(),total=0;
+      var mirror=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror();
+      var tiles=e.texts.map(function(t){
+        if(!t||Object.keys(t).sort().join(',')!=='id,rects'||!Number.isSafeInteger(t.id)||t.id<1||seen.has(t.id)||!nodes.has(t.id)||!Array.isArray(t.rects)||!t.rects.length||t.rects.length>64)throw Error('Invalid text evidence.');seen.add(t.id);total+=t.rects.length;if(total>512)throw Error('Text rectangle limit.');
+        const box=boxes.get(t.id);var node=mirror.getNode(t.id);if(!box||box.length!==4||box.some(function(v){return!Number.isFinite(v)||Math.abs(v)>10000000;})||box[2]<=0||box[3]<=0||!node||node.nodeType!==1||!replayTextBlock(/** @type {Element} */ (node),view))throw Error('Unsupported text leaf.');
+        var element=/** @type {HTMLElement} */ (node),r=element.getBoundingClientRect();if(Math.abs(r.width-box[2])>1)throw Error('Text container width changed.');
+        if(t.rects.some(function(r){return!Array.isArray(r)||r.length!==4||!r.every(Number.isFinite)||r.some(function(v){return v<0;})||r[2]===0||r[3]===0||r[0]+r[2]>box[2]+1||r[1]+r[3]>box[3]+1;}))throw Error('Invalid text rectangle.');
+        return{element:element,box:box,rects:t.rects};
+      });
+      /** @type {{element:HTMLElement;mark:HTMLElement;rect:number[]}[]} */
+      var marks=[];
+      for(var tile of tiles){
+        tile.element.replaceChildren();tile.element.style.setProperty('height',String(tile.box[3])+'px','important');tile.element.style.setProperty('position','relative','important');
+        for(var rect of tile.rects){var mark=doc.createElement('span');mark.setAttribute('aria-hidden','true');mark.setAttribute('data-ten98-text-redaction','');mark.style.cssText='all:initial!important;position:absolute!important;display:block!important;pointer-events:none!important;background:#6b7280!important;opacity:.25!important;left:'+rect[0]+'px!important;top:'+rect[1]+'px!important;width:'+rect[2]+'px!important;height:'+rect[3]+'px!important;';tile.element.appendChild(mark);marks.push({element:tile.element,mark:mark,rect:rect});}
+      }
+      heatmapTextCheck=function(){return marks.every(function(m){var p=m.element.getBoundingClientRect(),r=m.mark.getBoundingClientRect(),actual=[r.left-p.left,r.top-p.top,r.width,r.height];return actual.every(function(v,i){return Number.isFinite(v)&&Math.abs(v-m.rect[i])<=1;});});};
+      return heatmapTextCheck();
+    }catch(_){return false;}
+  }
   /** @param {Document} doc @param {Window} view @param {Ten98Tracker.HeatmapOrigin} origin */
   function verifyHeatmapLayout(doc,view,origin){
     try{
       var data=/** @type {Record<string,unknown>} */ (heatmapSnapshot),evidence=/** @type {Ten98Tracker.LayoutEvidence} */ (data.ten98Layout),offset=/** @type {{left:number;top:number}} */ (data.initialOffset);
-      if(!evidence||Object.keys(evidence).sort().join(',')!=='boxes,version'||evidence.version!==1||!Array.isArray(evidence.boxes)||!offset||!Number.isFinite(offset.left)||!Number.isFinite(offset.top))return false;
+      if(!evidence||!([1,2].includes(evidence.version))||Object.keys(evidence).sort().join(',')!==(evidence.version===2?'boxes,texts,version':'boxes,version')||!Array.isArray(evidence.boxes)||!offset||!Number.isFinite(offset.left)||!Number.isFinite(offset.top))return false;
       var nodes=replayLayoutNodes(data.node);if(nodes.length!==evidence.boxes.length)return false;
       var boxes=new Map();for(var box of evidence.boxes){if(!Array.isArray(box)||![1,5].includes(box.length)||!box.every(Number.isFinite)||!Number.isSafeInteger(box[0])||boxes.has(box[0])||box.length===5&&(box[3]<0||box[4]<0))return false;boxes.set(box[0],box.slice(1));}
       view.scrollTo(offset.left,offset.top);if(Math.abs(view.scrollX-offset.left)>1||Math.abs(view.scrollY-offset.top)>1)return false;
       var mirror=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror();
       var entries=nodes.map(function(n){var node=mirror.getNode(n.id),expected=boxes.get(n.id);if(!node||node.nodeType!==1||!expected)throw Error('Missing layout node.');var element=/** @type {Element} */ (node);if(!replayLayoutSupported(element,doc,view))throw Error('Unsupported layout.');var actual=replayLayoutRect(element);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;}if(actual.length!==expected.length||actual.some(function(v,i){return Math.abs(v-expected[i])>1;}))throw Error('Snapshot layout changed.');var fixed=false;for(var ancestor=element;ancestor;ancestor=/** @type {Element} */ (ancestor.parentElement)){if(view.getComputedStyle(ancestor).position==='fixed'){fixed=true;break;}}return{node:element,box:actual,fixed:fixed};});
-      heatmapLayoutCheck=function(){return entries.every(function(entry){var actual=replayLayoutRect(entry.node);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;if(!entry.fixed){actual[0]+=view.scrollX-offset.left;actual[1]+=view.scrollY-offset.top;}}return actual.length===entry.box.length&&actual.every(function(v,i){return Math.abs(v-entry.box[i])<=1;});});};
+      heatmapLayoutCheck=function(){return(!heatmapTextCheck||heatmapTextCheck())&&entries.every(function(entry){var actual=replayLayoutRect(entry.node);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;if(!entry.fixed){actual[0]+=view.scrollX-offset.left;actual[1]+=view.scrollY-offset.top;}}return actual.length===entry.box.length&&actual.every(function(v,i){return Math.abs(v-entry.box[i])<=1;});});};
       heatmapLayoutObserver=new MutationObserver(function(records){if(!player)return;for(var record of records)if(record.type!=='attributes'||record.target!==doc.documentElement||record.attributeName!=='class'||record.oldValue!==doc.documentElement.getAttribute('class')){fail();return;}});
       heatmapLayoutObserver.observe(doc.documentElement,{subtree:true,attributes:true,attributeOldValue:true,childList:true,characterData:true});
       return true;
@@ -17906,6 +17962,7 @@ if (mode === 'record') {
   function prepareHeatmap(){
     if(!player||!heatmap)return;
     var g=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap).geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement,origin=null;
+    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&!heatmapTextRestored){if(!restoreHeatmapText(doc,view)){fail();return;}heatmapTextRestored=true;}
     if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!(origin=preserveHeatmapExtent(doc,view,g)))){fail();return;}
     if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
       if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;

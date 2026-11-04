@@ -10,6 +10,31 @@ import {isOidcReturnCode,type OidcReturnCode} from './auth-messages.ts'
 
 export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'google-app', 'identity-providers', 'diagnostics', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
+export type ConversionNavigation={conversionQuery?:string;conversionInvalid?:'1'};
+export type ConversionIntent={kind:'goal'|'funnel';id?:string;revision?:number;scope?:string;step?:number};
+export function readConversionIntent(query?:string):ConversionIntent|null{
+ try{
+  if(query!==undefined&&(!query.length||query.length>24000||/[\u0000\uD800-\uDFFF]/u.test(query)))return null;
+  if(query!==undefined)decodeURIComponent(query.replaceAll('+',' '));
+  const p=new URLSearchParams(query),kind=p.get('kind')??'goal',id=p.get('id'),revision=p.get('revision'),scope=p.get('scope'),step=p.get('step');
+  if([...p.keys()].some(key=>!['kind','id','revision','scope','step'].includes(key)||p.getAll(key).length!==1)||!['goal','funnel'].includes(kind))return null;
+  if(id===null)return revision===null&&scope===null&&step===null?{kind:kind as ConversionIntent['kind']}:null;
+  if(!navigationId(id)||!revision||!/^[1-9][0-9]{0,9}(?![\s\S])/.test(revision)||Number(revision)>2147483647||!scope||scope.length>20000||step!==null&&(!/^[1-8](?![\s\S])/.test(step)||kind==='goal'&&step!=='1'))return null;
+  decodeURIComponent(scope.replaceAll('+',' '));
+  const filters=new URLSearchParams(scope),allowed=['from','to','timeZone','eventName','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','propertyKey','propertyType','propertyValue'];
+  if([...filters.keys()].some(key=>!allowed.includes(key)||filters.getAll(key).length!==1)||['from','to','timeZone'].some(key=>!filters.has(key))||sessionNavigation(Object.fromEntries(['from','to','timeZone'].map(key=>[key,filters.get(key)]))).sessionInvalid)return null;
+  return{kind:kind as ConversionIntent['kind'],id:id.toLowerCase(),revision:Number(revision),scope,...step!==null?{step:Number(step)}:{}};
+ }catch{return null;}
+}
+export function conversionIntentQuery(intent:ConversionIntent):string{
+ const p=new URLSearchParams({kind:intent.kind});
+ if(intent.id){p.set('id',intent.id);p.set('revision',String(intent.revision));p.set('scope',intent.scope!);if(intent.step!==undefined)p.set('step',String(intent.step));}
+ return p.toString();
+}
+export function conversionNavigation(raw:Record<string,unknown>):ConversionNavigation{
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.conversionInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','conversionQuery','conversionInvalid'].includes(key))||raw.conversionQuery!==undefined&&typeof raw.conversionQuery!=='string'||!readConversionIntent(raw.conversionQuery as string|undefined))return{conversionInvalid:'1'};
+ return raw.conversionQuery===undefined?{}:{conversionQuery:raw.conversionQuery as string};
+}
 /** Provider preselected by a Settings › Connections setup link; unknown values fall back to the form default. */
 export type ProviderIntent = 'openrouter' | 'dataforseo'
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
@@ -119,7 +144,17 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & AIInsightsNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation
+export type PromptNavigation={promptView?:'history'|'run';promptRun?:string;promptId?:string;promptInvalid?:'1'};
+export function promptNavigation(raw:Record<string,unknown>):PromptNavigation{
+ const names=['promptView','promptRun','promptId','promptInvalid'];
+ if(!names.some(name=>raw[name]!==undefined))return{};
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.promptInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return{promptInvalid:'1'};
+ if(raw.promptView==='history'&&raw.promptRun===undefined&&raw.promptId===undefined)return{promptView:'history'};
+ if(raw.promptView==='run'&&navigationId(raw.promptRun)&&navigationId(raw.promptId))return{promptView:'run',promptRun:raw.promptRun.toLowerCase(),promptId:raw.promptId.toLowerCase()};
+ return{promptInvalid:'1'};
+}
+
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & ConversionNavigation & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & AIInsightsNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation & PromptNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -225,8 +260,10 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     view,
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
     ...(view==='journeys'?journeysNavigation(raw):{}),
+    ...(view==='conversions'?conversionNavigation(raw):{}),
     ...(view==='revenue'?revenueNavigation(raw):{}),
     ...(view==='ai-search'?aiSearchNavigation(raw):{}),
+    ...(view==='prompts'?promptNavigation(raw):{}),
     ...(view==='ai-insights'?aiInsightsNavigation(raw):{}),
     ...(view==='attribution'?attributionNavigation(raw):{}),
     ...(view==='explore'?explorerNavigation(raw):{}),
@@ -251,7 +288,7 @@ export function resolveNavigation(requested:NavigationSearch,workspace:string|un
 
 export function navigationKey(search: NavigationSearch): string {
   if(search.view==='links'||search.view==='pixels')return `${search.workspace??''}:${search.view}:${JSON.stringify(trackedAssetNavigation(search))}`;
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='ai-insights'?':'+JSON.stringify(aiInsightsNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='conversions'?':'+JSON.stringify(conversionNavigation(search)):search.view==='prompts'?':'+JSON.stringify(promptNavigation(search)):search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='ai-insights'?':'+JSON.stringify(aiInsightsNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {

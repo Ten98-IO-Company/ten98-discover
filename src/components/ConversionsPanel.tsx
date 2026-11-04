@@ -1,4 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
+import {useBlocker} from '@tanstack/react-router';
+import {readConversionIntent,conversionIntentQuery,type ConversionIntent} from '../lib/navigation';
+import {readExplorerScope} from './ExplorerPanel';
 import {FunnelBreakdown, SelectableList, useConfirmDialog,Disclosure} from '@ten98/ui';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime/browser';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -7,7 +10,7 @@ import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/
 import type {AnalysisItem,AnalysisKind,AnalysisResult,AnalysisWitnessResult} from '../server/funnels';
 import {formatReportInstant} from '../lib/report-time';
 
-type Props={projectId:string;userId:string;onUnauthorized:()=>void};
+type Props={projectId:string;userId:string;query?:string;readOwner?:string;readEnabled?:boolean;onNavigate?:(query:string)=>void;onUnauthorized:()=>void};
 type StepDraft=MatchDraft&{pageViewsOnly:boolean;properties:PropertyDraft[]};
 type DefinitionDraft={name:string;description:string;windowMinutes:string;steps:StepDraft[];condition:MatchDraft};
 type Scope={from:string;to:string;timeZone:string;filters:Record<string,{on:boolean;value:string}>;property:{on:boolean;key:string;type:string;value:string}};
@@ -72,12 +75,17 @@ const seenName=(item:SeenValue)=>item.type==='path'?'Visited '+item.value:item.v
 const seenCount=(item:SeenValue)=>item.count.toLocaleString()+' '+(item.type==='path'?(item.count===1?'view':'views'):(item.count===1?'time':'times'));
 
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
-function Panel({projectId,onUnauthorized}:Props){
+function Panel({projectId,onUnauthorized,query,readOwner='',readEnabled=true,onNavigate}:Props){
+  const owner=JSON.stringify([projectId,readOwner,query,readEnabled]),liveOwner=useRef(owner),bypassBlock=useRef(false);liveOwner.current=owner;
+  const [renderOwner,setRenderOwner]=useState(owner);
+  const route=readConversionIntent(query);
+  const restored=route?.scope===undefined?null:readExplorerScope(route.scope+'&kind=all&groupBy=event');
+  const invalidRoute=!route||!!route.scope&&!restored;
   const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),autoName=useRef('');
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
-  const [opening,setOpening]=useState<{id:string;edit:boolean}|null>(null);
+  const [opening,setOpening]=useState<{id:string;edit:boolean;restore?:ConversionIntent}|null>(null);
   const [draft,setDraft]=useState<DefinitionDraft>(blank),[dirty,setDirty]=useState(false),[scope,setScope]=useState<Scope>(initialScope),[applied,setApplied]=useState('');
   const [result,setResult]=useState<AnalysisResult|null>(null),[witness,setWitness]=useState<AnalysisWitnessResult|null>(null);
   const [reading,setReading]=useState(false),[writing,setWriting]=useState(false),[loaded,setLoaded]=useState(false),[denied,setDenied]=useState(false),[conflict,setConflict]=useState(false);
@@ -94,10 +102,10 @@ function Panel({projectId,onUnauthorized}:Props){
     setError(errMsg(e));
   }
   async function read<T>(path:string,commit:(data:T)=>void){
-    if(writeRef.current)return;stopRead();const controller=new AbortController(),generation=epoch.current;readRef.current=controller;setReading(true);setError('');
-    try{const data=await api<T>(path,{signal:controller.signal});if(alive.current&&!controller.signal.aborted&&generation===epoch.current)commit(data);}
-    catch(e){if(alive.current&&!controller.signal.aborted&&generation===epoch.current)failure(e);}
-    finally{if(alive.current&&generation===epoch.current){readRef.current=null;setReading(false);}}
+    if(writeRef.current||!readEnabled||liveOwner.current!==owner||invalidRoute)return;stopRead();const controller=new AbortController(),generation=epoch.current;readRef.current=controller;setReading(true);setError('');
+    try{const data=await api<T>(path,{signal:controller.signal});if(alive.current&&liveOwner.current===owner&&!controller.signal.aborted&&generation===epoch.current)commit(data);}
+    catch(e){if(alive.current&&liveOwner.current===owner&&!controller.signal.aborted&&generation===epoch.current)failure(e);}
+    finally{if(alive.current&&liveOwner.current===owner&&generation===epoch.current){readRef.current=null;setReading(false);}}
   }
   function loadList(cursor?:string){
     return read<unknown>(base()+(cursor?'?'+new URLSearchParams({cursor}):''),data=>{
@@ -110,38 +118,53 @@ function Panel({projectId,onUnauthorized}:Props){
     if(!record(data)||!roleValue(data.role)||!validItem(data.item,projectId,kindRef.current)||data.item.id!==item.id||data.item.revision!==item.revision||!record(data.range)||!['from','to','timeZone','start','end'].every(k=>typeof (data.range as Record<string,unknown>)[k]==='string')||typeof data.generatedAt!=='string'||!record(data.coverage)||!['complete','partial','unavailable'].includes(String(data.coverage.status))||!record(data.identity)||!['complete','partial','unavailable'].includes(String(data.identity.status))||!['identifiedEvents','unidentifiedEvents','visitors'].every(k=>metric((data.identity as Record<string,unknown>)[k]))||!Array.isArray(data.steps)||!data.steps.every(s=>record(s)&&Number.isInteger(s.step)&&metric(s.visitors)&&metric(s.dropped)&&rateValue(s.conversionRate)&&rateValue(s.remainingRate))||!(data.goal===null||record(data.goal)&&metric(data.goal.visitors)&&metric(data.goal.totalVisitors)&&rateValue(data.goal.rate)))throw new Error('The conversion result was incomplete. Reload the results.');
     if(item.definition.kind==='funnel'?(data.steps.length!==item.definition.steps.length||data.steps.some((s,i)=>s.step!==i+1)||data.goal!==null):(data.steps.length!==0||data.goal===null))throw new Error('The conversion result did not match the saved definition. Reload it.');
   }
-  function evaluate(item:AnalysisItem,query=scopeParams(scope),focus=false){
+  function navigateRead(next:ConversionIntent){
+    if(!onNavigate)return false;const value=conversionIntentQuery(next);if(value===query)return false;
+    bypassBlock.current=true;onNavigate(value);return true;
+  }
+  function evaluate(item:AnalysisItem,query=scopeParams(scope),focus=false,restore=false){
+    if(!restore&&navigateRead({kind:kindRef.current,id:item.id,revision:item.revision,scope:query}))return;
     setResult(null);setWitness(null);setConflict(false);setView('result');setApplied(query);if(focus)pendingFocus.current=uid+'result';
     const params=new URLSearchParams(query);params.set('revision',String(item.revision));
     return read<unknown>(base()+'/'+item.id+'/result?'+params,data=>{checkResult(data,item);setRole(data.role);setSelected(data.item);setResult(data);});
   }
-  function openItem(id:string,edit=false){
-    if(writeRef.current||intentRef.current)return;setOpening({id,edit});setSelected(null);setDraft(blank());setResult(null);setWitness(null);setConflict(false);setError('');setMessage('');setView(edit?'editor':'result');listFocus.current=uid+'open-'+id;
+  function openItem(id:string,edit=false,restore?:ConversionIntent){
+    if(writeRef.current||intentRef.current)return;
+    const listed=!edit&&!restore?items.find(item=>item.id===id):undefined;
+    if(listed&&navigateRead({kind:kindRef.current,id,revision:listed.revision,scope:scopeParams(scope)}))return;
+    setOpening({id,edit,restore});setSelected(null);setDraft(blank());setResult(null);setWitness(null);setConflict(false);setError('');setMessage('');setView(edit?'editor':'result');listFocus.current=uid+'open-'+id;
     return read<unknown>(base()+'/'+id,data=>{
       if(!record(data)||!roleValue(data.role)||!validItem(data.item,projectId,kindRef.current)||data.item.id!==id)throw new Error('The saved definition was incomplete. Reload it.');
       setRole(data.role);setSelected(data.item);setOpening(null);setDenied(false);
       if(edit){setDraft(editDraft(data.item));setDirty(false);pendingFocus.current=uid+'editor';}
-      else{const item=data.item;queueMicrotask(()=>{if(alive.current)void evaluate(item,scopeParams(scope),true);});}
+      else{const item=data.item,generation=epoch.current;
+        if(restore&&item.revision!==restore.revision){setConflict(true);setError('The saved definition changed. Reload its saved definition to choose the current revision.');return;}
+        if(restore?.step!==undefined&&restore.step>(item.definition.kind==='goal'?1:item.definition.steps.length)){setError('This conversion link selects an unavailable step.');return;}
+        queueMicrotask(()=>{if(!alive.current||liveOwner.current!==owner||generation!==epoch.current)return;
+          if(restore?.step!==undefined)inspect(restore.step,undefined,true,item,restore.scope!);
+          else void evaluate(item,restore?.scope??scopeParams(scope),!resultFocus.current,!!restore);
+        });
+      }
     });
   }
   async function leave(){if(writeRef.current||intentRef.current)return false;if(dirty&&(!await confirm({title:'Discard your unsaved definition changes?',description:'Your edits to this definition have not been saved.',confirmLabel:'Discard changes'})||writeRef.current||intentRef.current))return false;setDirty(false);return true;}
-  async function list(){if(!await leave())return;stopRead();setView('list');setSelected(null);setOpening(null);setResult(null);setWitness(null);setDraft(blank());setConflict(false);setError('');pendingFocus.current=listFocus.current||uid+'list';void loadList();}
-  async function changeKind(next:AnalysisKind){if(next===kindRef.current||!await leave()||next===kindRef.current)return;clear();kindRef.current=next;setKind(next);setDenied(false);setError('');pendingFocus.current=uid+'list';void loadList();}
+  async function list(){if(!await leave())return;pendingFocus.current=listFocus.current||uid+'list';if(navigateRead({kind:kindRef.current}))return;stopRead();setView('list');setSelected(null);setOpening(null);setResult(null);setWitness(null);setDraft(blank());setConflict(false);setError('');pendingFocus.current=listFocus.current||uid+'list';void loadList();}
+  async function changeKind(next:AnalysisKind){if(next===kindRef.current||!await leave()||next===kindRef.current)return;if(navigateRead({kind:next}))return;clear();kindRef.current=next;setKind(next);setDenied(false);setError('');pendingFocus.current=uid+'list';void loadList();}
   async function create(){if(!role||role==='viewer'||!await leave())return;stopRead();setDraft(blank());setSelected(null);setOpening(null);setView('editor');setConflict(false);setMessage('');setError('');pendingFocus.current=uid+'editor';}
   async function mutate(pending:Intent){
     if(writeRef.current||!alive.current)return;stopRead();const token={};writeRef.current=token;setWriting(true);setError('');setMessage('');const generation=epoch.current;
     let saved:AnalysisItem|null=null,removed=false;
     try{
-      const data=await api<unknown>(pending.path,{method:'POST',body:pending.body});if(!alive.current||generation!==epoch.current)return;
+      const data=await api<unknown>(pending.path,{method:'POST',body:pending.body});if(!alive.current||liveOwner.current!==owner||generation!==epoch.current)return;
       if(!record(data)||!roleValue(data.role)||typeof data.deleted!=='boolean'||typeof data.replayed!=='boolean')throw new Error('The save acknowledgement was incomplete.');
       if(pending.action==='delete'?(data.deleted!==true||data.id!==pending.id):(data.deleted?data.item!==null:!validItem(data.item,projectId,kindRef.current)||(pending.id!==null&&data.item.id!==pending.id)))throw new Error('The acknowledgement did not match this definition.');
       resetIntent();setRole(data.role);setDirty(false);setConflict(false);
       if(data.deleted){removed=true;setSelected(null);setResult(null);setWitness(null);setView('list');setMessage(pending.action==='delete'?'Definition deleted. Collected events are unchanged.':'The earlier save was accepted, and this definition has since been deleted.');pendingFocus.current=uid+'list';}
       else{const item=data.item as AnalysisItem;saved=item;setSelected(item);setDraft(editDraft(item));setMessage(data.replayed?'The original save was confirmed. The current saved definition is shown.':'Definition saved.');setView('result');setResult(null);}
-    }catch(e){if(alive.current&&generation===epoch.current){if(!(e instanceof ApiError)||e.status===0||e.status>=500)setError(errMsg(e)+' The outcome is unknown. Retry the same request to confirm it.');else{resetIntent();failure(e);}}}
+    }catch(e){if(alive.current&&liveOwner.current===owner&&generation===epoch.current){if(!(e instanceof ApiError)||e.status===0||e.status>=500)setError(errMsg(e)+' The outcome is unknown. Retry the same request to confirm it.');else{resetIntent();failure(e);}}}
     finally{if(writeRef.current===token){writeRef.current=null;if(alive.current)setWriting(false);}}
-    if(alive.current&&generation===epoch.current&&!intentRef.current){
-      if(removed)void loadList();else if(saved)void evaluate(saved,scopeParams(scope),true);
+    if(alive.current&&liveOwner.current===owner&&generation===epoch.current&&!intentRef.current){
+      if(removed){if(!navigateRead({kind:kindRef.current}))void loadList();}else if(saved)void evaluate(saved,scopeParams(scope),true);
     }
   }
   function save(e:FormEvent){
@@ -153,25 +176,37 @@ function Panel({projectId,onUnauthorized}:Props){
     if(writeRef.current||intentRef.current||!selected||!role||role==='viewer'||!await confirm({title:`Delete “${selected.definition.name}”?`,description:'This removes its saved definition. Collected events are unchanged.',confirmLabel:'Delete definition'})||writeRef.current||intentRef.current)return;
     const pending:Intent={action:'delete',path:base()+'/'+selected.id+'/delete',body:{requestId:crypto.randomUUID(),revision:selected.revision},id:selected.id};intentRef.current=pending;setIntent(pending);void mutate(pending);
   }
-  function inspect(stepNumber:number,cursor?:string){
-    if(!selected||writeRef.current||intentRef.current)return;
+  function inspect(stepNumber:number,cursor?:string,restore=false,item=selected,scopeQuery=applied){
+    if(!item||writeRef.current||intentRef.current)return;
+    if(!restore&&!cursor&&navigateRead({kind:kindRef.current,id:item.id,revision:item.revision,scope:scopeQuery,step:stepNumber}))return;
     if(!cursor){resultFocus.current=uid+'evidence-'+stepNumber;setWitness(null);pendingFocus.current=uid+'witness';}setView('witnesses');
-    const params=new URLSearchParams(applied);params.set('revision',String(selected.revision));params.set('step',String(stepNumber));if(cursor)params.set('cursor',cursor);
-    void read<unknown>(base()+'/'+selected.id+'/witnesses?'+params,data=>{
-      checkResult(data,selected);const w=data as AnalysisWitnessResult;
+    const params=new URLSearchParams(scopeQuery);params.set('revision',String(item.revision));setApplied(scopeQuery);params.set('step',String(stepNumber));if(cursor)params.set('cursor',cursor);
+    void read<unknown>(base()+'/'+item.id+'/witnesses?'+params,data=>{
+      checkResult(data,item);const w=data as AnalysisWitnessResult;
       if(w.step!==stepNumber||!Array.isArray(w.witnesses)||!w.witnesses.every(v=>record(v)&&Array.isArray(v.events)&&v.events.length===stepNumber&&v.events.every(e=>record(e)&&(['id','eventName','path','origin','receivedAt']as const).every(k=>typeof e[k]==='string')))||w.nextCursor!==null&&typeof w.nextCursor!=='string')throw new Error('The matching activity was incomplete. Reload the results.');
       setRole(w.role);setResult(w);setWitness(old=>cursor&&old?{...w,witnesses:[...old.witnesses,...w.witnesses.filter(row=>!old.witnesses.some(prior=>prior.events.at(-1)?.id===row.events.at(-1)?.id))]}:w);
     });
   }
-  useEffect(()=>{alive.current=true;void loadList();return()=>{alive.current=false;epoch.current++;readRef.current?.abort();};},[]);
+  useBlocker({shouldBlockFn:async()=>bypassBlock.current?false:!await leave(),enableBeforeUnload:()=>dirty||!!intentRef.current});
+  useEffect(()=>{
+    alive.current=true;bypassBlock.current=false;clear();setError('');setDenied(false);setRenderOwner(owner);
+    if(readEnabled&&!invalidRoute&&route){
+      kindRef.current=route.kind;setKind(route.kind);
+      if(restored)setScope({from:restored.draft.from,to:restored.draft.to,timeZone:restored.draft.timeZone,filters:Object.fromEntries(filterFields.map(([key])=>[key,restored.draft.filters[key]])),property:restored.draft.prop});
+      if(route.id){setApplied(route.scope!);void openItem(route.id,false,route);}else void loadList();
+    }
+    return()=>{alive.current=false;epoch.current++;readRef.current?.abort();};
+  },[owner]);
   useEffect(()=>{if(!pendingFocus.current)return;const element=document.getElementById(pendingFocus.current);if(element){element.focus();pendingFocus.current=null;}});
   const locked=writing||!!intent,managed=role!==null&&role!=='viewer',unapplied=scopeParams(scope)!==applied;
-  const seen=useSeenValues(projectId,managed&&view==='editor');
+  const seen=useSeenValues(projectId,readEnabled&&renderOwner===owner&&managed&&view==='editor');
   const suggestions=seen&&{path:seen.filter(item=>item.type==='path').map(item=>item.value),event:seen.filter(item=>item.type==='event').map(item=>item.value)};
   // The fieldset lock does not reach the listbox options, so a pending or unconfirmed save also disables each option.
   const fieldsLocked=locked||reading||!!opening;
   const patch=(value:Partial<DefinitionDraft>)=>{setDraft(d=>({...d,...value}));setDirty(true);};
   const selectedDefinition=selected?.definition;
+  if(!readEnabled||renderOwner!==owner)return <section aria-label="Conversions"><p role="status">Loading conversions…</p>{confirmDialog}</section>;
+  if(invalidRoute)return <section aria-label="Conversions"><p role="alert">This conversion link contains invalid or unsupported filters. No report was loaded.</p>{confirmDialog}</section>;
   return <section className="research-panel conversions" aria-label="Conversions">
     <div className="row conversion-tabs" role="group" aria-label="Conversion type">{(['goal','funnel']as const).map(k=><button key={k} className={'btn'+(kind===k?' primary':'')} aria-pressed={kind===k} disabled={locked} onClick={()=>changeKind(k)}>{k==='funnel'?'Funnels':'Goals'}</button>)}</div>
     {error&&<div className="alert" role="alert">{error} {denied&&<button className="btn" disabled={reading} onClick={()=>void loadList()}>Reload access</button>}</div>}
@@ -186,8 +221,8 @@ function Panel({projectId,onUnauthorized}:Props){
       {!!items.length&&<div className="table-wrap" role="region" aria-label="Saved conversion definitions" tabIndex={0}><table><thead><tr><th>Name</th><th>Definition</th><th>Updated</th><th>Action</th></tr></thead><tbody>{items.map(item=><tr key={item.id}><td>{item.definition.name}</td><td>{item.definition.kind==='funnel'?`${item.definition.steps.length} steps · ${item.definition.windowMinutes} minutes between steps`:matchLabel(item.definition.condition,true)}</td><td>{date(item.updatedAt)}</td><td><button className="btn" disabled={locked} id={uid+'open-'+item.id} onClick={()=>void openItem(item.id)}>View results</button></td></tr>)}</tbody></table></div>}
       {nextCursor&&<button className="btn" disabled={reading||locked} onClick={()=>void loadList(nextCursor)}>Load more definitions</button>}
     </div>:<>
-      <button className="btn ghost" disabled={locked} onClick={view==='witnesses'?()=>{stopRead();setView('result');pendingFocus.current=resultFocus.current;}:list}>← Back to {view==='witnesses'?'results':'list'}</button>
-      {opening&&<p role="status">{reading?'Loading saved definition…':<button className="btn" onClick={()=>void openItem(opening.id,opening.edit)}>Retry loading definition</button>}</p>}
+      <button className="btn ghost" disabled={locked} onClick={view==='witnesses'?()=>{pendingFocus.current=resultFocus.current;if(selected)void evaluate(selected,applied);}:list}>← Back to {view==='witnesses'?'results':'list'}</button>
+      {opening&&<p role="status">{reading?'Loading saved definition…':<button className="btn" onClick={()=>void openItem(opening.id,opening.edit,opening.restore)}>Retry loading definition</button>}</p>}
       {view==='editor'?<form className="card stack" onSubmit={save}>
         <h2 tabIndex={-1} id={uid+'editor'}>{selected||opening?.edit?'Edit':'New'} {kind}</h2>
         {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={fieldsLocked} className="conversion-fields">

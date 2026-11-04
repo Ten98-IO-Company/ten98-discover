@@ -8,6 +8,19 @@ import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('saved prompt navigation retains read-only history and exact receipt identity', async()=>{
+ const base={workspace,project,view:'prompts'} as const,receipt={...base,promptView:'run',promptRun:project,promptId:workspace};
+ for(const target of [{...base,promptView:'history'},receipt]){
+  const wire=defaultStringifySearch(target),parsed=parseNavigation(defaultParseSearch(wire));
+  assert.deepEqual(parsed,target);assert.equal(canonicalNavigation(wire,parsed),true);assert.notEqual(navigationKey(parsed),navigationKey(base));
+ }
+ for(const patch of [{promptView:['history']},{promptView:'run'},{promptView:'history',promptRun:project},{promptView:'run',promptRun:project,promptId:[]},{...receipt,requestKey:workspace},{...receipt,workspace:undefined}])assert.equal(parseNavigation({...base,...patch}).promptInvalid,'1');
+ const invalid={...base,promptInvalid:'1'} as const;assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(invalid))),invalid);
+ assert.deepEqual(parseNavigation({...receipt,view:'project'}),{workspace,project,view:'project'});
+ const {resolveNavigation}=await import('../src/lib/navigation.ts');
+ assert.equal(resolveNavigation(parseNavigation(receipt),workspace,workspace,'prompts').promptInvalid,'1');
+});
+
 test('API model report modes preserve exact scope through reload and history without leaking to siblings',()=>{
  const base={workspace,project,view:'ai-insights'} as const,aiInsightsQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',model:'',promptId:project,tag:'true',matcher:'unicode-boundary-v1'}).toString();
  for(const aiInsightsMode of ['comparison','citations','specialized'] as const){const target={...base,aiInsightsMode,aiInsightsQuery},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.deepEqual(parseNavigation({...target,view:'prompts'}),{workspace,project,view:'prompts'});assert.equal(canonicalNavigation(wire+'&aiInsightsMode=summary',target),false);}
@@ -526,4 +539,16 @@ test('Heatmap navigation preserves a bounded independent page/layout range and i
  assert.notEqual(navigationKey(base),navigationKey({...base,heatmapQuery:'mode=scroll'}));assert.equal(canonicalNavigation(defaultStringifySearch(base)+'&view=heatmaps',base),false);
  const scoped=parseNavigation({...base,heatmapQuery:'mode=pages'});assert.equal(resolveNavigation(scoped,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','heatmaps').heatmapInvalid,'1');
  assert.deepEqual(parseNavigation({...base,view:'project',heatmapQuery:'mode=pages'}),{workspace,project,view:'project'});
+});
+
+
+test('conversion read intent preserves exact revision and scope while excluding mutations and cursors',async()=>{
+ const {readConversionIntent,conversionIntentQuery,resolveNavigation}=await import('../src/lib/navigation.ts');
+ const base={workspace,project,view:'conversions'} as const,scope='from=2026-10-01&to=2026-10-07&timeZone=UTC&campaignName=%D9%85%D8%B1%D8%AD%D8%A8%D8%A7';
+ for(const kind of ['goal','funnel'] as const)for(const step of [undefined,kind==='goal'?1:3]){
+  const intent={kind,id:project,revision:7,scope,...step?{step}:{}},conversionQuery=conversionIntentQuery(intent),target={...base,conversionQuery};
+  assert.deepEqual(readConversionIntent(conversionQuery),intent);assert.deepEqual(parseNavigation(target),target);assert.notEqual(navigationKey(base),navigationKey(target));assert.equal(resolveNavigation(target,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','conversions').conversionInvalid,'1');
+  for(const patch of [{workspace:undefined},{project:undefined},{conversionQuery:[conversionQuery]},{requestId:'private'},{conversionQuery:conversionQuery+'&cursor=private'},{conversionQuery:conversionQuery+'&revision=8'}])assert.equal(parseNavigation({...target,...patch}).conversionInvalid,'1');
+ }
+ for(const value of ['kind=other','kind=goal&id='+project,'kind=goal&scope=from%3D2026-10-01','kind=funnel&draft=private','kind=goal&id='+project+'&revision=1&scope='+encodeURIComponent(scope)+'&step=2'])assert.equal(readConversionIntent(value),null);
 });

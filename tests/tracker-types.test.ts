@@ -84,6 +84,14 @@ test('adapter source derivation rejects a changed vendor prefix, duplicate marke
   assert.throws(()=>deriveAdapter(name,Buffer.concat([source,Buffer.from('unexpected();')])),/outer footer/);
  }
 });
+
+test('text-redaction evidence in the served adapter rejects a nonnumeric node identity',async()=>{
+ const source=readFileSync(join(root,adapterSpecs.replay.file),'utf8'),marker='texts.push({id:n.id,rects:rects});';
+ assert.equal(source.split(marker).length,2);
+ const result=await checkTrackerAdapters({replay:Buffer.from(source.replace(marker,"texts.push({id:'invalid',rects:rects});"))});
+ assert.notEqual(result.status,0);assert.match(result.output,/TS2322/);assert.match(result.output,/number/);
+ assert.equal(existsSync(result.temporaryDirectory),false);
+});
 test('the native compiler deadline bounds a real temporary compile and cleans its owned input',()=>{
  const folder=mkdtempSync(join(tmpdir(),'ten98-compiler-deadline-'));
  try{

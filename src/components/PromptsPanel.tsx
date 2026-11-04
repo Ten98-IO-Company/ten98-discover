@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { useConfirmDialog, EmptyState, Button } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -7,6 +7,7 @@ import {PromptDiscoveryPanel} from './PromptDiscoveryPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
+import type {PromptNavigation} from '../lib/navigation';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role = WorkspaceRole;
@@ -120,14 +121,29 @@ function fmtDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-type Props={workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onAISearch?:(promptId:string,versionId:string|null,capture:boolean)=>void};
+type Props={navigation?:PromptNavigation;readEnabled?:boolean;onNavigate?:(value:PromptNavigation)=>void;workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onAISearch?:(promptId:string,versionId:string|null,capture:boolean)=>void};
 export function PromptsPanel(props: Props) {
   // Keyed on projectId + userId: switching either remounts everything, so no
   // stale items, drafts, errors or pagination can leak across contexts.
-  return <PromptsPanelInner key={props.projectId + ':' + props.userId} {...props} />;
+  return <PromptsPanelInner key={props.workspaceId + ':' + props.projectId + ':' + props.userId} {...props} />;
 }
 
-function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAISearch}: Props) {
+function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAISearch,navigation={},readEnabled=true,onNavigate}: Props) {
+  const routeKey=JSON.stringify({promptView:navigation.promptView,promptRun:navigation.promptRun,promptId:navigation.promptId,promptInvalid:navigation.promptInvalid}),previousRoute=useRef(routeKey),previousRead=useRef(readEnabled);
+  const expiredAnswers=useRef(new Set<string>()),expiredInputs=useRef(new Set<string>());
+  const routedEntry:ExecutionEntry|null=navigation.promptView==='history'?{kind:'history'}:navigation.promptView==='run'?{kind:'receipt',comparisonId:navigation.promptRun!,promptId:navigation.promptId!}:null;
+  function navigateExecution(entry:Exclude<ExecutionEntry,{kind:'configure'}>){
+    if(!onNavigate)return;
+    const next:PromptNavigation=entry.kind==='history'?{promptView:'history'}:{promptView:'run',promptRun:entry.comparisonId,promptId:entry.promptId};
+    if(JSON.stringify(next)!==routeKey)onNavigate(next);
+  }
+  useEffect(()=>{
+    if(previousRoute.current===routeKey&&previousRead.current===readEnabled)return;
+    previousRead.current=readEnabled;
+    previousRoute.current=routeKey;genRef.current++;acRef.current?.abort();verGenRef.current++;verAcRef.current?.abort();
+    setExecution(null);setSuggestions(null);setDiscovery(null);
+    if(readEnabled&&!navigation.promptInvalid&&!routedEntry)void load(null,applied,true);
+  },[routeKey,readEnabled]);
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
 
@@ -406,7 +422,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
 
   useEffect(() => {
     aliveRef.current = true;
-    load(null, DEFAULT_FILTERS);
+    if(readEnabled&&!navigation.promptInvalid&&!routedEntry)load(null, DEFAULT_FILTERS);
     return () => {
       aliveRef.current = false;
       genRef.current += 1;
@@ -446,10 +462,12 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     closeForm();
     setShowCreate(false);
     returnFocus.current = triggerId;
-    setExecution({generation: ++entryGeneration.current, entry});
+    if(entry.kind==='history'&&onNavigate)navigateExecution(entry);
+    else setExecution({generation: ++entryGeneration.current, entry});
   }
 
   async function backToLibrary() {
+    if(routedEntry&&onNavigate){onNavigate({});return;}
     setExecution(null);
     setReturning(true);
     // Recheck current access without discarding the loaded pages or filters.
@@ -640,7 +658,9 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
   const hasFilter = applied.status !== 'active' || applied.q.trim() !== '' || applied.tag.trim() !== '' || applied.classification !== '';
   const formOpen = showCreate || editing !== null;
 
-  if (discovery !== null) return <PromptDiscoveryPanel key={discovery} projectId={projectId}
+  if(!readEnabled)return <EmptyState title="Checking the selected website"/>;
+  if(navigation.promptInvalid)return <EmptyState title="Saved run unavailable" description="This saved run link is invalid or belongs to another website." action={<Button type="button" onClick={()=>onNavigate?.({})}>Back to saved prompts</Button>}/>;
+  if (discovery !== null && !routedEntry) return <PromptDiscoveryPanel key={discovery} projectId={projectId}
     onBack={() => { setDiscovery(null); void backToLibrary(); }}
     onAccessLoss={(status, message) => { purge(); if (status === 401) unauthorizedRef.current(); else setErr(message); }}
     onUse={(questions, topic) => {
@@ -648,8 +668,8 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       setNotice('Review the questions, then save. Saving does not run them.');
       returnFocus.current = null; requestAnimationFrame(() => document.getElementById('pl-bulk')?.focus());
     }} />;
-  if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
-    entry={execution.entry} backLabel="Back to saved prompts" onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
+  if (routedEntry || execution) return <PromptExecutionsPanel key={routedEntry?routeKey:execution!.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
+    entry={routedEntry??execution!.entry} onReadNavigate={onNavigate?navigateExecution:undefined} initialExpiredAnswerIds={[...expiredAnswers.current]} initialExpiredInputComparisonIds={[...expiredInputs.current]} onEvidenceExpired={({comparisonId,answerIds,inputIds})=>{answerIds.forEach(id=>expiredAnswers.current.add(id));if(inputIds.length)expiredInputs.current.add(comparisonId);}} backLabel="Back to saved prompts" onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (suggestions !== null) return <AiSuggestionsPanel key={suggestions} workspaceId={workspaceId} projectId={projectId} userId={userId}
     onBack={saved => void backFromSuggestions(saved)} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (returning) return <section className="card"><p role="status">Checking access to the prompt library…</p></section>;
