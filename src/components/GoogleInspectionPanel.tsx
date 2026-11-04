@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {Disclosure} from '@ten98/ui';
 import {useId,useState} from 'react';
 import {AppField} from '@ten98/ui/app';

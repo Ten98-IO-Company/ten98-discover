@@ -58,10 +58,10 @@ try{
     assert.equal(Number((await pool.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n),0,`A fresh empty fixture is required: ${table}.`);
   assert.equal((await fetch(origin+'/api/health/ready',{signal:AbortSignal.timeout(10_000)})).status,200);
   const fixtureClock=(await pool.query('SELECT clock_timestamp() AS now')).rows[0].now as Date;
-  assert.ok(fixtureClock.getUTCDate()>=4,'Use a date after the third UTC day so older fixture dates stay in the actual collector identity month.');
+  assert.ok(fixtureClock.getUTCDate()>=3,'Two distinct historical dates must stay in the actual collector identity month.');
   assert.ok(Math.abs(Date.now()-fixtureClock.getTime())<60_000,'App/test clocks must agree before timestamp-sensitive collection.');
-  const reportAt=new Date(Date.UTC(fixtureClock.getUTCFullYear(),fixtureClock.getUTCMonth(),fixtureClock.getUTCDate()-2,12));
-  const qualificationAt=new Date(Date.UTC(fixtureClock.getUTCFullYear(),fixtureClock.getUTCMonth(),fixtureClock.getUTCDate()-3,12));
+  const reportAt=new Date(Date.UTC(fixtureClock.getUTCFullYear(),fixtureClock.getUTCMonth(),fixtureClock.getUTCDate()-1,12));
+  const qualificationAt=new Date(Date.UTC(fixtureClock.getUTCFullYear(),fixtureClock.getUTCMonth(),fixtureClock.getUTCDate()-2,12));
   const reportDay=reportAt.toISOString().slice(0,10),qualificationDay=qualificationAt.toISOString().slice(0,10);
   const owner=randomUUID(),viewer=randomUUID(),workspace=randomUUID(),project=randomUUID(),siteKey=randomUUID();
   const ownerPassword=randomBytes(24).toString('base64url'),viewerPassword=randomBytes(24).toString('base64url');
@@ -144,7 +144,13 @@ try{
   page=await ownerContext.newPage();page.setDefaultTimeout(20_000);page.on('pageerror',(error:Error)=>errors.push(error.message));
   const button=(name:string)=>page.getByRole('button',{name,exact:true}),list=()=>page.getByRole('region',{name:'Session results',exact:true}),activity=()=>page.getByRole('region',{name:'Activity',exact:true});
   const settle=async()=>{await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));await page.waitForFunction(()=>![...document.querySelectorAll('[role=status]')].some(n=>/^Loading (sessions|activity|definitions)/.test(n.textContent??'')));};
-  const open=async(name:string,host=page)=>{const summary=host.locator('summary').filter({hasText:name}).first();if(!await summary.locator('..').evaluate((n:HTMLDetailsElement)=>n.open))await summary.click();};
+  const open=async(name:string,host=page)=>{
+    if(name==='More filters'||name==='Advanced filters'){
+      const parent=host.locator('summary').filter({hasText:/^More activity filters$/});
+      if(!await parent.locator('..').evaluate((node:HTMLDetailsElement)=>node.open))await parent.click();
+    }
+    const summary=host.locator('summary').filter({hasText:name}).first();if(!await summary.locator('..').evaluate((node:HTMLDetailsElement)=>node.open))await summary.click();
+  };
   const uiRead=async<T>(action:()=>Promise<unknown>,detail=false,status=200):Promise<T>=>{const pending=page.waitForResponse((response:any)=>{const u=new URL(response.url());return (detail?u.pathname.startsWith(sessions+'/'):u.pathname===sessions)&&response.request().method()==='GET';},{timeout:90_000});await action();const response=await pending;assert.equal(response.status(),status);const value=await response.json();await settle();return value;};
   const link=(extra:Record<string,string>={})=>origin+'/?'+new URLSearchParams({workspace,project,view:'sessions',from:reportDay,to:reportDay,timeZone:'America/New_York',...extra});
   const shot=async(name:string)=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);await page.screenshot({path:join(evidence,name),fullPage:true,animations:'disabled'});screenshots.push(name);};

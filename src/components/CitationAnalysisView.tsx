@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert, Card, DataTable, EvidenceDetail, Pager, Sparkline, Stack, Tabs,Disclosure} from '@ten98/ui';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export type CitationPeriod = 'current' | 'previous';
 export type CitationGrouping = 'retained-fragment-v1' | 'elmo-url-v1';

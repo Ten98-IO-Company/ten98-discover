@@ -2,7 +2,7 @@ import {Fragment, useCallback, useEffect, useId, useRef, useState} from 'react';
 import {Disclosure} from '@ten98/ui';
 import type {FormEvent} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role = WorkspaceRole;
 type CategoryKey = 'rawAnalytics' | 'replay' | 'rawProviderEvidence' | 'derivedHistory';

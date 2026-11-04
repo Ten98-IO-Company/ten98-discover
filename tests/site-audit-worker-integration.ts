@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {mock} from 'node:test';
 import {EventEmitter} from 'node:events';
 import {Resolver} from 'node:dns/promises';
@@ -12,7 +12,8 @@ import https from 'node:https';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,startWorker,stopJobs} from '../src/server/jobs.ts';
-import {startSiteAudit,cancelSiteAudit,getSiteAudit,type AuditRunRow} from '../src/server/site-audits.ts';
+import {startSiteAudit,cancelSiteAudit,getSiteAudit,listSiteAuditPages,getSiteAuditPage,listSiteAuditLinks,exportSiteAuditPages,type AuditRunRow} from '../src/server/site-audits.ts';
+import {saveSiteAuditAccess,removeSiteAuditAccess} from '../src/server/site-audit-access.ts';
 import {executeSiteAudit,reconcileSiteAudits,stopSiteAudits} from '../src/server/site-audit-worker.ts';
 
 type Response={status?:number;body?:string;headers?:string[];hold?:Promise<void>};
@@ -47,12 +48,12 @@ export async function runSiteAuditWorkerChecks(){
   await (await getBoss()).complete('site-audit',run.queue_job_id,null,{includeQueued:true});
  };
  let route:(url:URL)=>Response|Promise<Response>=url=>url.pathname==='/robots.txt'?{body:'User-agent: *\nAllow: /',headers:['Content-Type','text/plain']}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:{body:html()};
- const requests:{url:string;at:number;destroyed:boolean}[]=[];
+ const requests:{url:string;at:number;destroyed:boolean;headers:Record<string,string>}[]=[];
  const responses=new Set<Readable>();
  const mocks=[mock.method(Resolver.prototype,'resolve4',async()=>['1.1.1.1']),mock.method(Resolver.prototype,'resolve6',async()=>[])];
  const request=((url:URL,options:any,callback:(response:any)=>void)=>{
-  const state={url:url.href,at:Date.now(),destroyed:false};requests.push(state);
-  assert.equal(options.method,'GET');assert.equal(options.headers['user-agent'],'TenMonitorBot/1.0');assert.deepEqual(options.agent.options.proxyEnv,{});
+  const state={url:url.href,at:Date.now(),destroyed:false,headers:{...options.headers}};requests.push(state);
+  assert.equal(options.method,'GET');assert.equal(options.path,url.href.slice(url.origin.length));assert.equal(options.headers['user-agent'],'TenMonitorBot/1.0');assert.deepEqual(options.agent.options.proxyEnv,{});
   const req=new EventEmitter() as any;req.destroy=()=>{state.destroyed=true;};
   req.end=()=>queueMicrotask(()=>{void(async()=>{
    if(state.destroyed)return;const socket=new EventEmitter() as any;socket.remoteAddress='1.1.1.1';req.emit('socket',socket);socket.emit(url.protocol==='https:'?'secureConnect':'connect');
@@ -72,6 +73,30 @@ export async function runSiteAuditWorkerChecks(){
   assert.equal((await pool.query("SELECT body_capture_state FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[clean.id])).rows[0].body_capture_state,'not_recorded');
   const count=requests.length;await execute(clean);await executeSiteAudit({runId:clean.id,jobId:randomUUID()});assert.equal(requests.length,count);
   console.log('PASS real queue receipt, native request settings, robots/sitemap/HTML children, graph publication, pacing and repeat no-op');
+
+
+  {
+  const accessInput=(expectedRevision:number)=>({requestId:randomUUID(),expectedRevision,domainId:null,signatureInput:`sig1=("@authority" "signature-agent");keyid="native-fixture";expires=${Math.floor(Date.now()/1000)+3600}`,signature:`sig1=:${Buffer.alloc(64).toString('base64')}:`});
+  const accessSaved=await saveSiteAuditAccess(project,owner,accessInput(0));assert.ok(accessSaved);const credentialId=accessSaved.ack.credentialId;
+  const protectedStart=async(revision:number)=>read((await startSiteAudit(project,owner,{requestId:randomUUID(),domainId:null,startPath:'/',maxPages:2,mode:'static',crawlerAccess:{id:credentialId,revision}})).run.id);
+  route=url=>url.hostname==='policy.example.net'?{body:'User-agent: *\nAllow: /',headers:['Content-Type','text/plain']}:url.pathname==='/robots.txt'?{status:302,headers:['Location','https://policy.example.net/robots']}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:{body:html()};
+  const signed=await protectedStart(1),signedOffset=requests.length;await execute(signed);const signedRequests=requests.slice(signedOffset);assert.equal((await read(signed.id)).status,'completed');assert.ok(signedRequests.some(r=>r.url.startsWith('https://policy.example.net')));
+  for(const r of signedRequests){if(r.url.startsWith(origin)){assert.equal(r.headers.Signature,accessInput(0).signature);assert.equal(r.headers['Signature-Agent'],'"https://shopify.com"');}else{assert.equal(r.headers.Signature,undefined);assert.equal(r.headers['Signature-Input'],undefined);assert.equal(r.headers['Signature-Agent'],undefined);}}
+  console.log('PASS protected native worker sends fixed Shopify headers only to the selected origin including robots redirects');
+
+  const revoked=await protectedStart(1),revokedOffset=requests.length;await removeSiteAuditAccess(project,owner,{requestId:randomUUID(),credentialId,expectedRevision:1});await execute(revoked);assert.equal(requests.length,revokedOffset);assert.equal((await read(revoked.id)).stop_reason,'crawler_access_changed');
+  await saveSiteAuditAccess(project,owner,accessInput(2));route=async url=>{if(url.pathname==='/robots.txt'){await pool.query("UPDATE site_audit_access SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[credentialId]);return {body:'User-agent: *\nAllow: /',headers:['Content-Type','text/plain']};}return {body:html()};};
+  const expired=await protectedStart(3),expiredOffset=requests.length;await execute(expired);assert.equal(requests.length,expiredOffset+1);assert.equal((await read(expired.id)).stop_reason,'crawler_access_expired');
+  console.log('PASS native queued revocation and expiry during pacing stop protected work without unsigned replacement requests');
+
+  await saveSiteAuditAccess(project,owner,accessInput(3));const late=await protectedStart(4),lateOffset=requests.length;let once=false;const revokeDuringDns=mock.method(Resolver.prototype,'resolve4',async()=>{if(!once){once=true;await removeSiteAuditAccess(project,owner,{requestId:randomUUID(),credentialId,expectedRevision:4});}return ['1.1.1.1'];});try{await execute(late);}finally{revokeDuringDns.mock.restore();}
+  assert.equal(requests.length,lateOffset);assert.equal((await read(late.id)).stop_reason,'crawler_access_changed');assert.equal((await read(late.id)).request_count,1,'Reserved uncertain attempt remains evidence, never replayed unsigned.');
+  console.log('PASS credential revocation during DNS is rechecked at native dispatch and preserves its original attempt');
+
+  await saveSiteAuditAccess(project,owner,accessInput(5));const unreadable=await protectedStart(6),unreadableOffset=requests.length,originalKeys=process.env.CREDENTIAL_KEYS,originalActive=process.env.CREDENTIAL_ACTIVE_KEY;delete process.env.CREDENTIAL_KEYS;delete process.env.CREDENTIAL_ACTIVE_KEY;try{await execute(unreadable);}finally{process.env.CREDENTIAL_KEYS=originalKeys;process.env.CREDENTIAL_ACTIVE_KEY=originalActive;}
+  assert.equal(requests.length,unreadableOffset);assert.equal((await read(unreadable.id)).stop_reason,'crawler_access_unavailable');
+  console.log('PASS missing encryption keys stop a selected native audit before any request');
+  }
 
   route=url=>url.pathname==='/robots.txt'?{status:302,headers:['Location','https://policy.example.net/robots']}:
    url.hostname==='policy.example.net'?{body:'User-agent: *\nDisallow: /private\nSitemap: https://audit.example.com/sitemap.xml',headers:['Content-Type','text/plain']}:
@@ -209,6 +234,39 @@ export async function runSiteAuditWorkerChecks(){
    const before=requests.length;await execute(capture);assert.equal(requests.length,before);
   }
   console.log('PASS native worker persists empty, unavailable and whole exact 64KiB body; over-limit never stores a prefix and repeats never restore');
+  // Native query policy must survive queueing, exact request recovery, discovery and every result reader.
+  const legacyInput={requestId:clean.request_id,domainId:null,startPath:'/',maxPages:50,mode:'static'};
+  assert.equal(clean.request_hash,createHash('sha256').update(JSON.stringify({version:1,mode:'static',domainId:null,startPath:'/',maxPages:50})).digest('hex'));
+  await pool.query("UPDATE site_audit_run SET config=config-'includeQueryUrls' WHERE id=$1",[clean.id]);
+  const legacyRetry=await startSiteAudit(project,owner,legacyInput);assert.equal(legacyRetry.run.id,clean.id);assert.equal(legacyRetry.created,false);assert.equal(legacyRetry.run.config?.includeQueryUrls,false);
+  const queryPath='/catalog?b=2&a=1&a=2+3&x=%20',queryInput={requestId:randomUUID(),domainId:null,startPath:queryPath,maxPages:50,mode:'static',includeQueryUrls:true};
+  const queryRun=await startSiteAudit(project,owner,queryInput),querySaved=await read(queryRun.run.id);
+  assert.equal(querySaved.config!.includeQueryUrls,true);assert.equal(querySaved.config!.startPath,queryPath);assert.equal(querySaved.config!.startUrl,origin+queryPath);
+  assert.equal((await startSiteAudit(project,owner,queryInput)).run.id,querySaved.id);
+  await assert.rejects(startSiteAudit(project,owner,{...queryInput,includeQueryUrls:false,startPath:'/catalog'}),{status:409});
+  await assert.rejects(startSiteAudit(project,owner,{...queryInput,startPath:'/catalog?a=1&b=2'}),{status:409});
+  const escaped=(value:string)=>value.replaceAll('&','&amp;').replaceAll('"','&quot;');
+  const queryLinks=['?b=2&a=1&a=2+3&x=%20#fragment','?a=1&b=2','?b=2&a=1','?','?empty=','?blocked=1','/%3Fmarker','/redirect?from=1','https://outside.example.net/page?x=1','https://127.0.0.1/private?x=1'];
+  const queryHtml=html(queryLinks.map((url,index)=>`<a href="${escaped(url)}">Query ${index}</a>`).join('')).replace('<head>',`<head><base href="${origin}/catalog?base=1"><link rel="canonical" href="${escaped(origin+queryPath)}">`);
+  const querySitemap='<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+[queryPath,'/catalog?from=sitemap'].map(path=>`<url><loc>${escaped(origin+path)}</loc></url>`).join('')+'</urlset>';
+  route=url=>url.pathname==='/robots.txt'?{status:302,headers:['Location','https://policy.example.net/robots?policy=1']}:
+   url.hostname==='policy.example.net'?{body:'User-agent: *\nDisallow: /catalog?blocked=1\nSitemap: '+origin+'/sitemap.xml?index=1',headers:['Content-Type','text/plain']}:
+   url.pathname==='/sitemap.xml'?{body:querySitemap,headers:['Content-Type','application/xml']}:
+   url.pathname==='/redirect'?{status:302,headers:['Location','/catalog?redirect=ok']}:{body:url.pathname==='/catalog'?queryHtml:html()};
+  const beforeQuery=requests.length;await execute(querySaved);const queryRequests=requests.slice(beforeQuery).map(row=>row.url),queryResult=await read(querySaved.id);
+  for(const path of [queryPath,'/catalog?a=1&b=2','/catalog?b=2&a=1','/catalog?','/catalog?empty=','/catalog?from=sitemap','/catalog?redirect=ok','/sitemap.xml?index=1','/%3Fmarker'])assert.equal(queryRequests.filter(url=>url===origin+path).length,1,path);
+  assert.ok(queryRequests.includes('https://policy.example.net/robots?policy=1'));assert.ok(!queryRequests.some(url=>url.includes('blocked=1')||url.includes('outside.example.net')||url.includes('127.0.0.1')));
+  assert.equal(queryResult.coverage.queryExclusions??0,0);assert.ok(!queryResult.coverage.reasons.includes('query_urls_excluded'));
+  const queryPages=await listSiteAuditPages(project,owner,querySaved.id,new URLSearchParams('limit=100'));
+  const firstQueryPage=queryPages.pages.find(page=>page.url===origin+queryPath)!;assert.ok(firstQueryPage);
+  assert.ok(queryPages.pages.some(page=>page.url===origin+'/catalog?'));assert.ok(queryPages.pages.some(page=>page.url===origin+'/catalog?b=2&a=1'));
+  const queryDetail=await getSiteAuditPage(project,owner,querySaved.id,firstQueryPage.id);assert.equal(queryDetail.page.url,origin+queryPath);assert.ok(JSON.stringify(queryDetail.page.evidence).includes(origin+queryPath));
+  const queryEdges=await listSiteAuditLinks(project,owner,querySaved.id,firstQueryPage.id,new URLSearchParams('direction=out&limit=100'));
+  assert.ok(queryEdges.links.some(edge=>edge.targetUrl===origin+'/catalog?a=1&b=2'&&edge.targetPageId));assert.ok(queryEdges.links.some(edge=>edge.targetUrl===origin+'/catalog?b=2&a=1'&&edge.targetPageId));
+  const queryExport=await exportSiteAuditPages(project,owner,querySaved.id,{coverage:null,resourceKind:'html',search:'',searchIn:'url_title_meta',sort:'url',order:'asc',expectedSelectionRevision:queryPages.selectionRevision});assert.equal(queryExport.status,200);const queryCsv=await queryExport.text();
+  for(const path of [queryPath,'/catalog?a=1&b=2','/catalog?b=2&a=1','/catalog?'])assert.ok(queryCsv.includes(origin+path),path);
+  console.log('PASS opted-in exact query identity survives native queue replay, robots and discovery, retained evidence, links and CSV while legacy defaults remain stable');
+
   const expired=await start(),created=new Date(Date.now()-31*60000);
   await pool.query('UPDATE site_audit_run SET created_at=$2,deadline_at=$2::timestamptz+interval \'30 minutes\' WHERE id=$1',[expired.id,created]);
   const beforeExpired=requests.length;await reconcileSiteAudits();await execute(expired);assert.equal((await read(expired.id)).status,'failed');assert.equal(requests.length,beforeExpired);

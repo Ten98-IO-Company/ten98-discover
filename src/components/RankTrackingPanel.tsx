@@ -9,7 +9,7 @@ import {RankCheckPanel,type RankCheckEntry} from './RankCheckPanel';
 import {RankHistoryPanel} from './RankHistoryPanel';
 import {RankSchedulePanel} from './RankSchedulePanel';
 import {RankReportingPanel} from './RankReportingPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';

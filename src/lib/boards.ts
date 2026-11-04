@@ -2,7 +2,7 @@ import {geographyFields,serializeGeographyKey,type GeographyKey} from './analyti
 import {z} from 'zod';
 import {revenueCurrencies} from './revenue.ts';
 import type {AnalyticsPeriodReport} from './analytics-comparison.ts';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export const boardLimits=Object.freeze({cards:40,rows:40,columns:4,bodyBytes:196608,previewBodyBytes:51200,responseBytes:2097152,pageSize:20});
 export const boardCardTypes=['WebsiteMetricsBar','EventsMetricsBar','Goal','Funnel','WebsiteChart','UTM','RealtimeHeader','RealtimeChart','RealtimeActiveUsers','RevenueMetricsBar','RevenueChart','RevenueMetricsTable','MetricsTable','WorldMap','WeeklyTraffic','EventsChart','TextBlock'] as const;

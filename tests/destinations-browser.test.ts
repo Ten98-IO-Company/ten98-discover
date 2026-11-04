@@ -24,7 +24,7 @@ const purchase = () => ({ name: 'purchase', eventId: randomUUID(), url: 'https:/
 
 async function fixture(destinations: unknown[], settings: { saved?: boolean; privacy?: boolean; dnt?: string; failStorage?: boolean; pageAge?: number; consentMode?: 'builtin' | 'external'; pageUrl?: string; windowOrigin?: string; nullLocation?: boolean } = {}) {
   let now = Date.now(), nextTimer = 1, fetchFail = false, failStorage = !!settings.failStorage;
-  const storage = new Map<string, string>(), actions: string[] = [], scripts: any[] = [], calls: any[][] = [], requests: any[] = [];
+  const storage = new Map<string, string>(), actions: string[] = [], scripts: any[] = [], stylesheets: any[] = [], calls: any[][] = [], requests: any[] = [];
   const listeners: Record<string, Function> = {}, timers = new Map<number, { at: number; callback: Function; interval?: number }>();
   const pageUrl = new URL(settings.pageUrl ?? 'https://site.example/shop'), storageCalls: string[] = [];
   let config: any = { schemaVersion: 2, siteKey, environment: 'live', origin: pageUrl.origin, revisionId: revision,
@@ -42,7 +42,7 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
   }
   const document: any = { createElement: element, createTextNode: (text: string) => ({ textContent: text }),
     querySelectorAll: () => scripts, body: element('body'), activeElement: { focus() {} },
-    head: { appendChild(script: any) { if (script.tag === 'script') scripts.push(script); return script; } } };
+    head: { appendChild(script: any) { if (script.tag === 'script') scripts.push(script); if (script.tag === 'link') stylesheets.push({ ...script }); return script; } } };
   Object.defineProperty(document, 'cookie', { get() { throw new Error('Cookie access forbidden'); } });
   const context: any = { document, navigator: { globalPrivacyControl: !!settings.privacy, doNotTrack: settings.dnt }, origin: settings.windowOrigin ?? pageUrl.origin,
     location: { protocol: pageUrl.protocol, origin: settings.nullLocation ? 'null' : pageUrl.origin, pathname: pageUrl.pathname, href: pageUrl.href, reload() { actions.push('reload'); }, replace(url: string) { actions.push(url); } },
@@ -90,10 +90,21 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
     }
     now = end; await drain();
   }
-  return { context, site, local, storage, storageCalls, timers, listeners, initialGlobals, initialHubKeys, initialApiKeys, storageKey, actions, scripts, calls, requests, event, grant, status, load, tick, drain,
+  return { context, site, local, storage, storageCalls, timers, listeners, initialGlobals, initialHubKeys, initialApiKeys, storageKey, actions, scripts, stylesheets, calls, requests, event, grant, status, load, tick, drain,
     fetchFailure: () => { fetchFail = true; }, storageFailure: () => { failStorage = true; }, changeConfig: (value: any) => { config = value; }, config: () => config, clock: () => now,
     storageEvent: (value: unknown) => listeners.storage({ key: storageKey, newValue: JSON.stringify(value) }), rerun: () => vm.runInContext(source, context) };
 }
+
+test('built-in preferences installs an anonymous cross-origin stylesheet before insertion', async () => {
+  const f = await fixture([], { consentMode: 'builtin' });
+  assert.equal(f.stylesheets.length, 1);
+  assert.equal(f.stylesheets[0].rel, 'stylesheet');
+  assert.equal(f.stylesheets[0].crossOrigin, 'anonymous');
+  assert.equal(f.stylesheets[0].referrerPolicy, 'no-referrer');
+  assert.equal(f.stylesheets[0].href, 'https://monitor.example/tracking-consent.css?v=4');
+  f.context.ten98.consentPreferences(f.local(options));
+  assert.equal(f.stylesheets.length, 1);
+});
 
 test('standalone coordinator does nothing on non-HTTP or opaque documents even with an existing hub', async () => {
   for (const settings of [{pageUrl: 'file:///C:/preview/index.html'}, {pageUrl: 'data:text/html,preview'}, {pageUrl: 'about:blank'},

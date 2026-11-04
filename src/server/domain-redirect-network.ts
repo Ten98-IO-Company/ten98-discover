@@ -1,28 +1,20 @@
 import http from 'node:http';
 import https from 'node:https';
-import {Resolver} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import {performance} from 'node:perf_hooks';
 import {toUSVString} from 'node:util';
-import {normalizeClientAddress} from '@ten98/runtime';
+import {addressKey,publicNetworkAddress,pinnedNetworkPeer as pinnedPeer,resolveNetworkHost as resolveRedirectHost,type NetworkAddress as Address} from '@ten98/runtime';
+export {pinnedPeer,resolveRedirectHost};
 import {normalizePublicHostname} from './domains.ts';
-import {addressKey,publicNetworkAddress} from './public-network.ts';
 
 const URL_LIMIT=2048, HEADER_LIMIT=16384, HOP_MS=5000, TOTAL_MS=30000;
 const redirects=new Set([301,302,303,307,308]);
-type Address={address:string;family:4|6};
 export type RedirectHop={url:string;status:number;durationMs:number;location:string|null};
 export type RedirectObservation={outcome:'response'|'blocked'|'unavailable'|'timeout'|'loop'|'hop_limit';hops:RedirectHop[];finalUrl:string|null;targetMatches:boolean|null;durationMs:number};
 export type RedirectTransport={resolve:(hostname:string,signal:AbortSignal)=>Promise<Address[]>;request:(url:URL,address:Address,signal:AbortSignal)=>Promise<{status:number;location:string|null}>};
 class RedirectFailure extends Error {
   outcome:RedirectObservation['outcome'];
   constructor(outcome:RedirectObservation['outcome']){super('Redirect observation unavailable.');this.outcome=outcome;}
-}
-
-/** The connected socket peer is the pinned address. IPv4-mapped IPv6 unwraps; zone ids and invalid text never match. */
-export function pinnedPeer(remote:unknown,pinned:string):boolean {
-  const peer=normalizeClientAddress(remote);
-  return peer!==null&&peer===normalizeClientAddress(pinned);
 }
 
 /** URLs are transient; only cleanUrl output may enter evidence or diagnostics. */
@@ -48,23 +40,6 @@ export function redirectUrl(raw:string,base?:URL):URL {
   return url;
 }
 function cleanUrl(url:URL){return `${url.origin}${url.pathname}`;}
-
-export async function resolveRedirectHost(hostname:string,signal:AbortSignal):Promise<Address[]> {
-  if(isIP(hostname))return [{address:hostname,family:isIP(hostname) as 4|6}];
-  const resolver=new Resolver({timeout:HOP_MS,tries:1});
-  const cancel=()=>resolver.cancel();signal.addEventListener('abort',cancel,{once:true});
-  try{
-    signal.throwIfAborted();
-    const values=await Promise.allSettled([resolver.resolve4(hostname),resolver.resolve6(hostname)]);
-    signal.throwIfAborted();
-    const result:Address[]=[];
-    for(const [i,value] of values.entries()){
-      if(value.status==='rejected'){if(value.reason?.code!=='ENODATA')throw new RedirectFailure('unavailable');continue;}
-      for(const address of value.value)result.push({address,family:i===0?4:6});
-    }
-    return result;
-  }finally{signal.removeEventListener('abort',cancel);resolver.cancel();}
-}
 
 /** No global agent or environment proxy; each request resolves through the vetted, pinned address only. */
 export async function requestRedirectHeaders(url:URL,address:Address,signal:AbortSignal):Promise<{status:number;location:string|null}> {

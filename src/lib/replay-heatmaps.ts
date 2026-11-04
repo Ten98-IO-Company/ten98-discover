@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {analyticsDay} from './navigation.ts';
 import {replaySummary,replayChunkDto} from './session-replay.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 const clean=(value:string)=>!/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(value);
 const name=z.string().trim().min(1).max(100).refine(clean),revision=z.number().int().min(0).max(2147483647);

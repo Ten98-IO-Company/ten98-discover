@@ -1,4 +1,4 @@
-import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime/browser';
 import {Disclosure} from '@ten98/ui';
 import {useEffect,useId,useRef,useState} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';

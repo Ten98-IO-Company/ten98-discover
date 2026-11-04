@@ -4,7 +4,8 @@ import type {PoolClient} from 'pg';
 import type {PgBoss} from 'pg-boss';
 import {getDatabase} from './db.ts';
 import {getBoss,workJobs} from './jobs.ts';
-import {auditAuthorityCurrent,siteAuditQueue,withAuditLock,type AuditRunRow,type AuditCoverage,type AuditSummary} from './site-audits.ts';
+import {auditAuthorityCurrent,siteAuditQueue,withAuditLock,type AuditRunRow,type AuditCoverage,type AuditSummary,type AuditProject} from './site-audits.ts';
+import {openSiteAuditAccess,SiteAuditAccessUnavailable} from './site-audit-access.ts';
 import {fetchCrawlDocument,type CrawlDocumentKind,type CrawlDocumentObservation} from './crawl-network.ts';
 import {evaluateCrawlRobotsIsolated} from './crawl-robots-isolated.ts';
 import {prepareAuditObservation} from './site-audit-observation.ts';
@@ -30,14 +31,14 @@ const now=async(client:PoolClient)=>(await client.query<{at:Date}>('SELECT clock
 function abort(work:Work,reason:string){work.reason??=reason;work.controller.abort();}
 function ownedBy(run:AuditRunRow,work:Work){return run.lease_owner===work.owner&&run.generation===work.generation;}
 /** Fresh permission, deadline and lease checks precede every dispatch and publication. */
-async function gate<T>(work:Work,operation:(client:PoolClient,run:AuditRunRow,at:Date)=>Promise<T>):Promise<T>{
- const result=await withAuditLock({runId:work.id,internal:true},async({client,run})=>{
+async function gate<T>(work:Work,operation:(client:PoolClient,run:AuditRunRow,at:Date,project:AuditProject)=>Promise<T>):Promise<T>{
+ const result=await withAuditLock({runId:work.id,internal:true},async({client,project,run})=>{
   const at=await now(client);
   if(!run||run.status!=='running'||!ownedBy(run,work)||run.lease_expires_at!.getTime()<=at.getTime())throw new AuditStopped('lease_lost');
   if(work.controller.signal.aborted)throw new AuditStopped(work.reason??'interrupted');
   if(run.deadline_at.getTime()<=at.getTime())throw new AuditStopped('deadline_exceeded');
   const authority=await auditAuthorityCurrent(client,run);if(!authority.allowed)throw new AuditStopped(authority.reason);
-  return {value:await operation(client,run,at)};
+  return {value:await operation(client,run,at,project)};
  });
  if(!result)throw new AuditStopped('run_removed');return result.value;
 }
@@ -79,15 +80,15 @@ function discoveries(run:AuditRunRow):Discovery{
  return {candidates:[],edges:[],coverage:structuredClone(run.coverage),robotsFailure:null};
 }
 function candidate(discovery:Discovery,run:AuditRunRow,page:Page,raw:string,kind:CrawlDocumentKind,edge:Edge['kind'],nofollow=false,anchor:string|null=null){
- const base=page.resource_kind==='robots'?`${run.origin}/robots.txt`:page.url;
- const normalized=kind==='robots'?resolveRobotsRedirect(raw,page.url,run.origin!):resolveAuditCandidate(raw,base,run.origin!);
+ const base=page.resource_kind==='robots'?`${run.origin}/robots.txt`:page.url,includeQueryUrls=run.config!.includeQueryUrls===true;
+ const normalized=kind==='robots'?resolveRobotsRedirect(raw,page.url,run.origin!,includeQueryUrls):resolveAuditCandidate(raw,base,run.origin!,includeQueryUrls);
  if(normalized.status!=='accepted'){
   discovery.coverage.scopeExclusions++;
   if(normalized.reason==='query'){discovery.coverage.queryExclusions=(discovery.coverage.queryExclusions??0)+1;addReason(discovery.coverage,'query_urls_excluded');}
   else if(normalized.reason==='outside_origin'){
    discovery.coverage.externalExclusions=(discovery.coverage.externalExclusions??0)+1;
    // External observations are evidence only. The public URL validator never grants frontier authority.
-   const outside=resolveRobotsRedirect(raw,base,run.origin!);
+   const outside=resolveRobotsRedirect(raw,base,run.origin!,includeQueryUrls);
    if(outside.status==='accepted')discovery.edges.push({kind:edge,url:outside.url,nofollow,anchor});
    if(edge!=='link')addReason(discovery.coverage,'discovery_outside_origin');
   }else addReason(discovery.coverage,'invalid_discovery_url');
@@ -160,14 +161,20 @@ async function robotsPermission(work:Work,run:AuditRunRow,page:Page):Promise<num
  }
  return Math.max(1000,Math.ceil((decision.crawlDelaySeconds??0)*1000));
 }
+async function selectedAccess(client:PoolClient,run:AuditRunRow,at:Date,project:AuditProject){
+ const saved=run.config?.crawlerAccess;
+ try{return await openSiteAuditAccess(client,project,run.domain_id,saved?{id:saved.id,revision:saved.revision}:null,at);}
+ catch(error){if(error instanceof SiteAuditAccessUnavailable)throw new AuditStopped(error.reason);throw error;}
+}
 async function dispatch(work:Work,page:Page,intervalMs:number):Promise<Page|null>{
  for(;;){
-  const result=await gate(work,async(client,run,at)=>{
+  const result=await gate(work,async(client,run,at,project)=>{
    const fresh=(await client.query<Page>("SELECT * FROM site_audit_page WHERE id=$1 AND run_id=$2 AND state='pending'",[page.id,run.id])).rows[0];
    if(!fresh)return {kind:'gone' as const};
    const next=Math.max(run.next_request_at?.getTime()??0,fresh.retry_after_at?.getTime()??0);
    if(next>=run.deadline_at.getTime())return {kind:'stop' as const,reason:'pacing_exceeds_deadline'};
    if(next>at.getTime())return {kind:'wait' as const,ms:Math.min(next-at.getTime(),10000)};
+   await selectedAccess(client,run,at,project);
    let limit:string|null=null;
    if(run.request_count>=run.config!.requestLimit)limit='request_limit';
    else if(Number(run.budget_charged_bytes)+capacity[page.resource_kind]>run.config!.bodyCapacityBytes)limit='body_capacity_limit';
@@ -311,7 +318,8 @@ async function runAudit(work:Work,initial:AuditRunRow){
    let dispatched:Page|null;
    try{dispatched=await dispatch(work,page,interval);}catch(error){if(error instanceof AuditStopped&&['page_limit','sitemap_document_limit','request_limit','body_capacity_limit','pacing_exceeds_deadline'].includes(error.reason)){stopReason=error.reason;break;}throw error;}
    if(!dispatched)continue;
-   const download=await fetchCrawlDocument(dispatched.url,dispatched.resource_kind,work.controller.signal);
+   const download=await fetchCrawlDocument(dispatched.url,dispatched.resource_kind,work.controller.signal,run.config?.crawlerAccess?()=>gate(work,selectedAccess):undefined);
+   if(download.reason==='crawler_access_unavailable')throw new AuditStopped('crawler_access_expired');
    try{await publish(work,run,dispatched,download);}catch(error){if(error instanceof AuditStopped&&['body_capacity_exceeded','pacing_exceeds_deadline'].includes(error.reason)){stopReason=error.reason;break;}throw error;}
   }
   await finalize(work,stopReason);

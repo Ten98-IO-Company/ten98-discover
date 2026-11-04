@@ -1,5 +1,5 @@
 import {isValidElement,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type ReactNode,type CSSProperties} from 'react';
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {z} from 'zod';
 import {DataTable,BarList,CopyButton,ReportPanel as SharedReportPanel,StatusLine,TimeSeriesChart,foldChartSeries,useConfirmDialog,useToast,Disclosure} from '@ten98/ui';
 import {useBlocker} from '@tanstack/react-router';
@@ -20,7 +20,7 @@ import type {RealtimeSnapshot} from '../lib/realtime';
 import {realtimeLimits} from '../lib/realtime';
 import {trackedAssetDimensions,type TrackedAssetReport} from '../lib/tracked-assets';
 import {listDto as assetListDto,validateItem as validateAssetItem,readTrackedReport,readTrackedScope,TrackedReportView} from './TrackedAssetsPanel';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;userId:string;projects:readonly{id:string;name:string}[];query?:string;readOwner?:string;readEnabled?:boolean;onNavigate:(query:string)=>void;onUnauthorized:()=>void};
 const role=z.enum(workspaceRoles),stamp=z.string().datetime(),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),nullable=count.nullable(),coverage=z.enum(['complete','partial','unavailable']);

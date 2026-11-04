@@ -93,7 +93,8 @@ try {
     void page.route(`${config.appUrl}/api/collect`, async (route: any) => {
       if (!held) { await route.continue(); return; }
       resolve(); await new Promise<void>(done => { releaseHeld = done; });
-      await route.continue().catch(() => {});
+      // The browser cancellation is observed before releasing this held route.
+      await route.abort('aborted').catch(() => {});
     });
   });
   held = true;
@@ -144,7 +145,7 @@ try {
     if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
   }
   async function selectProject(target:any,name:string) {
-    await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name,exact:true}).click();
+    await navigation(target);await target.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).selectOption({label:name});
   }
   // Project settings such as Privacy are Settings sections, opened from the sidebar Settings link.
   async function section(target:any,name:string) {
@@ -153,7 +154,7 @@ try {
   }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
   await dashboard.getByRole('heading',{name:'Overview',level:1,exact:true}).waitFor();
-  assert.equal(await dashboard.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Unmeasured native sandbox',exact:true}).getAttribute('aria-current'),'page','Initial loading must open the first listed project when no newer navigation was requested.');
+  assert.equal(await dashboard.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).inputValue(),unmeasuredId,'Initial loading must open the first listed project when no newer navigation was requested.');
   await selectProject(dashboard,'Native consent sandbox');
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
   await metric('Estimated visitors').filter({hasText: /^1$/}).waitFor();
@@ -204,8 +205,16 @@ try {
   await settingsPanel.getByRole('checkbox', {name: 'Referring website', exact: true}).check(); await save.click();
   await paths.fill('invalid'); assert.equal(await save.isDisabled(), true, 'Confirmation must revalidate fields edited while it is visible.');
   await settingsPanel.getByRole('button', {name: 'Keep editing', exact: true}).click(); await settingsPanel.getByRole('button', {name: 'Cancel changes', exact: true}).click();
-  await capture('native-settings-mobile.png');
-  await setViewport(dashboard,{width:320,height:740});await capture('native-settings-320.png');
+  async function verifyChoiceGeometry() {
+    const geometry = await settingsPanel.getByRole('checkbox', {name: 'Capture tags', exact: true}).evaluate((input: HTMLInputElement) => {
+      const box = input.getBoundingClientRect(), label = input.closest('label')!, text = label.querySelector('span')!;
+      return {width: box.width, height: box.height, targetHeight: label.getBoundingClientRect().height, textWidth: text.getBoundingClientRect().width};
+    });
+    assert.ok(geometry.width <= 16 && geometry.height <= 16, 'The shared checkbox must stay compact inside legacy settings fields.');
+    assert.ok(geometry.targetHeight >= 44 && geometry.textWidth > 65, 'Capture tags must retain a usable target and readable horizontal label.');
+  }
+  await verifyChoiceGeometry(); await capture('native-settings-mobile.png');
+  await setViewport(dashboard,{width:320,height:740});await verifyChoiceGeometry();await capture('native-settings-320.png');
   await setViewport(dashboard,{width:360,height:740});
 
   const viewerId = randomUUID(), viewerEmail = `${randomUUID()}@native-viewer.integration.test`, viewerPassword = randomBytes(24).toString('base64url');
@@ -221,7 +230,7 @@ try {
   assert.equal(await viewer.getByRole('button', {name: 'Save changes', exact: true}).isDisabled(), true);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspace.id, viewerId]);
   await viewer.getByRole('button', {name: 'Reload settings', exact: true}).click();
-  await viewer.getByText('Analytics settings are not available for this project.', {exact: true}).waitFor();
+  await viewer.getByText('Analytics settings are not available for your current project access.', {exact: true}).waitFor();
   assert.equal(await viewer.getByRole('textbox', {name: 'Excluded path prefixes'}).count(), 0);
   const {workspace: basicWorkspace} = await createWorkspace(userId, {name: 'Cookieless browser sandbox'});
   const basicProjectId = randomUUID(); fixtureSiteKey = randomUUID();

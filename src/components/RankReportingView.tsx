@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 type RankReportingDevice='desktop'|'mobile';
 type RankMatrixFilters={device:RankReportingDevice;search:string;pinned:'all'|'true'|'false';runLimit:number};

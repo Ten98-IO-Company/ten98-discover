@@ -4,7 +4,7 @@ import {ApiError} from '../lib/api';
 import {readHeatmapQuery,heatmapQueryString as serialize,heatmapStageNavigation,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll,heatmapBackgroundPage,type HeatmapOverlay,type ReplayEventLocator,type HeatmapQuery} from '../lib/replay-heatmaps';
 import {InvalidReplay,readReplayResponse,ReplayPreview} from './SessionReplayPanel';
 import {boundedTree,reassembleReplay,type ReplayEvent} from '../lib/session-replay';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 import {HeatmapPlane,HeatmapRankedList,SectionNav,EmptyState,Disclosure,Input,ReportToolbar} from '@ten98/ui';
 
 type Props={workspaceId:string;projectId:string;userId:string;query?:string;onNavigate:(query:string)=>void;onUnauthorized:()=>void;onSettings?:()=>void;readOwner?:string;readEnabled?:boolean};

@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
-import {Disclosure} from '@ten98/ui';
-import type {WorkspaceRole} from '@ten98/runtime';
+import {Button, Disclosure, Heading, ReportToolbar, SegmentedControl, Stack, Text, Tooltip} from '@ten98/ui';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export type SpecializedView = 'reddit' | 'shopping' | 'search' | 'gaps';
 export type SpecializedPeriodId = 'current' | 'previous';
@@ -88,12 +88,12 @@ const VIEW_TABS: { id: SpecializedView; label: string }[] = [
 
 function CountLines({ c }: { c: SpecializedCounts }) {
   return (
-    <div className="stack">
+    <Stack gap={1}>
       <span>Answers: {c.answers}</span>
       <span>Annotations: {c.annotations}</span>
       <span>Prompts: {c.prompts}</span>
       {c.pages !== undefined && <span>Grouped pages: {c.pages}</span>}
-    </div>
+    </Stack>
   );
 }
 
@@ -120,25 +120,25 @@ function GroupPeriodActions({ rowId, label, period, actions, nav, onOpenGroup }:
   return (
     <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
       {actions.canPages && (
-        <button type="button" className="btn ghost" style={btn44}
+        <Button variant="ghost" style={btn44}
           aria-label={`${p} pages for ${label} (${rowId}, ${period} period)`}
           disabled={!(nav && actions.canPages)}
           onClick={() => { if (nav && actions.canPages) onOpenGroup(rowId, period, 'pages'); }}>
-          {p} pages
-        </button>
+          Pages
+        </Button>
       )}
-      <button type="button" className="btn ghost" style={btn44}
+      <Button variant="ghost" style={btn44}
         aria-label={`${p} prompts for ${label} (${rowId}, ${period} period)`}
         disabled={!(nav && actions.canPrompts)}
         onClick={() => { if (nav && actions.canPrompts) onOpenGroup(rowId, period, 'prompts'); }}>
-        {p} prompts
-      </button>
-      <button type="button" className="btn ghost" style={btn44}
+        Prompts
+      </Button>
+      <Button variant="ghost" style={btn44}
         aria-label={`${p} annotations for ${label} (${rowId}, ${period} period)`}
         disabled={!(nav && actions.canEvidence)}
         onClick={() => { if (nav && actions.canEvidence) onOpenGroup(rowId, period, 'evidence'); }}>
-        {p} annotations
-      </button>
+        Annotations
+      </Button>
     </div>
   );
 }
@@ -154,9 +154,8 @@ function GroupsTable({ rows, emptyMessage, nav, onOpenGroup }: {
           <thead>
             <tr>
               <th scope="col" style={th(200)}>Group</th>
-              <th scope="col" style={th(140)}>Current</th>
-              <th scope="col" style={th(140)}>Previous</th>
-              <th scope="col" style={th(240)}>Actions</th>
+              <th scope="col" style={th(240)}>Current</th>
+              <th scope="col" style={th(240)}>Previous</th>
             </tr>
           </thead>
           <tbody>
@@ -166,13 +165,15 @@ function GroupsTable({ rows, emptyMessage, nav, onOpenGroup }: {
                   <div style={wrapAnywhere}>{row.label}</div>
                   {row.details.map((d, i) => (<div key={i} className="hint" style={wrapAnywhere}>{d}</div>))}
                 </td>
-                <td style={cellTop}><CountLines c={row.current} /></td>
-                <td style={cellTop}><CountLines c={row.previous} /></td>
                 <td style={cellTop}>
-                  <div className="stack">
+                  <Stack gap={2}><CountLines c={row.current} />
                     <GroupPeriodActions rowId={row.id} label={row.label} period="current" actions={row.currentActions} nav={nav} onOpenGroup={onOpenGroup} />
+                  </Stack>
+                </td>
+                <td style={cellTop}>
+                  <Stack gap={2}><CountLines c={row.previous} />
                     <GroupPeriodActions rowId={row.id} label={row.label} period="previous" actions={row.previousActions} nav={nav} onOpenGroup={onOpenGroup} />
-                  </div>
+                  </Stack>
                 </td>
               </tr>
             ))}
@@ -192,10 +193,10 @@ function PagesTable({ rows, canCommunityEvidence, emptyMessage, nav, onCommunity
     <>
       {canCommunityEvidence && (
         <div className="row">
-          <button type="button" className="btn ghost" style={btn44} disabled={!nav}
+          <Button variant="ghost" style={btn44} disabled={!nav}
             onClick={() => { if (nav && canCommunityEvidence) onCommunityEvidence(); }}>
             View community annotations
-          </button>
+          </Button>
         </div>
       )}
       <div className="table-wrap" role="region" aria-label="Grouped page results" tabIndex={0} style={{ overflowX: 'auto' }}>
@@ -259,12 +260,12 @@ function PromptsTable({ kind, rows, emptyMessage, nav, onOpenPrompt }: {
                 </td>
                 <td style={cellTop}><CountLines c={row.counts} /></td>
                 <td style={cellTop}>
-                  <button type="button" className="btn ghost" style={btn44}
+                  <Button variant="ghost" style={btn44}
                     aria-label={`${actionLabel} for prompt ${row.id}`}
                     disabled={!(nav && row.canEvidence)}
                     onClick={() => { if (nav && row.canEvidence) onOpenPrompt(row.id); }}>
                     {actionLabel}
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -311,12 +312,12 @@ function EvidenceTable({ rows, emptyMessage, nav, onOpenComparison }: {
                   {row.classification.map((c, i) => (<div key={i} style={wrapAnywhere}>{c}</div>))}
                 </td>
                 <td style={cellTop}>
-                  <button type="button" className="btn ghost" style={btn44}
+                  <Button variant="ghost" style={btn44}
                     aria-label={`Open saved comparison for annotation ${row.id}`}
                     disabled={!(nav && row.canOpenComparison)}
                     onClick={() => { if (nav && row.canOpenComparison) onOpenComparison(row.id); }}>
                     Open saved comparison
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -340,59 +341,33 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
   const nav = rep !== null && idle && rep.canNavigate && !rep.dirty;
 
   return (
-    <section className="research-panel stack" aria-labelledby={`${prefix}-title`} style={{ minWidth: 0 }}>
-      <div className="stack" style={{ minWidth: 0 }}>
-        <h2 id={`${prefix}-title`}>Specialized citation reports</h2>
-        {rep !== null && <p className="hint" style={wrapAnywhere}>{rep.scopeLabel}</p>}
-        <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn ghost" style={btn44} onClick={() => onBack()}>
-            {backLabel}
-          </button>
-          <button type="button" className="btn ghost" style={btn44} disabled={!canReload || exporting}
-            onClick={() => { if (canReload && !exporting) onReload(); }}>
-            Reload report
-          </button>
-          {rep !== null && (
-            <>
-              <button type="button" className="btn" style={btn44}
-                disabled={!(idle && canExport && !rep.dirty)}
-                onClick={() => { if (idle && canExport && !rep.dirty) onExport(); }}>
-                Export full report
-              </button>
-              <span className="hint" style={wrapAnywhere}>{rep.exportLabel}</span>
-            </>
-          )}
-          {reading && (
-            <button type="button" className="btn ghost" style={btn44}
-              onClick={() => { if (reading || exporting) onCancel(); }}>
-              Cancel loading
-            </button>
-          )}
-          {exporting && (
-            <button type="button" className="btn ghost" style={btn44}
-              onClick={() => { if (reading || exporting) onCancel(); }}>
-              Cancel export
-            </button>
-          )}
-        </div>
-        {error !== null && <p role="alert" style={wrapAnywhere}>{error}</p>}
-        {reading && !exporting && <p role="status">Loading retained citations…</p>}
-        {exporting && <p role="status">Preparing CSV…</p>}
-        {notice !== null && <p role="status" style={wrapAnywhere}>{notice}</p>}
+    <Stack as="section" gap={3} className="research-panel" aria-labelledby={`${prefix}-title`}>
+      <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 }}>
+        <Heading level={2} size="md" id={`${prefix}-title`}>Specialized citation reports</Heading>
+        <Button style={btn44} variant="ghost" onClick={() => onBack()}>{backLabel}</Button>
       </div>
+      <ReportToolbar label="Specialized report controls"
+        controls={rep !== null && <SegmentedControl label="Specialized report views" value={rep.view}
+          options={VIEW_TABS.map(tab => ({value: tab.id, label: tab.label, disabled: !nav}))}
+          onValueChange={value => { if (nav) onViewChange(value as SpecializedView); }} />}
+        summary={rep !== null && <span className="hint" style={wrapAnywhere}>{rep.scopeLabel}</span>}
+        actions={<>
+          <Button style={btn44} variant="secondary" disabled={!canReload || exporting}
+            onClick={() => { if (canReload && !exporting) onReload(); }}>Reload report</Button>
+          {rep !== null && <Tooltip content={rep.exportLabel}>
+            <Button style={btn44} variant="secondary" disabled={!(idle && canExport && !rep.dirty)}
+              onClick={() => { if (idle && canExport && !rep.dirty) onExport(); }}>Export full report</Button>
+          </Tooltip>}
+          {reading && <Button style={btn44} variant="ghost" onClick={() => { if (reading || exporting) onCancel(); }}>Cancel loading</Button>}
+          {exporting && <Button style={btn44} variant="ghost" onClick={() => { if (reading || exporting) onCancel(); }}>Cancel export</Button>}
+        </>} />
+      {error !== null && <p role="alert" style={wrapAnywhere}>{error}</p>}
+      {reading && !exporting && <p role="status">Loading retained citations…</p>}
+      {exporting && <p role="status">Preparing CSV…</p>}
+      {notice !== null && <p role="status" style={wrapAnywhere}>{notice}</p>}
 
       {rep !== null && (
         <>
-          <div className="row" role="group" aria-label="Specialized report views" style={{ flexWrap: 'wrap', gap: 8 }}>
-            {VIEW_TABS.map((tab) => (
-              <button key={tab.id} type="button" className="btn ghost" style={btn44}
-                aria-pressed={rep.view === tab.id} disabled={!nav}
-                onClick={() => { if (nav) onViewChange(tab.id); }}>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
           <div className="stack" style={{ minWidth: 0 }}>
             <h3>{rep.title}</h3>
             {rep.selectionLabel !== '' && <p className="hint" style={wrapAnywhere}>{rep.selectionLabel}</p>}
@@ -409,7 +384,9 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
             </div>
           )}
 
-          <div style={{ minWidth: 0 }}><Disclosure summary="Source filters" variant="plain">
+          <Stack gap={1}>
+          <Text size="xs" tone="muted">{rep.appliedFiltersLabel}</Text>
+          <Disclosure summary="Source filters" variant="plain">
             <div style={{ ...filterGrid, marginTop: 8 }}>
               <div className="field" style={fieldFlush}>
                 <label htmlFor={`${prefix}-f-grouping`}>Grouping</label>
@@ -472,15 +449,15 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
               </div>
             </div>
             <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>
-              <button type="button" className="btn" style={btn44} disabled={!(canDraft && rep.canApply)}
+              <Button variant="primary" style={btn44} disabled={!(canDraft && rep.canApply)}
                 onClick={() => { if (canDraft && rep.canApply) onApply(); }}>
                 Apply source filters
-              </button>
+              </Button>
             </div>
-            {rep.dirty && <p className="hint">Filters changed. Apply to update results.</p>}
-            {rep.filterError !== null && <p role="alert" style={wrapAnywhere}>{rep.filterError}</p>}
             <p className="hint">Dates/base scope are changed by returning to Insights.</p>
-          </Disclosure></div>
+          </Disclosure></Stack>
+          {rep.dirty && <p role="status" className="hint">Filters changed. Apply to update results.</p>}
+          {rep.filterError !== null && <p role="alert" style={wrapAnywhere}>{rep.filterError}</p>}
 
           <div className="row" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' }}>
             {rep.periods.map((p) => (
@@ -496,14 +473,11 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
             ))}
           </div>
           <p className="hint" style={wrapAnywhere}>{rep.denominatorLabel}</p>
-          <p className="hint" style={wrapAnywhere}>{rep.overlapLabel}</p>
-          {(rep.view === 'shopping' || rep.view === 'search') && (
-            <p className="hint" style={wrapAnywhere}>{rep.googleModuleLabel}</p>
-          )}
+          {(rep.view === 'shopping' || rep.view === 'search') && <p className="hint" style={wrapAnywhere}>{rep.googleModuleLabel}</p>}
           {rep.warnings.length > 0 && (
-            <ul className="stack">
+            <Stack as="ul" gap={2}>
               {rep.warnings.map((w, i) => (<li key={i} style={wrapAnywhere}>{w}</li>))}
-            </ul>
+            </Stack>
           )}
 
           <div className="stack" style={{ minWidth: 0 }}>
@@ -532,18 +506,18 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
                     <span style={wrapAnywhere}>{u.label}</span>
                     <span className="hint" style={wrapAnywhere}>{u.currentLabel}</span>
                     <span className="hint" style={wrapAnywhere}>{u.previousLabel}</span>
-                    <button type="button" className="btn ghost" style={btn44}
+                    <Button variant="ghost" style={btn44}
                       aria-label={`Inspect current ${u.label} (${u.id}, current period)`}
                       disabled={!(nav && u.canCurrent)}
                       onClick={() => { if (nav && u.canCurrent) onUnresolved(u.id, 'current'); }}>
                       Inspect current
-                    </button>
-                    <button type="button" className="btn ghost" style={btn44}
+                    </Button>
+                    <Button variant="ghost" style={btn44}
                       aria-label={`Inspect previous ${u.label} (${u.id}, previous period)`}
                       disabled={!(nav && u.canPrevious)}
                       onClick={() => { if (nav && u.canPrevious) onUnresolved(u.id, 'previous'); }}>
                       Inspect previous
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -551,27 +525,27 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
           )}
 
           <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <button type="button" className="btn ghost" style={btn44} disabled={!(nav && rep.pager.canPrevious)}
+            <Button variant="ghost" style={btn44} disabled={!(nav && rep.pager.canPrevious)}
               onClick={() => { if (nav && rep.pager.canPrevious) onPrevious(); }}>
               Previous page
-            </button>
+            </Button>
             <span className="hint" style={wrapAnywhere}>{rep.pager.label}</span>
-            <button type="button" className="btn ghost" style={btn44} disabled={!(nav && rep.pager.canNext)}
+            <Button variant="ghost" style={btn44} disabled={!(nav && rep.pager.canNext)}
               onClick={() => { if (nav && rep.pager.canNext) onNext(); }}>
               Next page
-            </button>
+            </Button>
           </div>
 
           <div style={{ minWidth: 0 }}><Disclosure summary="Selection details" variant="plain">
             <div className="stack" style={{ minWidth: 0 }}>
               <span className="hint" style={wrapAnywhere}>{rep.snapshotLabel}</span>
               <span className="hint" style={wrapAnywhere}>{rep.groupingLabel}</span>
-              <span className="hint" style={wrapAnywhere}>{rep.appliedFiltersLabel}</span>
               <span className="hint" style={wrapAnywhere}>{rep.measurementLabel}</span>
+              <span className="hint" style={wrapAnywhere}>{rep.overlapLabel}</span>
             </div>
           </Disclosure></div>
         </>
       )}
-    </section>
+    </Stack>
   );
 }

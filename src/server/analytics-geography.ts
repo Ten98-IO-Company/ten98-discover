@@ -2,7 +2,7 @@ import {open} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {Reader,type CityResponse} from 'mmdb-lib';
-import {publicNetworkAddress} from './public-network.ts';
+import {publicNetworkAddress} from '@ten98/runtime';
 import {geographyName,geographyVersion,type GeographyObservation,type GeographyReadiness} from '../lib/analytics-geography.ts';
 
 export const geographyFileLimit=256*1024*1024;

@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {Disclosure} from '@ten98/ui';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useLocation} from '@tanstack/react-router';
@@ -8,7 +8,7 @@ import {readRetentionReport,retentionLimitation,retentionLimits,retentionOffsets
 import {ExactFilterControls,AdvancedControls,AdvancedSummary,initialDraft,draftFilterQuery,savedPredicates,buildAdvanced,preciseDate,patchLocationFilters,fieldValueLabel,FILTERS,KINDS,TIMEZONES,validCohort,record,clean,uuid,focusAdvanced,num,type Draft,type CohortRef,type SavedFilter} from './ExplorerFilters';
 import {GeographyAttribution} from './GeographyAttribution';
 import './retention-report.css';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={projectId:string;userId:string;search:NavigationSearch;onNavigate:(value:RetentionNavigation,replace?:boolean)=>void;onUnauthorized:()=>void;onOpenExplore:()=>void};
 type Intent={params:URLSearchParams;query:RetentionQuery;draft:Draft;cohort:CohortRef|null};

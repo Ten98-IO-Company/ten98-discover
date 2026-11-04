@@ -6,7 +6,7 @@ import type {InsightFilters,InsightCoverage} from '../server/prompt-insights';
 import type {ComparisonFilters,ComparisonFraction,ComparisonNavigation,ComparisonPeriod,PromptInsightsComparison} from '../server/prompt-insights-comparison';
 import {AIComparisonView,type AIComparisonViewProps,type ComparisonCohort} from './AIComparisonView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:InsightFilters;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
 type Role=PromptInsightsComparison['role'];

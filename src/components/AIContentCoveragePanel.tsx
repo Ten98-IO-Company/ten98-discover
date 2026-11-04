@@ -9,7 +9,7 @@ import type {AiQueryReport} from '../lib/ai-search-analysis';
 import {readAISearch} from './AIQueryAnalysisPanel';
 import {AIContentSupportPanel} from './AIContentSupportPanel';
 import {supportSourceKey} from './ai-content-support-ui';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 const role=z.enum(workspaceRoles),stamp=z.iso.datetime(),hash=z.string().regex(/^[a-f0-9]{64}$/),count=z.number().int().nonnegative().max(10000);
 const url=z.string().max(2048).refine(value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password;}catch{return false;}});

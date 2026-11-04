@@ -355,7 +355,7 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
         </div>
 
         <div className="field">
-          <label htmlFor={id('maxCrawlPages')}>Maximum billable pages</label>
+          <label htmlFor={id('maxCrawlPages')}>Maximum pages</label>
           <select
             id={id('maxCrawlPages')}
             style={SELECT_STYLE}

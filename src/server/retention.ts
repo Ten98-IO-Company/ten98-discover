@@ -12,6 +12,7 @@ import {expireContentSupport,latchContentSupportExpiry,previewContentSupportRete
 import { expireDomainRedirectEvidence } from './domain-redirects.ts';
 import { expireKeywordResults } from './keyword-retention.ts';
 import { expireRankData, previewRankRetention } from './rank-retention.ts';
+import {expireSiteAuditScheduleHistory} from './site-audit-recurring.ts';
 import { expireSiteAuditData, previewSiteAuditRetention } from './site-audit-retention.ts';
 import {expireSessionProperties,latchSessionPropertyRetention} from './session-property-retention.ts';
 import {expireIdentityLinks,latchIdentityLinkRetention} from './identity-links.ts';
@@ -296,9 +297,10 @@ export async function runRetentionBatch(projectId?: string) {
     const aiSearch=await expireAiSearch(client,selected!,state.raw_evidence_cutoff);
     const contentSupport=await expireContentSupport(client,selected!);
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
+    const auditScheduleHistory = await expireSiteAuditScheduleHistory(client,selected!,state.derived_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !heatmapBackgroundPending && !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !heatmapBackgroundPending && !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending && !auditScheduleHistory.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
@@ -312,6 +314,7 @@ export async function runRetentionBatch(projectId?: string) {
       expiredSessionProperties:profiles.expiredProperties,expiredIdentifyReceipts:profiles.expiredReceipts,
       expiredIdentityLinks:links.expiredIdentityLinks,
       expiredRankRuns: ranks.expiredRankRuns, expiredRankTasks: ranks.expiredRankTasks, clearedRankEvidence: ranks.clearedRankEvidence, expiredRankKeywordMetrics: ranks.expiredRankKeywordMetrics,
+      expiredAuditScheduleOccurrences:auditScheduleHistory.expired,
       expiredAuditRuns: audits.expiredAuditRuns, removedAuditPages: audits.removedAuditPages, removedAuditEdges: audits.removedAuditEdges,
       removedAuditIssues: audits.removedAuditIssues, clearedAuditEvidence: audits.clearedAuditEvidence, complete };
   } catch (error) {

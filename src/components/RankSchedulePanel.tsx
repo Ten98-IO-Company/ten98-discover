@@ -3,7 +3,7 @@ import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {RankScheduleView,type ScheduleForm,type ScheduleInfo,type SchedulePreview,type ScheduleQuote} from './RankScheduleView';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;projectId:string;userId:string;trackerId:string;trackerName:string;quoteId?:string;knownQuoteExpiresAt?:string;backLabel?:string;onUnauthorized:()=>void;onBack:()=>void;onPrepareQuote:()=>void};
 type Role=WorkspaceRole;

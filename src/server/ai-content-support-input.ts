@@ -25,7 +25,7 @@ function checkSnapshot(snapshot:ContentSupportSnapshot){
  if(snapshot.pages.reduce((n,p)=>n+Buffer.byteLength(p.body,'utf8'),0)>contentSupportLimits.bodyBytes)throw new FoundationError(413,'The complete selected bodies exceed 64 KiB. Select fewer or smaller pages.');
  if(new Set(snapshot.queries.map(q=>q.id)).size!==snapshot.queries.length||new Set(snapshot.queries.map(q=>q.key)).size!==snapshot.queries.length||
   snapshot.queries.some(q=>q.id!==contentSupportQueryId(q.key))||new Set(snapshot.pages.map(p=>p.id)).size!==snapshot.pages.length||snapshot.pages.some(p=>p.bodySha256!==bodyHash(p.body)))throw new FoundationError(400,'The selected query or page evidence is inconsistent. Reload the selection.');
- if(snapshot.pages.every(p=>p.body.trim()===''))throw new FoundationError(400,'The supplied pages contain no readable text. Choose another page selection before preparing a paid quote.');
+ if(snapshot.pages.every(p=>p.body.trim()===''))throw new FoundationError(400,'The selected pages contain no readable text. Select different pages before running the assessment.');
  return snapshot;
 }
 /** Internal evidence only; callers must independently verify current source receipts and authority. */

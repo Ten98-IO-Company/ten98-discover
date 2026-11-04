@@ -8,8 +8,8 @@ import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
-import type {WorkspaceRole} from '@ten98/runtime';
-import {Checkbox} from '@ten98/ui';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
+import {Checkbox, Disclosure, Fieldset, RadioGroup} from '@ten98/ui';
 
 type Role = WorkspaceRole;
 type NetworkMode = 'off' | 'direct' | 'proxy';
@@ -337,124 +337,71 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
       {savedOk && !dirty && <div className="banner" role="status">Settings saved.</div>}
 
       <div className="field">
-        <label className="row" htmlFor={`${uid}-enabled`}>
-          <input
-            id={`${uid}-enabled`}
-            type="checkbox" style={{width: 'auto', flexShrink: 0}}
+        <Checkbox id={`${uid}-enabled`}
             checked={draft.enabled}
             disabled={inputsDisabled}
-            onChange={(e) => set('enabled', e.target.checked)}
-          />
-          Enable native analytics
-        </label>
+            onChange={(e) => set('enabled', e.target.checked)} label="Enable native analytics"/>
       </div>
 
-      <fieldset className="field" disabled={inputsDisabled}>
-        <legend>Analytics collection</legend>
-        <label className="row">
-          <input type="radio" style={{width:'auto',flexShrink:0}} name={`${uid}-collection`}
-            checked={draft.collectionMode==='cookieless'} onChange={()=>set('collectionMode','cookieless')}/>
-          Cookieless basic analytics
-        </label>
-        <p className="hint">Counts pageviews and developer-defined events without a consent grant; no cookies or stored browser identity are used.</p>
-        <label className="row">
-          <input type="radio" style={{width:'auto',flexShrink:0}} name={`${uid}-collection`}
-            checked={draft.collectionMode==='consent-first'} onChange={()=>set('collectionMode','consent-first')}/>
-          Consent-first analytics
-        </label>
-        <p className="hint">Waits for an explicit analytics grant before sending any native pageviews or events.</p>
-        <p className="hint">Visitor identification, replay and advertising pixels still require their own consent; this setting does not grant it.</p>
-      </fieldset>
+      <RadioGroup legend="Analytics collection" name={`${uid}-collection`} disabled={inputsDisabled}
+        description={draft.collectionMode==='cookieless'?'Counts pageviews and developer-defined events without a consent grant, cookies or stored browser identity.':'Waits for an explicit analytics grant before sending any native pageviews or events.'}
+        value={draft.collectionMode} onValueChange={value=>set('collectionMode',value as Settings['collectionMode'])}
+        options={[
+          {value:'cookieless',label:'Cookieless basic analytics'},
+          {value:'consent-first',label:'Consent-first analytics'},
+        ]}/>
+      <p className="hint">Visitor identification, replay and advertising pixels still require their own consent; this setting does not grant it.</p>
 
-      <fieldset className="field" disabled={inputsDisabled}>
-        <legend>Consent interface</legend>
-        <label className="row">
-          <input
-            type="radio" style={{width: 'auto', flexShrink: 0}}
-            name={`${uid}-consent`}
-            checked={draft.consentMode === 'builtin'}
-            onChange={() => set('consentMode', 'builtin')}
-          />
-          Built-in preferences
-        </label>
-        <p className="hint">Adds a consent preferences button to the monitored website.</p>
-        <label className="row">
-          <input
-            type="radio" style={{width: 'auto', flexShrink: 0}}
-            name={`${uid}-consent`}
-            checked={draft.consentMode === 'external'}
-            onChange={() => set('consentMode', 'external')}
-          />
-          Existing consent platform
-        </label>
-        <p className="hint">
-          Your integration calls the documented consent API; no consent platform is connected automatically.
-        </p>
-      </fieldset>
+      <RadioGroup legend="Consent interface" name={`${uid}-consent`} disabled={inputsDisabled}
+        description={draft.consentMode==='builtin'?'Adds a consent preferences button to the monitored website.':'Your integration calls the documented consent API; no consent platform is connected automatically.'}
+        value={draft.consentMode} onValueChange={value=>set('consentMode',value as Settings['consentMode'])}
+        options={[
+          {value:'builtin',label:'Built-in preferences'},
+          {value:'external',label:'Existing consent platform'},
+        ]}/>
 
-      <fieldset className="field" disabled={inputsDisabled}>
-        <legend>Optional metadata</legend>
-        <label className="row">
-          <input
-            type="checkbox" style={{width: 'auto', flexShrink: 0}}
-            checked={draft.captureReferrer}
-            onChange={(e) => set('captureReferrer', e.target.checked)}
-          />
-          Referring website
-        </label>
-        <p className="hint">Shows which website sent each visit, such as google.com. Only the website name is kept, never the page, search terms or full link.</p>
-        <label className="row">
-          <input
-            type="checkbox" style={{width: 'auto', flexShrink: 0}}
-            checked={draft.captureCampaigns}
-            onChange={(e) => set('captureCampaigns', e.target.checked)}
-          />
-          Campaign parameters
-        </label>
-        <p className="hint">Stores the UTM parameters source, medium, campaign, term, and content. After a visitor’s analytics grant it also stores the raw ad click identifiers gclid, fbclid, msclkid, ttclid, li_fat_id, and twclid for Paid ads attribution; cookieless basic events never carry them.{draft.consentMode==='external'&&' Your consent platform’s analytics disclosure must cover these identifiers.'}</p>
-        <label className="row">
-          <input
-            type="checkbox" style={{width: 'auto', flexShrink: 0}}
-            checked={draft.captureScreen}
-            onChange={(e) => set('captureScreen', e.target.checked)}
-          />
-          Screen dimensions
-        </label>
-        <label className="row">
-          <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.capturePerformance===true} onChange={e=>set('capturePerformance',e.target.checked)}/>
-          Page loading and interaction performance
-        </label>
-        <p className="hint">Measures loading speed, responsiveness and layout stability while collection is allowed. Browser timings can describe the start of the current page load, before permission was granted. Privacy choices and excluded paths apply. Screen and input contents are not recorded.</p>
+      <Fieldset legend="Optional metadata" disabled={inputsDisabled}>
+        <Checkbox checked={draft.captureReferrer}
+            onChange={(e) => set('captureReferrer', e.target.checked)} label="Referring website"/>
+
+        <Checkbox checked={draft.captureCampaigns}
+            onChange={(e) => set('captureCampaigns', e.target.checked)} label="Campaign parameters"/>
+
+        <Checkbox checked={draft.captureScreen}
+            onChange={(e) => set('captureScreen', e.target.checked)} label="Screen dimensions"/>
+        <Checkbox checked={draft.capturePerformance===true} onChange={e=>set('capturePerformance',e.target.checked)} label="Page loading and interaction performance"/>
+
         <Checkbox checked={draft.captureTags===true} onChange={e=>set('captureTags',e.target.checked)} label="Capture tags"/>
-        <label className="row">
-          <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.captureGeography===true} onChange={e=>set('captureGeography',e.target.checked)}/>
-          Approximate country, region and city
-        </label>
-        <p className="hint">Derives approximate location locally from an accepted connection address. Raw addresses and coordinates are not stored. Existing history is not backfilled, and accepted pageviews remain available when location lookup is unavailable.</p>
+        <Checkbox checked={draft.captureGeography===true} onChange={e=>set('captureGeography',e.target.checked)} label="Approximate country, region and city"/>
+        <p className="hint">Ad click identifiers require analytics consent; cookieless events never include them.{draft.consentMode==='external'&&' Your consent platform’s analytics disclosure must cover these identifiers.'} Third-party SDK collection is unchanged.</p>
         <p className="hint" role="status">Current location setup: {data.geography?.status==='ready'?'Ready for future accepted events.':data.geography?.status==='disabled'?'Disabled for this project.':data.geography?.status==='network-off'?'An operator must configure a verified network path.':data.geography?.status==='database-unavailable'?'An operator must install the optional local DB-IP City Lite database and restart the web service.':'Setup status was not returned. Reload settings to check.'}{data.geography?.database.status==='ready'?` Database build: ${new Date(data.geography.database.databaseBuild*1000).toISOString().slice(0,10)}.`:''} This describes the current setup, not historical lookup coverage.</p>
-        <p className="hint">
+        <Disclosure summary="What this metadata contains" variant="plain">
+          <p className="hint">Shows which website sent each visit, such as google.com. Only the website name is kept, never the page, search terms or full link.</p>
+          <p className="hint">Stores the UTM parameters source, medium, campaign, term, and content. After a visitor’s analytics grant it also stores the raw ad click identifiers gclid, fbclid, msclkid, ttclid, li_fat_id, and twclid for Paid ads attribution; cookieless basic events never carry them.{draft.consentMode==='external'&&' Your consent platform’s analytics disclosure must cover these identifiers.'}</p>
+          <p className="hint">Measures loading speed, responsiveness and layout stability while collection is allowed. Browser timings can describe the start of the current page load, before permission was granted. Privacy choices and excluded paths apply. Screen and input contents are not recorded.</p>
+          <p className="hint">Derives approximate location locally from an accepted connection address. Raw addresses and coordinates are not stored. Existing history is not backfilled, and accepted pageviews remain available when location lookup is unavailable.</p>
+          <p className="hint">
           Language is included with accepted events. Capture tags stores a short label from the script's data-tag attribute or a tracking call's tag option for accepted events only; tags are labels, not identifiers, so values with an @, a UUID, a long number or hex string, or characters other than letters, digits, space and _ . : / - are dropped, a project keeps at most 100 distinct tags, and history is not backfilled. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.
         </p>
-      </fieldset>
+        </Disclosure>
+      </Fieldset>
 
-      <fieldset disabled={inputsDisabled} className="stack" aria-describedby={`${uid}-heatmap-help`}>
-        <legend>Heatmaps</legend>
-        <label className="row"><input type="checkbox" style={{width:'auto',flexShrink:0}} checked={heatmap.enabled} onChange={e=>setHeatmap({enabled:e.target.checked})}/>Enable click and scroll heatmaps after analytics consent</label>
-        <p className="hint" id={`${uid}-heatmap-help`}>Heatmaps use analytics permission, independently of session replay. Enabling one never enables the other. Do Not Track, Global Privacy Control, configured bot exclusion and excluded paths apply. Only numeric click and scroll observations are collected, not page text or form values.</p>
+      <Fieldset legend="Heatmaps" disabled={inputsDisabled}>
+        <Checkbox checked={heatmap.enabled} onChange={e=>setHeatmap({enabled:e.target.checked})} aria-describedby={`${uid}-heatmap-help`} label="Enable click and scroll heatmaps after analytics consent"/>
+        <p className="hint" id={`${uid}-heatmap-help`}>Requires analytics consent, independently of replay. Only numeric clicks and scrolls are collected, never page text or form values. Privacy signals, bot exclusion and excluded paths apply.</p>
         <label htmlFor={`${uid}-heatmap-sample`}>Sample {new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(heatmap.sampleRate*100)}% of eligible documents</label>
         <input id={`${uid}-heatmap-sample`} type="range" min="0" max="100" step="1" value={heatmap.sampleRate*100} onChange={e=>setHeatmap({sampleRate:Number(e.target.value)/100})}/>
-        <p className="hint">The decision is made once per document. A sample rate of 0% collects nothing. Each capture ends after its original five-minute limit; later activity needs a new document capture.</p>
+        <Disclosure summary="How heatmap sampling works" variant="plain"><p className="hint">The decision is made once per document. A sample rate of 0% collects nothing. Each capture ends after its original five-minute limit; later activity needs a new document capture.</p></Disclosure>
         {heatmapError&&<p className="alert" role="alert">{heatmapError}</p>}
-      </fieldset>
+      </Fieldset>
 
-      <fieldset disabled={inputsDisabled} className="stack" aria-describedby={`${uid}-replay-help`}>
-        <legend>Session replay</legend>
-        <label className="row"><input type="checkbox" style={{width:'auto',flexShrink:0}} checked={replay.enabled} onChange={e=>setReplay({enabled:e.target.checked})}/>Enable recordings after separate replay consent</label>
+      <Fieldset legend="Session replay" disabled={inputsDisabled}>
+        <Checkbox checked={replay.enabled} onChange={e=>setReplay({enabled:e.target.checked})} aria-describedby={`${uid}-replay-help`} label="Enable recordings after separate replay consent"/>
         <p className="hint" id={`${uid}-replay-help`}>Basic analytics and analytics consent alone never start a recording. Visitors must also allow replay. Do Not Track, Global Privacy Control and excluded paths apply.</p>
         <label htmlFor={`${uid}-replay-sample`}>Record {new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(replay.sampleRate*100)}% of eligible sessions</label>
         <input id={`${uid}-replay-sample`} type="range" min="0" max="100" step="1" value={replay.sampleRate*100} onChange={e=>setReplay({sampleRate:Number(e.target.value)/100})}/>
-        <p className="hint">The sampling decision is made once per recording. A rate of 0% records nothing.</p>
+
         <label htmlFor={`${uid}-replay-mask`}>Masking</label>
         <select id={`${uid}-replay-mask`} value={replay.maskLevel} onChange={e=>setReplay({maskLevel:e.target.value as ReplaySettings['maskLevel']})}><option value="strict">Strict — mask form values and visible text</option><option value="moderate">Moderate — mask form values, keep visible text</option></select>
         {replay.maskLevel==='moderate'&&<p className="alert">Visible page text can contain personal information. Review blocked sections and excluded pages before enabling this mode.</p>}
@@ -463,29 +410,22 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         <label htmlFor={`${uid}-replay-block`}>Block additional sections with a CSS selector</label>
         <input id={`${uid}-replay-block`} maxLength={1024} value={replay.blockSelector} placeholder=".private-area, [data-sensitive]" onChange={e=>setReplay({blockSelector:e.target.value})}/>
         {replayError&&<p className="alert" role="alert">{replayError}</p>}
-        <p className="hint">Form values are masked in both modes. Some URLs and structural attributes remain; exclude sensitive pages and block private sections. Embedded frames, canvas and media are not recorded. Recordings continue across allowed pages in the same tab until their original time limit.</p>
-      </fieldset>
+        <p className="hint">Form values are always masked. Some URLs and structural attributes remain; exclude sensitive pages and block private sections.</p>
+        <Disclosure summary="Recording limits and masking" variant="plain"><p className="hint">The sampling decision is made once per recording. A rate of 0% records nothing. Embedded frames, canvas and media are not recorded. Recordings continue across allowed pages in the same tab until their original time limit.</p></Disclosure>
+      </Fieldset>
 
+      <Fieldset legend="Identity and exclusions" disabled={inputsDisabled}>
       <div className="field">
-        <label className="row" htmlFor={`${uid}-link-identities`}>
-          <input id={`${uid}-link-identities`} type="checkbox" style={{width:'auto',flexShrink:0}}
-            checked={draft.linkIdentities===true} disabled={inputsDisabled} onChange={e=>set('linkIdentities',e.target.checked)}/>
-          Link future identified activity across devices and months
-        </label>
-        <p className="hint">After fresh analytics consent, matching identifiers supplied by this website can link future activity within this project. Raw identifiers are not stored, and earlier anonymous activity stays separate. Disabling stops new link evidence; retained links remain until retention removes them. This does not verify a customer&apos;s identity.</p>
+        <Checkbox id={`${uid}-link-identities`} checked={draft.linkIdentities===true} disabled={inputsDisabled} onChange={e=>set('linkIdentities',e.target.checked)} label="Link future identified activity across devices and months"/>
+        <p className="hint">Requires fresh analytics consent. Disabling stops new links; retained links remain until retention removes them.</p>
+        <Disclosure summary="How activity is linked" variant="plain"><p className="hint">Matching identifiers supplied by this website can link future activity within this project. Raw identifiers are not stored, and earlier anonymous activity stays separate. This does not verify a customer&apos;s identity.</p></Disclosure>
       </div>
 
       <div className="field">
-        <label className="row" htmlFor={`${uid}-bots`}>
-          <input
-            id={`${uid}-bots`}
-            type="checkbox" style={{width: 'auto', flexShrink: 0}}
+        <Checkbox id={`${uid}-bots`}
             checked={draft.excludeBots}
             disabled={inputsDisabled}
-            onChange={(e) => set('excludeBots', e.target.checked)}
-          />
-          Exclude recognized bots
-        </label>
+            onChange={(e) => set('excludeBots', e.target.checked)} label="Exclude recognized bots"/>
         <p className="hint">Uses a conservative heuristic to filter obvious bots; it is not full bot detection.</p>
       </div>
 
@@ -516,11 +456,12 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         )}
       </div>
 
-      <div className="field">
-        <span className="dim">Visitor estimation</span>
+      </Fieldset>
+
+      <Disclosure summary="About visitor estimates" variant="plain">
         <p className="hint">{NETWORK_COPY[data.networkMode]}</p>
         <p className="hint">Visitor identifiers are rotating estimates, not unique people.</p>
-      </div>
+      </Disclosure>
 
       {!canEdit && <p className="hint">You can view these settings; only owners and admins can change them.</p>}
 

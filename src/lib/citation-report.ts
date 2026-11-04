@@ -1,7 +1,7 @@
 import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod,CitationEvidence} from '../server/prompt-citations';
 import type {CarriedCitations} from '../server/citation-carried';
 import {openRouterModelId} from './openrouter-models.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 // Browser-side enum values only: never import the server's domain lists/classifier.
 export const citationPublishers=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'] as const;

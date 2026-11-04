@@ -110,3 +110,9 @@ test('wildcard work is deterministic, cumulative and cannot return a partial all
   const aggregate=policy(rules(('Disallow: /'+'*'.repeat(100)+'z$\n').repeat(40)));
   assert.equal(evaluateRobotsPolicy(aggregate,'https://example.test/'+'a'.repeat(1000)).reason,'match_work_limit');
 });
+
+test('empty query delimiter remains part of robots matching and does not receive implicit robots access',()=>{
+ assert.equal(decision(rules('Disallow: /page?$'),'/page').status,'allowed');
+ assert.equal(decision(rules('Disallow: /page?$'),'/page?').status,'disallowed');
+ assert.equal(decision(rules('Disallow: /'),'/robots.txt?').status,'disallowed');
+});

@@ -98,3 +98,34 @@ test('malformed fallback is explicit and bounded; huge valid delays and corrupt 
   assert.deepEqual(planAuditRequest({nowMs:now,nextRequestAtMs:null,deadlineMs:now+1000,retryAfter:['3'] as unknown as string}),{status:'invalid_input'});
   assert.deepEqual(planAuditRequest({nowMs:8_640_000_000_000_000,nextRequestAtMs:null,deadlineMs:8_640_000_000_000_000}),{status:'cannot_fit',nextRequestAtMs:null,retryAfter:'absent'});
 });
+
+
+test('query opt-in preserves exact variants, query bases and fragment removal',()=>{
+ const queryBase=origin+'/Dir/page.html?from=base';
+ for(const [raw,url] of [
+  ['?b=2&a=1&a=3',origin+'/Dir/page.html?b=2&a=1&a=3'],
+  ['?',origin+'/Dir/page.html?'],
+  ['#section',queryBase],
+  ['/path?term=a+b&term=a%20b&escape=%2f#ignored',origin+'/path?term=a+b&term=a%20b&escape=%2f'],
+  ['/path%3Fpart?z=2',origin+'/path%3Fpart?z=2'],
+  ['child?q=1',origin+'/Dir/child?q=1'],
+ ])assert.deepEqual(resolveAuditCandidate(raw,queryBase,origin,true),{status:'accepted',url});
+ const variants=['/path','/path?','/path?a=1&b=2','/path?b=2&a=1','/path?a=1&a=2','/path?a=2&a=1','/path?term=a+b','/path?term=a%20b'];
+ assert.equal(new Set(variants.map(raw=>{const value=resolveAuditCandidate(raw,base,origin,true);assert.equal(value.status,'accepted');return value.status==='accepted'?value.url:null;})).size,variants.length);
+ for(const enabled of [undefined,false])assert.deepEqual(resolveAuditCandidate('/page?q=1',base,origin,enabled),{status:'excluded',reason:'query'});
+});
+
+test('query opt-in retains strict origins, public URLs, encoding and capacity validation',()=>{
+ for(const scope of [origin+'?',origin+'?q=1',origin+'/path','http://example.com','https://1.1.1.1'])assert.deepEqual(resolveAuditCandidate('/path?q=1',base,scope,true),{status:'excluded',reason:'invalid_scope'});
+ assert.deepEqual(resolveAuditCandidate('/path?q=1','https://other.com/?q=1',origin,true),{status:'excluded',reason:'invalid_base'});
+ for(const raw of ['https://other.com/?q=1','http://example.com/?q=1'])assert.deepEqual(resolveAuditCandidate(raw,base,origin,true),{status:'excluded',reason:'outside_origin'});
+ for(const raw of ['/path?q=%FF','/path?q=%','/path?q=%0a','/path?q=%5c','/path?q=\u0000','/path?q=\ud800','https://user@example.com/?q=1','https://127.0.0.1/?q=1','https://example.com:444/?q=1','/path?q='+ 'a'.repeat(2048)])assert.equal(resolveAuditCandidate(raw,base,origin,true).status,'excluded',raw);
+});
+
+test('query-aware robots redirects preserve policy origin and public syntax safeguards',()=>{
+ assert.deepEqual(resolveRobotsRedirect('https://other.com/policy?v=2&v=1#section',origin+'/robots.txt',origin,true),{status:'accepted',url:'https://other.com/policy?v=2&v=1',policyOrigin:origin});
+ assert.deepEqual(resolveRobotsRedirect('?','https://other.com/policy?v=2',origin,true),{status:'accepted',url:'https://other.com/policy?',policyOrigin:origin});
+ assert.deepEqual(resolveRobotsRedirect('?v=2',origin+'/robots.txt',origin),{status:'excluded',reason:'query'});
+ for(const raw of ['https://127.0.0.1/robots.txt?v=2','https://other.com/policy?v=%FF','https://name@other.com/policy?v=2'])assert.equal(resolveRobotsRedirect(raw,origin+'/robots.txt',origin,true).status,'excluded');
+ assert.deepEqual(resolveRobotsRedirect('?v=2',origin+'/robots.txt',origin+'?v=2',true),{status:'excluded',reason:'invalid_scope'});
+});

@@ -2,7 +2,7 @@ import {retentionCoverage} from './analytics-comparison.ts';
 import {z} from 'zod';
 import type {SessionPopulationQuery} from '../server/session-explorer-input.ts';
 import type {CohortReport,SessionPropertyScope} from '../server/analytics-population.ts';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 export const retentionOffsets=[1,2,3,4,5,6,7,14,21,28] as const;
 export const retentionReportVersion='observed-key-cohort-returns-v1';

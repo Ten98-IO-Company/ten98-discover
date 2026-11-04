@@ -66,7 +66,7 @@ test('UTF-8 split across chunks maps to each reader decode message',async()=>{
  const inspection=await load('components/GoogleInspectionPanel.tsx',['async function inspect('],['inspect']);
  const account=await (async()=>{
   let compiled=(await transformWithOxc(await readFile(src('lib/account-presentation.tsx'),'utf8'),'account-presentation.tsx',{jsx:{runtime:'automatic'}})).code;
-  for(const [specifier,target]of [['react',import.meta.resolve('react')],['react/jsx-runtime',import.meta.resolve('react/jsx-runtime')],['@ten98/runtime',import.meta.resolve('@ten98/runtime')],['./api',src('lib/api.ts').href],['./account-preferences',src('lib/account-preferences.ts').href]])compiled=compiled.replaceAll(JSON.stringify(specifier),JSON.stringify(target));
+  for(const [specifier,target]of [['react',import.meta.resolve('react')],['react/jsx-runtime',import.meta.resolve('react/jsx-runtime')],['@ten98/runtime/browser',import.meta.resolve('@ten98/runtime/browser')],['./api',src('lib/api.ts').href],['./account-preferences',src('lib/account-preferences.ts').href]])compiled=compiled.replaceAll(JSON.stringify(specifier),JSON.stringify(target));
   return import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
  })();
  // The split sequence is truncated at close, or by a '"' tail. A lossy decoder would turn the '"' tail into valid JSON

@@ -5,7 +5,7 @@ import {DataTable, useConfirmDialog,Disclosure,SegmentedControl,Tooltip,Field,In
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {emptyKeywordResultFilters,filterKeywordResults,type KeywordResultFilters} from '../lib/keyword-result-filters';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role=WorkspaceRole;
 type Mode='overview'|'ideas';

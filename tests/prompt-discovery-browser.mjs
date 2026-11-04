@@ -29,7 +29,7 @@ async function fresh(options={}){
   if(!path.startsWith('/api/')){if(request.method()!=='GET'){evidence.unexpected.push(request.method()+' '+path);save();return route.abort();}return route.continue();}
   const match=path.match(/^\/api\/projects\/([a-f0-9-]{36})\/(prompts(?:\/(?:bulk|[a-f0-9-]{36}\/(?:update|archive|restore|versions)))?|context|prompt-executions)$/);if(!match){evidence.unexpected.push(request.method()+' '+path);save();return route.abort();}
   const projectId=match[1],kind=match[2];assert.ok([P,P2].includes(projectId));const call={method:request.method(),projectId,kind,query:url.searchParams.toString(),raw:request.postData()};evidence.requests.push(call);assert.ok(evidence.requests.length<=250);save();
-  if(kind==='prompt-executions'){assert.equal(request.method(),'GET');assert.equal(url.search,'');return reply(route,{role:settings.role,models:[],connections:[],comparisons:[],vaultConfigured:false,spendingPaused:false,cache:{available:false}});}
+  if(kind==='prompt-executions'){assert.equal(request.method(),'GET');assert.equal(url.search,'');return reply(route,{role:settings.role,models:[],connections:[],comparisons:[],vaultConfigured:false,requestsPaused:false,cache:{available:false}});}
   if(kind.endsWith('/versions')){assert.equal(request.method(),'GET');assert.equal(url.search,'');return reply(route,{versions:settings.versions??[],nextCursor:null});}
   if(kind!=='prompts'&&kind!=='context'){
    assert.equal(request.method(),'POST');assert.equal(allowSave,true,'Only an explicit test Save/retry/action permits a POST');assert.equal(url.search,'');assert.ok(/^application\/json/.test(request.headers()['content-type']??''));const body=JSON.parse(call.raw);assert.match(body.requestId,/^[a-f0-9-]{36}$/);writes.push(call);

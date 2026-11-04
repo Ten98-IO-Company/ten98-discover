@@ -21,6 +21,7 @@ const settings={enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:30000
 // The blocked #private-zone text overflows 162px past its 40px box; in RTL that spill extends the recorded page LEFT of the plane while the
 // masked replay renders only the plane, so the RTL scenes exercise the player's extent restoration, LTR the natural-extent path.
 const scenes=[
+ {width:320,height:700,direction:'ltr',classic:false,gutter:false,expect:'error',reflow:true},
  {width:1440,height:900,direction:'rtl',classic:true,gutter:true,expect:'ready'},{width:320,height:700,direction:'ltr',classic:true,gutter:true,expect:'ready'},{width:320,height:700,direction:'rtl',classic:true,gutter:true,expect:'ready'},
  {width:1440,height:900,direction:'rtl',classic:false,gutter:true,expect:'error'},{width:1440,height:900,direction:'rtl',classic:false,gutter:false,expect:'ready'},{width:320,height:700,direction:'ltr',classic:false,gutter:false,expect:'ready'},
 ];
@@ -29,9 +30,11 @@ const started=Date.now(),budgetMs=180000;
 const wait=async(predicate,label)=>{const until=Date.now()+8000;while(!await predicate()){assert.ok(Date.now()<until&&Date.now()-started<budgetMs,label);await new Promise(r=>setTimeout(r,15));}};
 const settle=page=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
 let server,context,origin;const browsers={};
-const browserFor=async scene=>browsers[scene.classic]??=await (await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href)).launchChromium({...scene.classic?{ignoreDefaultArgs:['--hide-scrollbars']}:{},args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
-function recordHtml(direction,gutter){
- const css="html,body{margin:0;padding:0;scroll-behavior:auto;overscroll-behavior:none}"+(gutter?"html{scrollbar-gutter:stable}":"")+"#plane{position:relative;width:2400px;height:3000px;background:#e6eef1}#target{position:absolute;right:48px;bottom:48px;width:64px;height:64px;background:#057a65}#bulk{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;white-space:pre}#controls{position:fixed;top:8px;left:8px;z-index:20;display:flex;flex-direction:column;gap:4px}button{min-height:44px;max-width:104px}#private-zone{position:absolute;left:20px;top:100px;width:40px;height:40px}input{position:absolute;left:100px;top:100px;width:150px}";
+const browserFor=async scene=>browsers[scene.classic]??=await launchChromium({...scene.classic?{ignoreDefaultArgs:['--hide-scrollbars']}:{},args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+// Explicit control dimensions keep privacy masking from changing the fixed control layout.
+function recordHtml(direction,gutter,reflow){
+ let css="html,body{margin:0;padding:0;scroll-behavior:auto;overscroll-behavior:none}"+(gutter?"html{scrollbar-gutter:stable}":"")+"#plane{position:relative;width:2400px;height:3000px;background:#e6eef1}#target{position:absolute;right:48px;bottom:48px;width:64px;height:64px;background:#057a65}#bulk{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;white-space:pre}#controls{position:fixed;top:8px;left:8px;z-index:20;display:flex;flex-direction:column;gap:4px}button{width:104px;height:44px;min-height:44px;max-width:104px}#private-zone{position:absolute;left:20px;top:100px;width:40px;height:40px}input{position:absolute;left:100px;top:100px;width:150px}";
+ if(reflow)css+="#flow{margin:0;width:220px;font:20px/22px Arial;overflow-wrap:anywhere}#target{position:relative;right:auto;bottom:auto;margin:20px}";
  const script=[
   "window.nativeFacts={clicks:[]};",
   "const rectangle=node=>{const b=node.getBoundingClientRect();return{left:b.left,top:b.top,right:b.right,bottom:b.bottom,width:b.width,height:b.height};};",
@@ -40,7 +43,7 @@ function recordHtml(direction,gutter){
   "document.getElementById('grant').onclick=()=>choose(true,true);",
   "document.addEventListener('click',e=>{if(e.target.id==='target')window.nativeFacts.clicks.push({trusted:e.isTrusted,clientX:e.clientX,clientY:e.clientY,...facts()});},true);"
  ].join('\n');
- return '<!doctype html><html lang="en" dir="'+direction+'"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-'+nonce+'\'; style-src \'unsafe-inline\'; connect-src \'self\'; worker-src \'none\'; frame-src \'none\'; img-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'"><title>Classic scrollbar capture</title><style>'+css+'</style><body><div id="plane"><div id="target"></div><div id="bulk">'+secrets[0].repeat(2000)+'</div><input aria-label="Private fixture input" value="'+secrets[1]+'"><div id="private-zone">'+secrets[2]+'</div></div><div id="controls"><button id="grant">Grant both</button></div><script nonce="'+nonce+'">'+script+'</script><script nonce="'+nonce+'" referrerpolicy="no-referrer" src="/tracker.js" data-site-key="'+site+'" data-environment="live"></script></body></html>';
+ return '<!doctype html><html lang="en" dir="'+direction+'"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-'+nonce+'\'; style-src \'unsafe-inline\'; connect-src \'self\'; worker-src \'none\'; frame-src \'none\'; img-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'"><title>Classic scrollbar capture</title><style>'+css+'</style><body><div id="plane">'+(reflow?'<p id="flow">'+'W'.repeat(100)+'</p>':'')+'<div id="target"></div><div id="bulk">'+secrets[0].repeat(2000)+'</div><input aria-label="Private fixture input" value="'+secrets[1]+'"><div id="private-zone">'+secrets[2]+'</div></div><div id="controls"><button id="grant">Grant both</button></div><script nonce="'+nonce+'">'+script+'</script><script nonce="'+nonce+'" referrerpolicy="no-referrer" src="/tracker.js" data-site-key="'+site+'" data-environment="live"></script></body></html>';
 }
 function playerHtml(){
  // The inner document is the SessionReplayPanel player document with a fixed nonce.
@@ -78,14 +81,14 @@ async function fresh(scene){
   }catch(error){record.faults.push({name:error.name,message:error.message});save();await route.abort().catch(()=>{});}
  });
  const page=await context.newPage();page.on('pageerror',error=>{evidence.pageErrors.push({scene,message:error.message});save();});
- await page.goto(origin+recordPath+'?direction='+scene.direction+'&gutter='+(scene.gutter?'1':'0'),{waitUntil:'domcontentloaded'});
+ await page.goto(origin+recordPath+'?direction='+scene.direction+'&gutter='+(scene.gutter?'1':'0')+'&reflow='+(scene.reflow?'1':'0'),{waitUntil:'domcontentloaded'});
  await page.waitForFunction(site=>window.ten98?.destinationStatus?.({siteKey:site,environment:'live',collectorOrigin:location.origin}).ready,site);await settle(page);
  return{page,record,memory};
 }
 const pass=name=>{console.log('PASS '+name);};
 try{
  server=await createServer({configFile:false,root,cacheDir:resolve(out,'vite-cache'),appType:'custom',publicDir:false,optimizeDeps:{noDiscovery:true,include:[]},server:{fs:{strict:true,allow:[]},host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
- server.middlewares.use((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');res.setHeader('cache-control','no-store');if(url.pathname==='/favicon.ico'){res.statusCode=204;res.end();return;}if(['/tracker.js','/destinations.js','/replay.js'].includes(url.pathname)){res.setHeader('content-type','text/javascript; charset=utf-8');res.end(readFileSync(resolve(root,'public'+url.pathname)));return;}if(url.pathname===recordPath||url.pathname===playerPath){res.setHeader('content-type','text/html; charset=utf-8');res.end(url.pathname===recordPath?recordHtml(['ltr','rtl'].includes(url.searchParams.get('direction'))?url.searchParams.get('direction'):'ltr',url.searchParams.get('gutter')==='1'):playerHtml());return;}res.statusCode=404;res.end();});
+ server.middlewares.use((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');res.setHeader('cache-control','no-store');if(url.pathname==='/favicon.ico'){res.statusCode=204;res.end();return;}if(['/tracker.js','/destinations.js','/replay.js'].includes(url.pathname)){res.setHeader('content-type','text/javascript; charset=utf-8');res.end(readFileSync(resolve(root,'public'+url.pathname)));return;}if(url.pathname===recordPath||url.pathname===playerPath){res.setHeader('content-type','text/html; charset=utf-8');res.end(url.pathname===recordPath?recordHtml(['ltr','rtl'].includes(url.searchParams.get('direction'))?url.searchParams.get('direction'):'ltr',url.searchParams.get('gutter')==='1',url.searchParams.get('reflow')==='1'):playerHtml());return;}res.statusCode=404;res.end();});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
  for(const scene of scenes){
   const {page,record,memory}=await fresh(scene);
@@ -102,6 +105,8 @@ try{
   assert.deepEqual(background.geometry,native.geometry);
   const reconstructed=reassembleReplay(memory.parts);assert.deepEqual(reconstructed.missingFragments,[]);assert.ok(secrets.every(s=>!JSON.stringify(reconstructed.events).includes(s)));
   const meta=reconstructed.events.find(e=>eventSha(e)===background.meta.eventSha256),snapshot=reconstructed.events.find(e=>eventSha(e)===background.snapshot.eventSha256);
+  assert.equal(snapshot?.data.ten98Layout?.version,1,'The real recorder must capture bounded snapshot layout evidence');
+  assert.ok(snapshot.data.ten98Layout.boxes.length>0);
   assert.equal(meta?.type,4);assert.equal(snapshot?.type,2);assert.equal(meta.data.width,native.innerWidth);assert.equal(meta.data.height,native.innerHeight);
   record.recording={geometry:native.geometry,point:{x:point.x,y:point.y},meta:{width:meta.data.width,height:meta.data.height},chunks:memory.chunks};save();
   await page.close();
@@ -109,7 +114,13 @@ try{
   await player.evaluate(value=>window.mount(value),{events:[meta,snapshot],heatmap:{mode:'click',geometry:background.geometry,points:[{x:point.x,y:point.y,count:1}]}});
   await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'||m.type==='error'));
   const messages=await player.evaluate(()=>window.messages);record.messages=messages;save();
-  if(scene.expect==='error'){assert.deepEqual(messages[0],{type:'error',message:'This recording could not be played safely.'},'A gutter reserved behind hidden scrollbars narrows the frame block and must fail closed');await player.waitForFunction(()=>!document.querySelector('.replayer-wrapper'));const facts=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>({wrapper:document.querySelectorAll('.replayer-wrapper').length,svg:document.querySelectorAll('svg').length}));record.alignment=facts;assert.deepEqual(facts,{wrapper:0,svg:0},'A refused sample leaves no frame or plane behind');assert.deepEqual(record.faults,[]);await context.close();context=null;record.closed=true;save();pass((scene.classic?'CLASSIC ':'OVERLAY ')+scene.width+'x'+scene.height+' '+scene.direction+(scene.gutter?' gutter':' plain')+': refused (block narrower than the recorded viewport), no plane painted');continue;}
+  if(scene.expect==='error'){assert.deepEqual(messages[0],{type:'error',message:'This recording could not be played safely.'},'A gutter reserved behind hidden scrollbars narrows the frame block and must fail closed');await player.waitForFunction(()=>!document.querySelector('.replayer-wrapper'));const facts=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>({wrapper:document.querySelectorAll('.replayer-wrapper').length,svg:document.querySelectorAll('svg').length}));record.alignment=facts;assert.deepEqual(facts,{wrapper:0,svg:0},'A refused sample leaves no frame or plane behind');
+   if(scene.reflow){
+    await player.evaluate(value=>window.mount(value),{events:[meta,snapshot]});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));
+    const replayTop=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>{const f=document.querySelector('iframe'),r=f.contentDocument.getElementById('target').getBoundingClientRect();return r.top+f.contentWindow.scrollY;});
+    record.maskedReflowDelta=replayTop-(native.target.top+native.scrollY);assert.ok(Math.abs(record.maskedReflowDelta)>1,'Real privacy masking must change the target location despite unchanged outer extent');
+   }
+   assert.deepEqual(record.faults,[]);await context.close();context=null;record.closed=true;save();pass((scene.classic?'CLASSIC ':'OVERLAY ')+scene.width+'x'+scene.height+' '+scene.direction+(scene.gutter?' gutter':' plain')+': refused (block narrower than the recorded viewport), no plane painted');continue;}
   assert.deepEqual(messages[0],{type:'ready',duration:snapshot.timestamp-meta.timestamp},'The sample must be playable');
   const outer=player.frames().find(frame=>frame.url().startsWith('data:'));assert.ok(outer);
   const g=background.geometry,corner={x:g.pageWidth-g.viewportWidth,y:g.pageHeight-g.viewportHeight};
@@ -132,10 +143,29 @@ try{
   await outer.evaluate(()=>{const plane=document.querySelector('iframe').contentDocument.getElementById('plane');plane.style.height=String(plane.clientHeight-100)+'px';});
   await player.waitForFunction(()=>window.messages.some(m=>m.type==='error'));assert.equal(await outer.locator('.replayer-wrapper').count(),0,'Natural shrink must destroy the preview');
   record.shrinkRejected=true;
+  // A fully bound root extent does not prove that masking retained the interior layout.
+  const changed=structuredClone(snapshot);changed.data.ten98Layout.boxes.find(b=>b.length===5)[2]+=22;
+  const variants=[['reflow',changed],['legacy',structuredClone(snapshot)],['duplicate',structuredClone(snapshot)],['foreign',structuredClone(snapshot)],['missing',structuredClone(snapshot)]];
+  delete variants[1][1].data.ten98Layout;
+  variants[2][1].data.ten98Layout.boxes.push([...variants[2][1].data.ten98Layout.boxes[0]]);
+  variants[3][1].data.ten98Layout.boxes[0][0]=999999;
+  variants[4][1].data.ten98Layout.boxes.pop();
+  for(const [name,variant]of variants){
+   await player.evaluate(value=>window.mount(value),{events:[meta,variant],heatmap:{mode:'click',geometry:g,points:[{x:point.x,y:point.y,count:1}]}});
+   await player.waitForFunction(()=>window.messages.some(m=>m.type==='error'));assert.equal(await player.evaluate(()=>window.messages.some(m=>m.type==='ready')),false,name+' must refuse the background');
+   if(name==='legacy'||name==='foreign'){await player.evaluate(value=>window.mount(value),{events:[meta,variant]});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));}
+  }
+  record.layoutNegativeCases=variants.map(([name])=>name);
+  if(scene.direction==='ltr'){
+   await player.evaluate(value=>window.mount(value),{events:[meta,snapshot],heatmap:{mode:'click',geometry:g,points:[{x:point.x,y:point.y,count:1}]}});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));
+   await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>{const d=document.querySelector('iframe').contentDocument,e=d.createElement('div');e.style.cssText='position:absolute;left:100px;top:100px;width:10px;height:10px';d.body.appendChild(e);});
+   await player.waitForFunction(()=>window.messages.some(m=>m.type==='error'));record.exactInsertionRejected=true;
+  }
+
   const screenshot=resolve(out,(scene.classic?'classic-':'overlay-')+(scene.gutter?'gutter-':'plain-')+scene.width+'-'+scene.direction+'.png');await player.screenshot({path:screenshot});record.screenshot=screenshot;
   assert.deepEqual(record.faults,[]);await context.close();context=null;record.closed=true;save();
   pass((scene.classic?'CLASSIC ':'OVERLAY ')+scene.width+'x'+scene.height+' '+scene.direction+(scene.gutter?' gutter':' plain')+': recorded viewport '+native.geometry.viewportWidth+'x'+native.geometry.viewportHeight+' page '+native.geometry.pageWidth+'x'+native.geometry.pageHeight+', in-frame viewport origin x='+measure.originX+', marker '+(measure.marker?'installed':'not needed')+', delta '+measure.deltaX.toFixed(3)+'/'+measure.deltaY.toFixed(3)+' px');
  }
- assert.equal(evidence.scenes.length,6);assert.ok(evidence.scenes.every(s=>s.closed));assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);assert.ok(Date.now()-started<budgetMs);evidence.phase='passed';
+ assert.equal(evidence.scenes.length,7);assert.ok(evidence.scenes.flatMap(s=>s.api).length<=100);assert.ok(evidence.scenes.every(s=>s.closed));assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);assert.ok(Date.now()-started<budgetMs);evidence.phase='passed';
 }catch(error){evidence.phase='failed';evidence.failure={name:error.name,message:error.message,stack:error.stack};throw error;}
 finally{try{await context?.close();}catch(error){evidence.cleanup.push('context:'+error.name);}for(const b of Object.values(browsers)){try{await b?.close();}catch(error){evidence.cleanup.push('browser:'+error.name);}}try{await server?.close();}catch(error){evidence.cleanup.push('server:'+error.name);}evidence.elapsedMs=Date.now()-started;if(evidence.cleanup.length)evidence.phase='failed';save();console.log('evidence '+out+'/evidence.json '+evidence.phase+' '+evidence.elapsedMs+'ms');}

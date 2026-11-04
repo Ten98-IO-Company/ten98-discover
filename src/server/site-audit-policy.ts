@@ -6,7 +6,7 @@ const URL_LIMIT=2048, HEADER_LIMIT=16384, DATE_LIMIT=8_640_000_000_000_000;
 export type AuditExclusion='invalid_scope'|'invalid_base'|'invalid_input'|'too_long'|'invalid_unicode'|'invalid_characters'|'invalid_percent_encoding'|'userinfo'|'query'|'blocked_url'|'outside_origin';
 export type AuditCandidate={status:'accepted';url:string}|{status:'excluded';reason:AuditExclusion};
 
-function syntaxIssue(raw:unknown):AuditExclusion|null {
+function syntaxIssue(raw:unknown,includeQueryUrls=false):AuditExclusion|null {
   if(typeof raw!=='string'||!raw)return 'invalid_input';
   if(raw.length>URL_LIMIT||Buffer.byteLength(raw)>URL_LIMIT)return 'too_long';
   if(toUSVString(raw)!==raw)return 'invalid_unicode';
@@ -16,11 +16,11 @@ function syntaxIssue(raw:unknown):AuditExclusion|null {
   if(/[\p{Cc}\\]/u.test(decoded))return 'invalid_characters';
   const authority=/^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#]*)/i.exec(raw)?.[1];
   if(authority?.includes('@'))return 'userinfo';
-  if(raw.split('#',1)[0].includes('?'))return 'query';
+  if(!includeQueryUrls&&raw.split('#',1)[0].includes('?'))return 'query';
   return null;
 }
-function publicUrl(raw:string,base?:URL):URL|null {
-  if(syntaxIssue(raw))return null;
+function publicUrl(raw:string,base?:URL,includeQueryUrls=false):URL|null {
+  if(syntaxIssue(raw,includeQueryUrls))return null;
   try{return redirectUrl(raw,base);}catch{return null;}
 }
 function scopeOrigin(raw:string):URL|null {
@@ -28,26 +28,26 @@ function scopeOrigin(raw:string):URL|null {
   return url&&url.protocol==='https:'&&url.origin===raw&&!isIP(url.hostname.replace(/^\[|\]$/g,''))?url:null;
 }
 /** Admission is not authority, robots permission or DNS validation. All are rechecked by the worker. */
-export function resolveAuditCandidate(raw:string,baseUrl:string,origin:string):AuditCandidate {
+export function resolveAuditCandidate(raw:string,baseUrl:string,origin:string,includeQueryUrls=false):AuditCandidate {
   const scope=scopeOrigin(origin);
   if(!scope)return {status:'excluded',reason:'invalid_scope'};
-  const base=publicUrl(baseUrl);
+  const base=publicUrl(baseUrl,undefined,includeQueryUrls);
   if(!base||base.origin!==scope.origin)return {status:'excluded',reason:'invalid_base'};
-  const issue=syntaxIssue(raw);
+  const issue=syntaxIssue(raw,includeQueryUrls);
   if(issue)return {status:'excluded',reason:issue};
-  const url=publicUrl(raw,base);
+  const url=publicUrl(raw,base,includeQueryUrls);
   if(!url)return {status:'excluded',reason:'blocked_url'};
   if(url.origin!==scope.origin)return {status:'excluded',reason:'outside_origin'};
   return {status:'accepted',url:url.href};
 }
 /** The returned policyOrigin stays fixed even when a robots redirect crosses origins. */
-export function resolveRobotsRedirect(raw:string,currentUrl:string,policyOrigin:string):{status:'accepted';url:string;policyOrigin:string}|{status:'excluded';reason:AuditExclusion} {
+export function resolveRobotsRedirect(raw:string,currentUrl:string,policyOrigin:string,includeQueryUrls=false):{status:'accepted';url:string;policyOrigin:string}|{status:'excluded';reason:AuditExclusion} {
   if(!scopeOrigin(policyOrigin))return {status:'excluded',reason:'invalid_scope'};
-  const base=publicUrl(currentUrl);
+  const base=publicUrl(currentUrl,undefined,includeQueryUrls);
   if(!base)return {status:'excluded',reason:'invalid_base'};
-  const issue=syntaxIssue(raw);
+  const issue=syntaxIssue(raw,includeQueryUrls);
   if(issue)return {status:'excluded',reason:issue};
-  const url=publicUrl(raw,base);
+  const url=publicUrl(raw,base,includeQueryUrls);
   return url?{status:'accepted',url:url.href,policyOrigin}:{status:'excluded',reason:'blocked_url'};
 }
 

@@ -9,7 +9,7 @@ import {AIQueryAnalysisPanel,readAISearch} from './AIQueryAnalysisPanel';
 import {AIContentCoveragePanel} from './AIContentCoveragePanel';
 import {AIContentSupportPanel} from './AIContentSupportPanel';
 import './ai-search.css';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 const roleSchema=z.enum(workspaceRoles),iso=z.iso.datetime(),uuid=z.uuid(),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const clean=(v:string)=>Array.from(v).every(c=>{const n=c.codePointAt(0)!;return n<0xd800||n>0xdfff;})&&!v.includes('\0');

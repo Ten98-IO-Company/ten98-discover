@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {contentSupportContract,contentSupportPrepareInputSchema,contentSupportPreparationDtoSchema,contentSupportRunDtoSchema,type ContentSupportPrepareInput,type ContentSupportPreparationDto,type ContentSupportRunDto} from '../lib/ai-content-support.ts';
 import {contentCoverageReportSchema,projectContentCoverageReportSchema,type ContentCoverageReport,type ProjectContentCoverageReport} from '../lib/ai-content-coverage.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 export type SupportRole=ContentSupportRunDto['role'];
 export type SupportSourceReport=ContentCoverageReport|ProjectContentCoverageReport;
