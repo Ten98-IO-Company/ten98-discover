@@ -90,6 +90,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   component('tests/library-flow-adapters-browser.mjs'),
   component('tests/openrouter-models-browser.mjs', ['TEN98_MODELS_BROWSER']),
   component('tests/password-recovery-browser.mjs', ['TEN98_PASSWORD_RECOVERY_BROWSER']),
+  component('tests/privacy-settings-browser.ts', ['TEN98_PRIVACY_BROWSER']),
   component('tests/project-delete-browser.mjs', ['TEN98_PROJECT_DELETE_BROWSER']),
   component('tests/prompt-discovery-browser.mjs', ['TEN98_PROMPT_DISCOVERY_BROWSER']),
   component('tests/prompt-receipt-browser.mjs', ['TEN98_PROMPT_RECEIPT_BROWSER']),
