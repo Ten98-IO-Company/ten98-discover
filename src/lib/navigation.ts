@@ -119,7 +119,17 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & AIInsightsNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation
+export type PromptNavigation={promptView?:'history'|'run';promptRun?:string;promptId?:string;promptInvalid?:'1'};
+export function promptNavigation(raw:Record<string,unknown>):PromptNavigation{
+ const names=['promptView','promptRun','promptId','promptInvalid'];
+ if(!names.some(name=>raw[name]!==undefined))return{};
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.promptInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return{promptInvalid:'1'};
+ if(raw.promptView==='history'&&raw.promptRun===undefined&&raw.promptId===undefined)return{promptView:'history'};
+ if(raw.promptView==='run'&&navigationId(raw.promptRun)&&navigationId(raw.promptId))return{promptView:'run',promptRun:raw.promptRun.toLowerCase(),promptId:raw.promptId.toLowerCase()};
+ return{promptInvalid:'1'};
+}
+
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1'; provider?: ProviderIntent } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & AIInsightsNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation & PromptNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -227,6 +237,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='journeys'?journeysNavigation(raw):{}),
     ...(view==='revenue'?revenueNavigation(raw):{}),
     ...(view==='ai-search'?aiSearchNavigation(raw):{}),
+    ...(view==='prompts'?promptNavigation(raw):{}),
     ...(view==='ai-insights'?aiInsightsNavigation(raw):{}),
     ...(view==='attribution'?attributionNavigation(raw):{}),
     ...(view==='explore'?explorerNavigation(raw):{}),
@@ -251,7 +262,7 @@ export function resolveNavigation(requested:NavigationSearch,workspace:string|un
 
 export function navigationKey(search: NavigationSearch): string {
   if(search.view==='links'||search.view==='pixels')return `${search.workspace??''}:${search.view}:${JSON.stringify(trackedAssetNavigation(search))}`;
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='ai-insights'?':'+JSON.stringify(aiInsightsNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='prompts'?':'+JSON.stringify(promptNavigation(search)):search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='ai-insights'?':'+JSON.stringify(aiInsightsNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
