@@ -200,7 +200,7 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
         onChange={(event) => onChange({ ...form, consent:event.target.checked })} />
        <span>I approve recurring checks for this saved tracker until paused or its approval changes.</span>
       </label>
-      <p className="hint" id={idPrefix + 'approve-hint'}>Future runs use this saved scope . This tracker waits while its own check is active or unresolved. The workspace emergency pause still applies. Enabling the schedule does not run a check immediately.</p>
+      <p className="hint" id={idPrefix + 'approve-hint'}>Future runs use this saved scope. A scheduled check is skipped while another check is active for this tracker. Unknown outcomes stay on their original requests for separate recovery and are never automatically replayed; later independent scheduled checks can continue. The workspace emergency pause still applies. Enabling the schedule does not run a check immediately.</p>
       <button type="button" className="btn primary" onClick={onApprove} disabled={!canApprove || locked || busy} aria-describedby={idPrefix + 'approve-hint'}>Approve schedule</button>
      </form>
     </>
