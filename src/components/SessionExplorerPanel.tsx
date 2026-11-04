@@ -8,7 +8,7 @@ import {readSessionResponse,readLinkedActivityResponse,sessionParams} from '../l
 import {formatRelativeInstant} from '../lib/report-time';
 import type {SessionList,SessionDetail,SessionReadMeta,SessionRow,LinkedActivity} from '../server/session-explorer-input';
 import {initialDraft,patchLocationFilters,ExactFilterControls,AdvancedControls,AdvancedSummary,SessionStatus,focusAdvanced,draftFilterQuery,sameDefinition,readAdvanced,savedPredicates,validSaved,validCohort,record,clean,num,KINDS,TIMEZONES,type Draft,type SavedFilter,type CohortRef} from './ExplorerFilters';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 import {Alert,Badge,Button,Card,DataTable,DescriptionList,Disclosure,EmptyState,Field,Fieldset,FormActions,FormGrid,Heading,Icon,Inline,Input,Pager,Select,Stack,StatusLine,Text,VisuallyHidden,type DataColumn} from '@ten98/ui';
 
 type Props={projectId:string;userId:string;search:NavigationSearch;onNavigate:(value:SessionNavigation)=>void;onUnauthorized:()=>void};

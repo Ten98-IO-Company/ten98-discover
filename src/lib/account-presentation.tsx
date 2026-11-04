@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {createContext,useContext} from 'react';
 import {ApiError} from './api';
 import {accountPreferencesWireDtoSchema,type AccountPreferencesDto} from './account-preferences';

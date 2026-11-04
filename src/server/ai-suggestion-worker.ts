@@ -6,7 +6,9 @@ import {getDatabase} from './db.ts';
 import {parse,canonicalHash} from './context-input.ts';
 import {contentReceipt,withContentProject} from './project-context.ts';
 import {dispatchRequest,settleRequest} from './provider-requests.ts';
-import {keyFingerprint,readSuggestionRoute,executionRequestBody,requestSuggestionExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
+import {keyFingerprint,readAnalysisRoute,requestAnalysisExecution,readSuggestionRoute,executionRequestBody,requestSuggestionExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
+import {analysisPurpose,analysisOutputTokens,analysisStartInput,parseAnalysisProposal,type AnalysisSnapshot} from './site-analysis-input.ts';
+import {assertSiteAnalysisDispatch,identifyAnalysisProposal} from './site-analysis.ts';
 import {parseSuggestionProposal,suggestionActionInput,suggestionQuoteInput,suggestionModel,type SuggestionSnapshot} from './ai-suggestion-input.ts';
 import {suggestionQueue,suggestionSelect,suggestionConnection,suggestionCredentials,assertSuggestionSnapshot,withSuggestionRun,getAiSuggestion} from './ai-suggestions.ts';
 
@@ -22,7 +24,10 @@ async function finish(id:string,owner:string,outcome:ExecutionOutcome,crashOnly=
  let proposal=null,diagnostic=outcome.diagnostic,raw:string|null=null;
  if(!row.result_expired&&!row.input_expired&&outcome.result){
   raw=outcome.result.text;
-  if(outcome.result.finishReason==='stop')try{const value=parseSuggestionProposal(raw,row.snapshot as SuggestionSnapshot);proposal={...value,prompts:value.prompts.map(p=>({id:randomUUID(),...p}))};}
+  if(outcome.result.finishReason==='stop')try{
+   if(row.purpose==='site-analysis')proposal=identifyAnalysisProposal(parseAnalysisProposal(raw,row.snapshot as AnalysisSnapshot));
+   else{const value=parseSuggestionProposal(raw,row.snapshot as SuggestionSnapshot);proposal={...value,prompts:value.prompts.map(p=>({id:randomUUID(),...p}))};}
+  }
   catch{diagnostic??='The proposal did not pass validation. No prompts were saved.';}
   else diagnostic??='The provider did not return a complete suggestion proposal.';
  }
@@ -42,21 +47,22 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
  try{
   if(captured.request_version!==1||captured.quote_expired)throw new FoundationError(409,'The suggestion preparation expired. Prepare the request again.');
   if(captured.input_expired)throw new FoundationError(409,'The captured input expired.');
-  const input=parse(suggestionQuoteInput,captured.input);
+  const analysisInput=captured.purpose==='site-analysis'?parse(analysisStartInput,captured.input):null;
+  const input=analysisInput?null:parse(suggestionQuoteInput,captured.input);
   const credentials=await withContentProject(captured.project_id,captured.user_id,true,async(client,p)=>{
    if(p.role!=='owner')throw new FoundationError(403,'The evaluation owner is unavailable.');
    return suggestionCredentials(await suggestionConnection(client,captured.workspace_id,captured.connection_id,captured.connection_revision));
   });
   if(keyFingerprint(credentials)!==captured.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-  executionRequestBody(captured.messages,captured.route,2048,id,captured.request_actor,true);
-  const fresh=await readSuggestionRoute(credentials,suggestionModel(input),send,captured.route.profile,captured.route.profile?captured.route.tag:undefined);
+  executionRequestBody(captured.messages,captured.route,analysisInput?analysisOutputTokens:2048,id,captured.request_actor,analysisInput?analysisPurpose:true);
+  const fresh=analysisInput?await readAnalysisRoute(credentials,analysisInput.model,send,captured.route.tag):await readSuggestionRoute(credentials,suggestionModel(input!),send,captured.route.profile,captured.route.profile?captured.route.tag:undefined);
   if(canonicalHash(fresh)!==canonicalHash(captured.route))throw new FoundationError(409,'Endpoint identity or capacity changed.');
   await dispatchRequest(captured.workspace_id,captured.user_id,id,async(client)=>{
    await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[captured.project_id]);
    const row=(await client.query(suggestionSelect+' WHERE r.id=$1',[id])).rows[0];
    const member=(await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[row.workspace_id,row.user_id])).rows[0];
    if(member?.role!=='owner'||row.status!=='queued'||row.lease_owner!==owner||row.lease_expires_at.getTime()<=Date.now()||row.input_expired||row.request_version!==1)throw new FoundationError(409,'Suggestion authority changed before dispatch.');
-   await assertSuggestionSnapshot(client,row.project_id,input,row.snapshot_hash);
+   if(analysisInput)await assertSiteAnalysisDispatch(client,row);else await assertSuggestionSnapshot(client,row.project_id,input!,row.snapshot_hash);
    secret=suggestionCredentials(await suggestionConnection(client,row.workspace_id,row.connection_id,row.connection_revision));if(keyFingerprint(secret)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
    const dispatched=(await client.query(`UPDATE ai_suggestion_run SET status='running',dispatched_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1
     AND EXISTS(SELECT 1 FROM ai_suggestion_quote q WHERE q.id=ai_suggestion_run.quote_id AND q.request_version=1 AND q.expires_at>clock_timestamp()) RETURNING dispatched_at`,[id])).rows[0];
@@ -64,7 +70,8 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
    dispatchedAt=dispatched.dispatched_at;
   });
  }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: preparation expiry, permissions, context, credentials, endpoint, the provider-request pause changed. Prepare the request again.');});return;}
- const outcome=await requestSuggestionExecution(secret,captured.messages,captured.route,id,captured.request_actor,dispatchedAt!,async generation=>{
+ const execute=captured.purpose==='site-analysis'?requestAnalysisExecution:requestSuggestionExecution;
+ const outcome=await execute(secret,captured.messages,captured.route,id,captured.request_actor,dispatchedAt!,async generation=>{
   await withSuggestionRun(id,async(client,row)=>{
    if(row.lease_owner!==owner||!['dispatched','uncertain'].includes(row.request_status)||row.generation_id&&row.generation_id!==generation)throw new Error('Suggestion receipt changed.');
    await client.query('UPDATE ai_suggestion_run SET generation_id=$2 WHERE id=$1',[id,generation]);
@@ -73,12 +80,12 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
  await finish(id,owner,outcome);
 }
 
-export async function recoverAiSuggestion(projectId:string,userId:string,id:string,raw:unknown,send:typeof fetch=fetch){
+export async function recoverSuggestionRequest(projectId:string,userId:string,id:string,raw:unknown,purpose:'prompt'|'site-analysis',send:typeof fetch=fetch){
  parse(z.uuid(),id);const input=parse(suggestionActionInput,raw),receiptBody={userId,id,input};
  const saved=await withContentProject(projectId,userId,true,async(client,p)=>{
   if(p.role!=='owner')throw new FoundationError(403,'Only an owner can check an original suggestion request.');
   const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.recover',receiptBody);if(receipt.replayed)return {replayed:true as const};
-  const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,p.id])).rows[0];if(!row)throw new FoundationError(404,'Suggestion not found or unavailable.');
+  const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2 AND r.purpose=$3',[id,p.id,purpose])).rows[0];if(!row)throw new FoundationError(404,'Suggestion not found or unavailable.');
   if(row.request_status!=='uncertain'||!row.generation_id||!row.dispatched_at)throw new FoundationError(409,'No recoverable generation receipt is available.');
   const conn=await suggestionConnection(client,row.workspace_id,row.connection_id),credentials=suggestionCredentials(conn);
   if(keyFingerprint(credentials)!==row.key_fingerprint)throw new FoundationError(409,'Recovery requires the original key identity.');
@@ -90,7 +97,7 @@ export async function recoverAiSuggestion(projectId:string,userId:string,id:stri
    if(p.role!=='owner')throw new FoundationError(403,'Owner access changed.');
    const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.recover',receiptBody);if(receipt.replayed)return;
    const conn=await suggestionConnection(client,saved.row.workspace_id,saved.row.connection_id,saved.revision);if(keyFingerprint(suggestionCredentials(conn))!==saved.row.key_fingerprint)throw new FoundationError(409,'The key changed during recovery.');
-   const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,p.id])).rows[0];
+   const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2 AND r.purpose=$3',[id,p.id,purpose])).rows[0];
    if(row.request_status!=='uncertain'||row.generation_id!==outcome.reference)throw new FoundationError(409,'The receipt changed. Reload this suggestion.');
    const settled=await settleRequest(client,row.workspace_id,id,{known:outcome.known,providerReference:outcome.reference});
    await client.query('UPDATE ai_suggestion_run SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',
@@ -98,7 +105,11 @@ export async function recoverAiSuggestion(projectId:string,userId:string,id:stri
    await receipt.save({id});
   });
  }
- return {...await getAiSuggestion(projectId,userId,id),acknowledgement:{requestId:input.requestId,runId:id,operation:'recover' as const},replayed:saved.replayed};
+ return {acknowledgement:{requestId:input.requestId,runId:id,operation:'recover' as const},replayed:saved.replayed};
+}
+export async function recoverAiSuggestion(projectId:string,userId:string,id:string,raw:unknown,send:typeof fetch=fetch){
+ const result=await recoverSuggestionRequest(projectId,userId,id,raw,'prompt',send);
+ return {...await getAiSuggestion(projectId,userId,id),...result};
 }
 export async function reconcileAiSuggestionJobs(){
  const rows=(await getDatabase().pool.query(`SELECT r.id FROM ai_suggestion_run r LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$1

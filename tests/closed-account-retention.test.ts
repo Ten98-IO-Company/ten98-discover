@@ -18,7 +18,8 @@ const notAccountIds: ReadonlyMap<string, string> = new Map([
   'prompt_execution_quote.request_actor', 'ai_suggestion_quote.request_actor', 'ai_content_support_quote.request_actor',
 ].map(column => [column, 'A 64-character hex binding of the requesting actor, not an account id.']));
 /** Live workspace rows that reference an aged-out table without being aged out themselves: they keep the row. */
-const reviewedBlockers = ['rank_keyword', 'saved_keyword'];
+// Analysis history keeps its original AI request link while the workspace owns that history.
+const reviewedBlockers = ['rank_keyword', 'saved_keyword', 'site_analysis_run'];
 
 const foreignKeys = (schema: MigrationSchema, table: string) => new Set([...schema.get(table)?.values() ?? []].flatMap(column => column.foreignKeys));
 
@@ -80,6 +81,23 @@ test('ledger dependents hang off a financial row and the aged-out graph has only
     if (!names.has(table)) outside.add(table);
   }
   assert.deepEqual([...outside].sort(), reviewedBlockers, 'A new table references an aged-out table. Classify it, make it a ledger dependent or review it as a blocker.');
+});
+
+test('workspace-owned site analysis preserves its original AI request when closed-account records age out', () => {
+  const entry = accountClosureInventory.find(item => item.table === 'site_analysis_run')!;
+  assert.equal(entry.rule, 'keep');
+  assert.equal(entry.retention?.class, 'workspace');
+  assert.deepEqual(entry.retention?.accountColumns, ['user_id']);
+  const targets = retentionTargets();
+  assert.ok(!targets.some(target => target.table === entry.table));
+  const key = [...foreignKeys(readMigrationSchema(), entry.table)].find(item => item.table === 'ai_suggestion_run')!;
+  assert.deepEqual(key.columns, ['ai_run_id']);
+  assert.equal(key.onDelete, 'SET NULL');
+  const prune = pruneSql(targets, [{ child: entry.table, childColumns: key.columns, parent: key.table, parentColumns: ['id'] }]);
+  assert.equal(prune.length, 1);
+  assert.ok(prune[0].includes("x.tbl='ai_suggestion_run'"));
+  assert.ok(prune[0].includes('FROM "site_analysis_run" c WHERE c."ai_run_id"=p."id"'));
+  assert.ok(!prune[0].includes("k.tbl='site_analysis_run'"), 'Workspace history protects the original request regardless of its age.');
 });
 
 /** Tables whose migrated DDL allows an 'uncertain' status or phase. */

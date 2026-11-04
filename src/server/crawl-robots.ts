@@ -117,7 +117,7 @@ export function evaluateRobotsPolicy(policy:RobotsPolicy,targetUrl:string,option
   const capacity=options.maxCrawlDelaySeconds??0;
   if(!Number.isFinite(capacity)||capacity<0)return result('unavailable','invalid_delay_capacity');
   if((policy.crawlDelaySeconds??0)>capacity)return result('unavailable','crawl_delay_not_supported');
-  const path=canonical(target.pathname+target.search,false);
+  const path=canonical(target.href.slice(target.origin.length).split('#',1)[0],false);
   if(path===null)return result('unavailable','invalid_target_encoding');
   if(path==='/robots.txt')return result('allowed','implicit_robots');
   let best:Rule|undefined;

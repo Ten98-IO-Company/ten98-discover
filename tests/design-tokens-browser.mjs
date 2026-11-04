@@ -23,7 +23,7 @@ const fixed={
  'font-sans':'"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif','font-heading':'"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif','font-mono':'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
  'text-xs':'0.75rem','text-sm':'0.8125rem','text-md':'0.875rem','text-lg':'1rem','text-xl':'1.25rem','text-2xl':'1.5rem','text-metric':'1.75rem','leading-tight':'1.25','leading-normal':'1.5','leading-relaxed':'1.6','weight-normal':'400','weight-medium':'500','weight-semibold':'600','weight-bold':'600',
  'space-0':'0','space-1':'0.25rem','space-2':'0.5rem','space-3':'0.75rem','space-4':'1rem','space-5':'1.25rem','space-6':'1.5rem','space-8':'2rem','space-10':'2.5rem','space-12':'3rem','radius-sm':'0.25rem','radius-md':'0.375rem','radius-lg':'0.625rem','radius-pill':'999px','border-width':'1px','focus-width':'2px','focus-offset':'2px',
- 'sidebar-width':'14.5rem','topbar-height':'3.5rem','content-max':'90rem','form-max':'42rem','auth-max':'28rem','reading-max':'70ch','control-sm':'2rem','control-md':'2.25rem','control-touch':'2.75rem','icon-sm':'1rem','icon-md':'1.25rem','z-sticky':'10','z-popover':'20','z-dialog':'30','shadow-panel':'none','motion-fast':'100ms','motion-normal':'150ms','ease-standard':'cubic-bezier(0.2, 0, 0, 1)',
+ 'sidebar-width':'14.5rem','topbar-height':'3.5rem','content-max':'90rem','form-max':'42rem','auth-max':'28rem','reading-max':'70ch','control-sm':'2rem','control-md':'2.25rem','control-touch':'max(44px, 2.75rem)','icon-sm':'1rem','icon-md':'1.25rem','z-sticky':'10','z-popover':'20','z-dialog':'30','shadow-panel':'none','motion-fast':'100ms','motion-normal':'150ms','ease-standard':'cubic-bezier(0.2, 0, 0, 1)',
 };
 // @ten98/ui tokens.css overrides the popover and dialog shadows in dark scopes, so they pair per mode like the colours.
 const shadows={
@@ -63,7 +63,7 @@ try{
     if(rule instanceof CSSMediaRule){inspect(rule.cssRules);}
     else if(rule instanceof CSSStyleRule){
      const legacy=[...rule.style].some(property=>!property.startsWith('--t98-')&&property!=='color-scheme');
-     const scope=legacy?/^:root$|^\.t98-theme$|^\[data-theme\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/:/^:root$|^\.t98-theme$|^\[data-density=["']?(comfortable|compact)["']?\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/;
+     const scope=legacy?/^:root$|^\.t98-theme$|^\[data-theme\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/:/^:root$|^\.t98-theme$|^\[data-theme\]$|^\[data-density\]$|^\[data-density=["']?(comfortable|compact)["']?\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/;
      for(const selector of rule.selectorText.split(',').map(s=>s.trim()))if(!scope.test(selector))bad.push(selector);
      for(const property of rule.style){(property.startsWith('--t98-')?canonical:properties).add(property);if(!property.startsWith('--')&&property!=='color-scheme')bad.push(property);}
     }else if(rule instanceof CSSFontFaceRule){

@@ -44,14 +44,31 @@ IFS=' ' read -r mode app_url app_port project <<EOF
 $metadata
 EOF
 [ -n "$project" ] || fail 'Deployment metadata is missing. Read https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment before adopting an existing configuration.'
+# Compose records the complete overlay selection on its containers, including stopped ones.
+# An explicit COMPOSE_FILE takes precedence when the operator changes that selection.
+if [ -z "${COMPOSE_FILE:-}" ]; then
+  retained_compose_files=
+  previous_web=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter 'label=com.docker.compose.service=web')
+  for container in $previous_web; do
+    files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container")
+    [ -n "$files" ] && [ "$files" != '<no value>' ] || fail 'Existing web configuration is unknown. Set COMPOSE_FILE explicitly before deploying.'
+    [ -z "$retained_compose_files" ] || [ "$retained_compose_files" = "$files" ] || fail 'Existing web containers use different Compose files. Set COMPOSE_FILE explicitly before deploying.'
+    retained_compose_files=$files
+  done
+  if [ -n "$retained_compose_files" ]; then
+    export COMPOSE_FILE="$retained_compose_files" COMPOSE_PATH_SEPARATOR=,
+  fi
+fi
 image="ten98-monitor:$project"
 docker tag "$helper_image" "$image"
 # Compose gives inherited shell variables precedence over .env. Never mix an
 # unrelated shell's credentials/origin into this installation.
-unset APP_URL APP_PORT AUTH_SECRET POSTGRES_PASSWORD DATABASE_URL ARTIFACT_DIR CREDENTIAL_KEYS CREDENTIAL_ACTIVE_KEY COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+unset APP_URL APP_PORT AUTH_SECRET POSTGRES_PASSWORD DATABASE_URL ARTIFACT_DIR CREDENTIAL_KEYS CREDENTIAL_ACTIVE_KEY COMPOSE_PROJECT_NAME
 export TEN98_IMAGE="$image"
 compose() {
-  if [ "$mode" = caddy ]; then
+  if [ -n "${COMPOSE_FILE:-}" ]; then
+    docker compose --env-file .env --project-name "$project" "$@"
+  elif [ "$mode" = caddy ]; then
     docker compose --env-file .env --project-name "$project" -f compose.yaml -f compose.caddy.yaml "$@"
   else
     docker compose --env-file .env --project-name "$project" -f compose.yaml "$@"

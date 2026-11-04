@@ -593,6 +593,7 @@
         {siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties, dimensions: dimensions, context: state.nativeContext || undefined};
       if (consented) payload.consent = {analytics: true, epoch: epoch};
       else payload.collection = {mode: 'cookieless', epoch: epoch};
+      var contextWait = !performanceEvent && consented && state.nativeIdentifier !== undefined ? state.nativeContextRequest : undefined;
       var body = JSON.stringify(payload);
       if (new TextEncoder().encode(body).length > 16384) return;
       // An attempted basic observation may already be stored even if its receipt is lost.
@@ -601,9 +602,24 @@
       if (observation) state.nativePageObservation = observation;
       var controller = new AbortController(); state.nativeRequests.add(controller);
       if (performanceEvent) performanceCapture.requests.add(controller);
-      function current() { return nativeCurrent(state, epoch, generation, controller) && (!performanceEvent || performanceCapture.active && performanceCapture.navigationId === payload.navigationId && performanceCapture.url === payload.url); }
+      /** @type {Ten98Tracker.ContextRequest|undefined} */ var contextRequest;
+      /** @type {()=>void} */ var settled = function () {};
+      if (observation && consented && state.nativeIdentifier === undefined && !state.nativeContext && !state.nativeContextRequest) {
+        var done = new Promise(function (resolve) { settled = function () { resolve(undefined); }; });
+        contextRequest = {controller: controller, generation: generation, done: done}; state.nativeContextRequest = contextRequest;
+        controller.signal.addEventListener('abort', finishContext, {once: true});
+      }
+      function finishContext() {
+        if (!contextRequest) return;
+        if (state.nativeContextRequest === contextRequest) state.nativeContextRequest = undefined;
+        state.nativeRequests.delete(controller); settled();
+      }
+      function current() { return nativeCurrent(state, epoch, contextRequest ? contextRequest.generation : generation, controller) && (!performanceEvent || performanceCapture.active && performanceCapture.navigationId === payload.navigationId && performanceCapture.url === payload.url); }
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { if (!current()) { if (observation) observation.dropped = true; return; } if (observation) observation.sent = true; return fetch(state.origin + (state.collectPath || '/api/collect'), {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(async function () {
+        if (contextWait) { await contextWait.done; if (!performanceEvent) payload.context = state.nativeContext || undefined; body = JSON.stringify(payload); }
+        if (new TextEncoder().encode(body).length > 16384) return;
+        if (!current()) { if (observation) observation.dropped = true; return; } if (observation) observation.sent = true; return fetch(state.origin + (state.collectPath || '/api/collect'), {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', keepalive: true, signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;
@@ -612,20 +628,22 @@
           var result = /** @type {Record<string,unknown>} */ (JSON.parse(text));
           if (current() && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
         }).catch(function () { if (!controller.signal.aborted) warn('ten98 Discover: collector unavailable or blocked.'); })
-        .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) performanceCapture.requests.delete(controller); });
+        .finally(function () { finishContext(); clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) performanceCapture.requests.delete(controller); });
       if (observation) { startPerformance(state); startReplay(state); startHeatmap(state); }
     } catch (ignore) {} // Invalid application properties must never break the host page.
   }
 
-  /** @param {Ten98Tracker.State} state */
-  function nativeStop(state) {
+  /** @param {Ten98Tracker.State} state @param {Ten98Tracker.ContextRequest} [preserve] */
+  function nativeStop(state, preserve) {
     if (state.replayCapture) state.replayRestartRequired = true;
     stopReplay(state, true);
     if (state.heatmapCapture) state.heatmapRestartRequired = true;
     stopHeatmap(state);
     if (state.performanceCapture) state.performanceCapture.active = false;
     state.nativeContext = null; state.nativeIdentifier = undefined; state.nativeGeneration = (state.nativeGeneration || 0) + 1;
-    state.nativeRequests.forEach(function (request) { request.abort(); }); state.nativeRequests.clear();
+    state.nativeRequests.forEach(function (request) { if (!preserve || request !== preserve.controller) request.abort(); }); state.nativeRequests.clear();
+    state.nativeContextRequest = preserve;
+    if (preserve) { preserve.generation = state.nativeGeneration; state.nativeRequests.add(preserve.controller); }
   }
 
   /** @param {string} value */
@@ -703,19 +721,25 @@
       // Identifying an anonymous visitor keeps its signed visit context, so the collector can keep the current visit's key
       // (#371). Switching between explicit identifiers still starts without one.
       var context = changed && state.nativeIdentifier !== undefined ? null : state.nativeContext;
+      var contextWait = state.nativeContextRequest;
+      if (changed && state.nativeIdentifier !== undefined) contextWait = undefined;
       requestId = uuid(); sentAt = new Date().toISOString(); controller = new AbortController();
       var activeController = controller;
-      var body = JSON.stringify({type: 'identify', siteKey: state.siteKey, requestId: requestId, sentAt: sentAt, url: currentUrl(), properties: snapshot.properties,
-        dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: context || undefined, consent: {analytics: true, epoch: epoch}});
+      var payload = {type: 'identify', siteKey: state.siteKey, requestId: requestId, sentAt: sentAt, url: currentUrl(), properties: snapshot.properties,
+        dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: context || undefined, consent: {analytics: true, epoch: epoch}};
+      var body = JSON.stringify(payload);
       if (new TextEncoder().encode(body).length > 16384) return outcome('invalid', 'invalid_input');
       if (!nativeReady(state, true)) return outcome('not_sent', 'collection_unavailable');
-      if (changed) { nativeStop(state); state.nativeIdentifier = nextId; state.nativeContext = context; }
+      // Transfer only the pending consented anonymous page response; user switches and resets still cancel every request.
+      if (changed) { nativeStop(state, contextWait); state.nativeIdentifier = nextId; state.nativeContext = context; }
       var generation = state.nativeGeneration;
       state.nativeRequests.add(activeController);
       /** @type {Promise<Ten98Tracker.IdentifyOutcome>} */
       var aborted = new Promise(function (resolve) { activeController.signal.addEventListener('abort', function () { resolve(outcome(sent ? 'unknown' : 'not_sent', sent ? undefined : 'cancelled')); }, {once: true}); });
       timer = setTimeout(function () { activeController.abort(); }, 5000);
       var work = Promise.resolve().then(async function () {
+        if (contextWait) { await contextWait.done; payload.context = state.nativeContext || undefined; body = JSON.stringify(payload); }
+        if (new TextEncoder().encode(body).length > 16384) return outcome('invalid', 'invalid_input');
         if (!nativeCurrent(state, epoch, generation, activeController, true)) return outcome('not_sent', 'cancelled');
         sent = true;
         var response = await fetch(state.origin + (state.collectPath || '/api/collect'), {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error', signal: activeController.signal, headers: {'Content-Type': 'application/json'}, body: body});

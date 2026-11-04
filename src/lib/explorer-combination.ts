@@ -1,4 +1,4 @@
-import { readResponseText } from '@ten98/runtime';
+import { readResponseText } from '@ten98/runtime/browser';
 import { ApiError } from './api.ts';
 
 const failure = (status: number, message: string) => { const error = new ApiError(message); error.status = status; return error; };

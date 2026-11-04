@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 import {CopyButton,LoadMore,SegmentedControl,StatusLine,useToast} from '@ten98/ui';
 
 type Role=WorkspaceRole;

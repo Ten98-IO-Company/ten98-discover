@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {openRouterModelId} from './openrouter-models.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 const text=(max:number)=>z.string().min(1).max(max).refine(v=>v.trim()===v&&!/[\u0000\uD800-\uDFFF]/u.test(v));
 export const promptCalendar=z.object({interval:z.enum(['daily','weekly','monthly']),timezone:text(100).refine(v=>/^[A-Za-z][A-Za-z0-9_+./-]*$/.test(v)),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),weekday:z.number().int().min(0).max(6).nullable()}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);

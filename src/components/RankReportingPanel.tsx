@@ -5,7 +5,7 @@ import type {RankHistoryTarget,RankRunSummary} from '../server/rank-history';
 import type {RankDistribution,RankDistributionCounts} from '../server/rank-distribution';
 import type {RankMatrix,RankMatrixCell} from '../server/rank-matrix';
 import {RankReportingView,type RankReportingViewProps} from './RankReportingView';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void;onOpenKeyword:(id:string)=>void;onCheckHistory:()=>void};
 type Device='desktop'|'mobile';
@@ -66,7 +66,7 @@ const defaults=(t:RankTracker):State=>{const matrix:MatrixFilters={device:t.devi
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 const bad=()=>new Error('The report response could not be verified. Refresh the report.');
 const formatted=(value:string|null)=>value===null?'Not recorded':new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value));
-const scopeText=(t:RankHistoryTarget)=>`${t.domain} and subdomains · Location ${t.locationCode} · ${t.languageCode} · Up to ${t.depth} results · ${t.maxCrawlPages} maximum billable page(s)`;
+const scopeText=(t:RankHistoryTarget)=>`${t.domain} and subdomains · Location ${t.locationCode} · ${t.languageCode} · Up to ${t.depth} results · ${t.maxCrawlPages} maximum page(s)`;
 
 export function RankReportingPanel(props:Props){return <ReportingController key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.tracker.id}`} {...props}/>;}
 function ReportingController(props:Props){

@@ -2,7 +2,7 @@ import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {ApiError,errMsg} from '../lib/api';
 import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,type PromptTracker} from '../lib/prompt-recurring';
 import {modelApi,ModelResponseError} from './OpenRouterModelPicker';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role=WorkspaceRole;
 type Preparation={id:string;expiresAt:string;input:{promptId:string;versionId:string;models:string[];systemText:string;maxCompletionTokens:number;reuseCached?:boolean}};

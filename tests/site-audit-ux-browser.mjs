@@ -7,6 +7,7 @@ import {resolve} from 'node:path';
 import {createServer} from 'vite';
 import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SITE_AUDIT_UX_BROWSER,'1');
+const queryOnly=process.env.TEN98_SITE_AUDIT_QUERY_BROWSER==='1';
 const projectId='20000000-0000-4000-8000-000000000001',runId='50000000-0000-4000-8000-000000000001',pageId='60000000-0000-4000-8000-000000000001',issueId='70000000-0000-4000-8000-000000000001';
 const B='/api/projects/'+projectId+'/audits',at='2026-10-14T10:00:00.000Z';
 const summary=()=>({pagesObserved:9,pagesAnalyzed:9,htmlPagesDiscovered:9,issuesDetected:0,issuesRetained:0,findingsComplete:true,retainedBySeverity:{critical:0,warning:0,info:0},graph:{status:'complete',reasons:[],checks:{duplicates:'complete',redirects:'complete',brokenLinks:'complete',orphans:'complete'},findingsComplete:true}});
@@ -42,7 +43,7 @@ try{
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return req.method()==='GET'?route.continue():route.abort();
-  requests.push(url.pathname+url.search);assert.ok(requests.length<=1300,'Total API request cap exceeded');
+  requests.push(url.pathname+url.search);if(queryOnly)assert.ok(requests.length<=100,'Query UI request cap exceeded');assert.ok(requests.length<=1300,'Total API request cap exceeded');
   const phase=d14RequestStart===null?'legacy':'d14',requestKey=req.method()+' '+url.pathname;requestCounts[phase][requestKey]=(requestCounts[phase][requestKey]??0)+1;
   assert.ok(d14RequestStart===null?requests.length<=1200:requests.length-d14RequestStart<=100,phase+' API request cap exceeded');
   if(req.method()!=='GET'){
@@ -55,9 +56,13 @@ try{
    }
    writes.push({path:url.pathname,body:req.postData()});if(url.pathname!==B||req.method()!=='POST'||!startMode)return reply(route,{error:'Unexpected fixture write'},405);
    const intent=req.postDataJSON();if(typeof startMode==='number')return reply(route,{error:'Synthetic uncertain start'},startMode);if(startMode==='lost')return route.abort();
-   const receipt={...savedRun(),config:{...savedRun().config,maxPages:intent.maxPages,startPath:intent.startPath,startUrl:new URL(intent.startPath,'https://audit.example').href,retainBodyText:startMode==='mismatch'?!intent.retainBodyText:intent.retainBodyText}};
-   if(startMode==='legacy')delete receipt.config.retainBodyText;
-   if(startMode!=='mismatch')run=receipt;
+   const receipt={...savedRun(),config:{...savedRun().config,maxPages:intent.maxPages,startPath:new URL(intent.startPath,'https://audit.example').href.slice('https://audit.example'.length),startUrl:new URL(intent.startPath,'https://audit.example').href,includeQueryUrls:intent.includeQueryUrls,retainBodyText:startMode==='mismatch'?!intent.retainBodyText:intent.retainBodyText}};
+   if(startMode==='legacy'){delete receipt.config.retainBodyText;delete receipt.config.includeQueryUrls;}
+   if(startMode==='query-policy')receipt.config.includeQueryUrls=!intent.includeQueryUrls;
+   if(startMode==='query-path')receipt.config.startPath=new URL(receipt.config.startUrl).pathname;
+   if(startMode==='query-url')receipt.config.startUrl=new URL(receipt.config.startUrl).origin+new URL(receipt.config.startUrl).pathname;
+   if(startMode==='query-legacy')delete receipt.config.includeQueryUrls;
+   if(!['mismatch','query-policy','query-path','query-url','query-legacy'].includes(startMode))run=receipt;
    return reply(route,{role,run:receipt,created:startMode!=='recovered'});
   }
   const routePath=url.pathname.replace('/'+secondRunId,'/'+runId).replace('/'+secondPageId,'/'+pageId);
@@ -115,6 +120,22 @@ try{
  const sizes=async()=>{assert.deepEqual(await panel().locator('button,input:not([type=checkbox]),select,summary').evaluateAll(nodes=>nodes.filter(n=>n.getClientRects().length).flatMap(n=>n.getBoundingClientRect().height<44?[{control:n.textContent||n.id,height:n.getBoundingClientRect().height}]:[])),[]);};
  const scrollTable=async name=>{await setViewport(page,{width:320,height:1000});const region=panel().getByRole('region',{name,exact:true});assert.equal(await region.getAttribute('tabindex'),'0');assert.equal(await region.evaluate(n=>n.scrollWidth>n.clientWidth),true);assert.ok(await region.locator('table').evaluate(n=>n.getBoundingClientRect().width>=640));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await region.focus();await page.keyboard.press('ArrowRight');await page.waitForFunction(label=>document.querySelector('[role=region][aria-label="'+label+'"]')?.scrollLeft>0,name);await setViewport(page,{width:927,height:1270});};
  await mkdir(resolve('private/ui-pages-evidence/screenshots'),{recursive:true});
+ {
+  const query=()=>panel().getByRole('checkbox',{name:'Include URLs with query parameters',exact:true}),body=()=>panel().getByRole('checkbox',{name:'Retain page text for content analysis',exact:true}),path=()=>panel().getByLabel('Start path',{exact:true});
+  const form=async()=>{await page.goto(origin);await button('View audit').waitFor();await open('Start another audit');await query().waitFor();};
+  await form();assert.equal(writes.length,0);assert.equal(await query().isChecked(),false);assert.equal(await body().isChecked(),false);
+  await query().focus();await page.getByRole('tooltip').getByText('Exact query variants are crawled separately under the same page limit.',{exact:true}).waitFor();
+  await path().fill('/nested/../docs?b=2&a=1&a=3&q=a+b&q=a%20b');await button('Start audit').click();assert.equal(writes.length,0);await query().check();await body().check();
+  await setViewport(page,{width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await shot('query-launch-320');await setViewport(page,{width:1440,height:1000});
+  startMode='query-policy';await button('Start audit').click();await button('Retry start request').waitFor();const frozen=writes.at(-1).body;assert.deepEqual({path:JSON.parse(frozen).startPath,query:JSON.parse(frozen).includeQueryUrls,body:JSON.parse(frozen).retainBodyText},{path:'/nested/../docs?b=2&a=1&a=3&q=a+b&q=a%20b',query:true,body:true});
+  for(const mode of ['query-path','query-url','query-legacy','lost']){assert.equal(await query().isDisabled(),true);assert.equal(await path().isDisabled(),true);assert.equal(await body().isDisabled(),true);startMode=mode;await button('Retry start request').click();await button('Retry start request').waitFor();assert.equal(writes.at(-1).body,frozen);assert.equal(await panel().getByRole('alert').filter({hasText:'outcome is unknown'}).isVisible(),true);}
+  startMode='recovered';await button('Retry start request').click();await panel().getByText('The original audit receipt was recovered.',{exact:true}).waitFor();assert.equal(writes.at(-1).body,frozen);assert.equal(run.config.startPath,'/docs?b=2&a=1&a=3&q=a+b&q=a%20b');assert.equal(run.config.startUrl,'https://audit.example/docs?b=2&a=1&a=3&q=a+b&q=a%20b');assert.equal(await panel().getByText('Start path: '+run.config.startPath+' · Static HTML · Query URLs included',{exact:true}).count(),1);
+  await form();assert.equal(await query().isChecked(),false);assert.equal(await body().isChecked(),false);await path().fill('/empty?');await query().check();startMode='query-path';await button('Start audit').click();await button('Retry start request').waitFor();const empty=writes.at(-1).body;startMode='recovered';await button('Retry start request').click();await panel().getByText('The original audit receipt was recovered.',{exact:true}).waitFor();assert.equal(writes.at(-1).body,empty);assert.equal(run.config.startPath,'/empty?');assert.equal(run.config.startUrl,'https://audit.example/empty?');
+  await form();await path().fill('/');startMode='legacy';await button('Start audit').click();await panel().getByText('Audit request accepted.',{exact:true}).waitFor();assert.equal(JSON.parse(writes.at(-1).body).includeQueryUrls,false);assert.equal(await panel().getByText('Start path: / · Static HTML · Query URLs excluded',{exact:true}).count(),1);
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log(JSON.stringify({queryApiRequests:requests.length,contexts:1,writes:writes.length}));console.log('PASS query default-off and body separation, canonical keyboard tooltip,320px reflow, normalized exact variants, policy/path/full URL/legacy ACK rejection, immutable retry and trailing question mark.');
+  writes.length=0;run=savedRun();startMode=null;await setViewport(page,{width:927,height:1270});
+ }
+ if(!queryOnly){
  await fresh();await panel().getByText('Inspect the recorded pages to review their coverage and evidence.',{exact:true}).waitFor();const headline=panel().getByRole('heading',{name:'No findings recorded in 9 analyzed pages',exact:true});assert.equal(await headline.isVisible(),true);assert.equal(await panel().getByText('Completed',{exact:true}).count(),1);assert.equal(await panel().getByText('0 matching retained findings.',{exact:true}).count(),0);assert.equal(await button('Refresh audit').count(),0);assert.equal(await button('Refresh status').count(),1);
  assert.equal(await details('Audit details').evaluate(n=>n.open),false);assert.equal(await details('Filters').evaluate(n=>n.open),false);assert.equal(await nav().getByRole('button',{name:'Issues',exact:true}).getAttribute('aria-pressed'),'true');assert.equal(await nav().getByRole('button',{name:'Pages',exact:true}).getAttribute('aria-pressed'),'false');assert.ok(await nav().getByRole('button',{name:'Issues',exact:true}).evaluate(n=>getComputedStyle(n).textDecorationLine.includes('underline')));
  const start=(await panel().boundingBox()).y;assert.ok((await headline.boundingBox()).y-start<450);assert.ok((await nav().boundingBox()).y+(await nav().boundingBox()).height<=1270);await sizes();await shot('zero-927');const readBefore=requests.length;await button('Refresh status').click();await page.waitForFunction(()=>![...document.querySelectorAll('button')].find(b=>b.textContent==='Refresh status')?.disabled);assert.equal(requests.length,readBefore+1);assert.equal(requests.at(-1),B+'/'+runId);assert.deepEqual(writes,[]);
@@ -389,6 +410,7 @@ try{
  for(const field of ['projectId','userId']){run=savedRun();await fresh();holdRun=true;await button('Refresh status').click();await panel().getByText('Refreshing saved audit status…',{exact:true}).waitFor();assert.ok(heldRun);const late=heldRun;heldRun=null;await page.evaluate(field=>window.auditFixture.scope({projectId:field==='projectId'?'20000000-0000-4000-8000-000000000002':'20000000-0000-4000-8000-000000000001',userId:field==='userId'?'30000000-0000-4000-8000-000000000002':'30000000-0000-4000-8000-000000000001'}),field);await panel().getByRole('heading',{name:'Audit history',exact:true}).waitFor();await reply(late.route,late.body);assert.equal(await report().count(),0);}
  assert.ok(requests.length-d14Baseline<=100);assert.equal(writes.length,mutationCount);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log(JSON.stringify({d14AddedApiRequests:requests.length-d14Baseline,totalApiRequests:requests.length,d14RequestCounts:requestCounts.d14,contexts:1}));
  console.log('PASS D14 light/dark320/1440 all-visible-element font2x, bodyzoom1,4.5 contrast, native keyboard refresh and401/403/404/project/user late-refresh purge preserve authority and mutation oracles.');
+ }
 }catch(error){
  const failureRoot=resolve('private/ui-pages-evidence/screenshots');await mkdir(failureRoot,{recursive:true});const failedPage=browser?.contexts()?.[0]?.pages()?.[0];
  try{if(failedPage){await failedPage.screenshot({path:resolve(failureRoot,'d14-summary-failure.png'),fullPage:true,animations:'disabled'});await writeFile(resolve(failureRoot,'d14-summary-failure.html'),await failedPage.content(),'utf8');}await writeFile(resolve(failureRoot,'d14-summary-failure.json'),JSON.stringify({error:error.stack,totalApiRequests:requests.length,d14AddedApiRequests:d14RequestStart===null?null:requests.length-d14RequestStart,requestCounts,errors,external,contexts:browser?.contexts().length??0},null,2),'utf8');}catch(diagnosticError){console.error('Failure diagnostic capture failed',diagnosticError);}

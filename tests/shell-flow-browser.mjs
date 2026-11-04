@@ -267,7 +267,7 @@ try {
   assert.equal(await help.evaluate(element => element.open), false);
   assert.equal(await help.locator('summary').evaluate(element => getComputedStyle(element).display), 'list-item', 'Installation help retains its native disclosure marker.');
   const beforeHelp = {...calls}; await help.locator('summary').focus(); await page.keyboard.press('Enter');
-  assert.match(await help.innerText(), /window\.ten98\.track\('signup', \{plan: 'starter'\}\)/);
+  assert.match(await help.innerText(), /window\.ten98\?\.track\('sign_up', \{plan: 'starter'\}\)/);
   assert.match(await help.innerText(), /avoid personal data.*queries and fragments.*Advertising pixels/);
   assert.deepEqual(calls, beforeHelp, 'Opening help starts no requests.');
   await help.locator('summary').click();

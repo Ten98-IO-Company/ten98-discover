@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type FormEvent} from 'react';
 import {z} from 'zod';
 import {AppliedFilters,Disclosure} from '@ten98/ui';
@@ -11,7 +11,7 @@ import {GeographyAttribution} from './GeographyAttribution';
 import {initialDraft,buildParams,savedPredicates,buildAdvanced,validAdvancedResult,focusAdvanced,validSessionSelection,validSaved,validCohort,qualificationDraft,preciseDate,ExactFilterControls,AdvancedControls,AdvancedSummary,SessionStatus,patchLocationFilters,TIMEZONES,FILTERS,KINDS,fieldValueLabel,record,type Draft,type FilterRow,type SavedFilter,type CohortRef} from './ExplorerFilters';
 import {useLocation} from '@tanstack/react-router';
 import './journeys.css';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type JourneyDraft={scope:Draft;steps:string;startKind:''|'pageview'|'custom';startValue:string;endKind:''|'pageview'|'custom';endValue:string;cohort:CohortRef|null};
 const allowed=new Set(['from','to','timeZone','kind','propertyKey','propertyType','propertyValue','predicates','cohortId','cohortRevision','steps','startKind','startValue','endKind','endValue',...FILTERS.map(([key])=>key)]);

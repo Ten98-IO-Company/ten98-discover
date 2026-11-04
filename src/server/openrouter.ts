@@ -5,6 +5,7 @@ import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {parseOpenRouterJson,executionBody,type PromptModel,type OpenRouterModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
 import {suggestionSchema,suggestionOutputTokens} from './ai-suggestion-input.ts';
+import {analysisSchema,analysisOutputTokens,analysisPurpose} from './site-analysis-input.ts';
 import {contentSupportPurpose,contentSupportSchema,contentSupportLimits} from './ai-content-support-input.ts';
 import {legacyOpenRouterModels,openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterTextProfile,type OpenRouterRequestProfile} from '../lib/openrouter-models.ts';
 import {requireCatalogModels} from './openrouter-models.ts';
@@ -120,11 +121,12 @@ export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:st
     outcome.result={text:message.content,resolvedModel:body.model,provider:body.provider,finishReason:choice.finish_reason,citations:citations(message.annotations),promptTokens:tokenCount(usage.prompt_tokens),completionTokens:tokenCount(usage.completion_tokens),receivedAt:new Date().toISOString()};return outcome;
   }catch{if(outcome.known)outcome.diagnostic??='The provider completed this request, but the answer metadata was unsupported.';return outcome;}
 }
-type StructuredPurpose=boolean|typeof contentSupportPurpose;
+type StructuredPurpose=boolean|typeof contentSupportPurpose|typeof analysisPurpose;
 export function executionRequestBody(messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,structured:StructuredPurpose=false){
   if(structured===contentSupportPurpose&&(route.profile!==openRouterTextProfile||maxTokens!==contentSupportLimits.outputTokens))throw new FoundationError(409,'Prepare a current website-content-support route with its fixed output limit.');
+  if(structured===analysisPurpose&&(route.profile!==openRouterTextProfile||maxTokens!==analysisOutputTokens))throw new FoundationError(409,'Prepare a current website-analysis route with its fixed output limit.');
   validateExecutionPayload(messages,route,maxTokens,!!structured);
-  const schema=structured===contentSupportPurpose?contentSupportSchema:suggestionSchema,name=structured===contentSupportPurpose?'website_content_support_v1':'suggestion_proposal_v1';
+  const schema=structured===analysisPurpose?analysisSchema:structured===contentSupportPurpose?contentSupportSchema:suggestionSchema,name=structured===analysisPurpose?'website_context_analysis_v1':structured===contentSupportPurpose?'website_content_support_v1':'suggestion_proposal_v1';
   const body={...executionBody(messages,route,maxTokens,runId,actor,!!structured),...(structured?{response_format:{type:'json_schema',json_schema:{name,strict:true,schema}}}:{})};
   if(route.profile&&(structured&&Buffer.byteLength(JSON.stringify({messages,schema}),'utf8')>131_072||Buffer.byteLength(JSON.stringify(body),'utf8')>163_840))throw new FoundationError(413,'The text request exceeds this model profile’s payload limit. Narrow the input.');
   return body;
@@ -151,3 +153,6 @@ export async function reconcileOpenRouter(credentials:unknown,id:string,route:Ro
       evidence:{source:'generation',generationId:id,model:data.model,provider:data.provider_name,createdAt:data.created_at,finishReason:data.finish_reason,promptTokens:tokenCount(data.tokens_prompt),completionTokens:tokenCount(data.tokens_completion),checkedAt:new Date().toISOString()}};
   }catch{throw new FoundationError(409,'Provider evidence is unavailable, unfinished or does not match this request. Its outcome remains unresolved.');}
 }
+
+export async function readAnalysisRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,pinnedTag?:string){return (await readRoutes(credentials,[model],analysisOutputTokens,send,true,openRouterTextProfile,pinnedTag?[pinnedTag]:undefined))[0];}
+export async function requestAnalysisExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,analysisOutputTokens,runId,actor,dispatchedAt,capture,send,analysisPurpose);}

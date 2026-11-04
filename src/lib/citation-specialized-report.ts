@@ -1,7 +1,7 @@
 import type {SpecializedFilters,SpecializedNavigation,SpecializedReport} from '../server/prompt-citation-specializations';
 import type {CitationFilters} from '../server/prompt-citations';
 import {validCitationFilters,validCitationEvidence,citationSafeHref} from './citation-report.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 const periods=['current','previous'] as const;
 const eligibility=['eligible','queued','running','no_answer','empty','truncated','content_filtered','expired','invalid'] as const;

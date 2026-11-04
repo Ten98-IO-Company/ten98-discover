@@ -24,7 +24,7 @@ const port=Number(process.env.NATIVE_BROWSER_PORT??3197),origin=`http://127.0.0.
 const database=`${prefix}_${hex(6)}`,databaseUrl=new URL(postgres);databaseUrl.pathname='/'+database;if(proxyPort!==null){databaseUrl.hostname='127.0.0.1';databaseUrl.port=String(proxyPort);}
 const out=`private/native-browser/${basename(suite).replace(/\.(mjs|ts)$/,'')}-${hex(4)}`;
 const env={...process.env,NODE_ENV:'production',AUTH_SECRET:hex(32),CREDENTIAL_KEYS:JSON.stringify({v1:randomBytes(32).toString('base64')}),CREDENTIAL_ACTIVE_KEY:'v1',
-  APP_URL:origin,BASE_URL:origin,HOST:'127.0.0.1',PORT:String(port),DATABASE_URL:databaseUrl.href,ANALYTICS_NETWORK_MODE:'direct',TEN98_INTEGRATION_TEST:'1',OUT_DIR:out,BROWSER_ARTIFACT_DIR:out,
+  APP_URL:origin,BASE_URL:origin,HOST:'127.0.0.1',PORT:String(port),DATABASE_URL:databaseUrl.href,ANALYTICS_NETWORK_MODE:'direct',TEN98_INTEGRATION_TEST:'1',OUT_DIR:out,BROWSER_ARTIFACT_DIR:out,ARTIFACT_DIR:`${out}/artifacts`,
   ...Object.fromEntries(flags.map(flag=>[flag,'1']))};
 
 let adminBase=postgres;
@@ -40,14 +40,14 @@ let code=1;
 // The pinned port may already serve PostgreSQL (a shared test proxy); then the database is created through it instead.
 let proxy=proxyPort===null?null:createServer(socket=>{const upstream=connect(Number(postgres.port||5432),postgres.hostname);socket.pipe(upstream).pipe(socket);socket.on('error',()=>upstream.destroy());upstream.on('error',()=>socket.destroy());});
 if(proxy)await new Promise((resolve,reject)=>proxy.once('error',error=>{if(error.code!=='EADDRINUSE')return reject(error);proxy=null;adminBase=new URL(databaseUrl.href);resolve();}).listen(proxyPort,'127.0.0.1',resolve));
-await mkdir(out,{recursive:true});
+await mkdir(env.ARTIFACT_DIR,{recursive:true,mode:0o700});
 await admin(`CREATE DATABASE ${database}`);
 try{
   if(stopped)throw new Error(`Stopped by ${stopped}.`);
   if(await run(process.execPath,['src/server/cli.ts','migrate']))throw new Error('Migration failed.');
   if(!selfHosted){start(['.output/server/index.mjs'],'server');if(!options.has('no-worker'))start(['src/server/cli.ts','worker'],'worker');}
   let ready=selfHosted;
-  for(let attempt=0;attempt<80&&!ready&&!stopped;attempt++){ready=await fetch(origin+'/api/session').then(response=>response.ok,()=>false);if(!ready)await new Promise(resolve=>setTimeout(resolve,500));}
+  for(let attempt=0;attempt<80&&!ready&&!stopped;attempt++){ready=await fetch(origin+'/api/health/ready').then(response=>response.ok,()=>false);if(!ready)await new Promise(resolve=>setTimeout(resolve,500));}
   if(!ready)throw new Error('The server did not become ready.');
   if(!unclaimed){
     const response=await fetch(origin+'/api/auth/setup',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({name:'Native browser owner',email:`owner-${hex(4)}@native-browser.test`,password:hex(16),workspaceName:'Native browser workspace'})});

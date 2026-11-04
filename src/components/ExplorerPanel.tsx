@@ -18,7 +18,7 @@ import {GeographyAttribution} from './GeographyAttribution';
 import {environmentCatalog,environmentFields,type EnvironmentField} from '../lib/analytics-environment';
 import type {PropertyReport} from '../server/explorer';
 import {propertyWeekdays,propertyDecimal,comparePropertyDecimals,propertyDecimalScale,validPropertyDateSummary,validPropertyNumberStats} from '../lib/property-visuals';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Coverage='complete'|'partial'|'unavailable';
 

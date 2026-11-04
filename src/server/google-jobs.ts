@@ -16,7 +16,7 @@ type ImportRow = { id: string; connection_id: string; project_id: string; user_i
 // Explicit text dates keep provider-local calendar boundaries independent of the host timezone.
 const importFields = 'i.*,i.date_from::text AS date_from,i.date_to::text AS date_to';
 function googleImportDto(row: ImportRow) {
-  return { id: row.id, report: row.report, from: row.date_from, to: row.date_to, status: row.status, dataStatus: row.data_expired_at ? 'expired' : 'available', pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
+  return { id: row.id, report: row.report, connectionRevision: row.connection_revision, from: row.date_from, to: row.date_to, status: row.status, dataStatus: row.data_expired_at ? 'expired' : 'available', pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
 }
 
 // Saved-snapshot readers. Under a key they take the content gate (workspace SHARE, 5 s bounds, key rechecked after admission,

@@ -8,7 +8,7 @@ import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 import {Checkbox} from '@ten98/ui';
 
 type Role = WorkspaceRole;

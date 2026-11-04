@@ -5,7 +5,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import type {RankRole,RankTracker,RankConnection} from './RankTrackingView';
 import {RankCheckView,type RankPreparationDisplay} from './RankCheckView';
 import {RankCheckResults,type RankResultDisplay,type RankHistoryDisplay} from './RankCheckResults';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Status='quoted'|'queued'|'running'|'waiting'|'completed'|'partial'|'failed'|'cancelled'|'skipped';
 type RequestStatus='not_started'|'reserved'|'dispatched'|'settled'|'uncertain'|'cancelled';

@@ -424,7 +424,7 @@
   /** @param {Ten98Tracker.State} state */
   function installPreferenceStyle(state) {
     if (state.preferenceStyle) return;
-    var stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet'; stylesheet.referrerPolicy = 'no-referrer'; stylesheet.href = state.origin + '/tracking-consent.css?v=3'; (document.head || document.documentElement).appendChild(stylesheet); state.preferenceStyle = stylesheet;
+    var stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet'; stylesheet.referrerPolicy = 'no-referrer'; stylesheet.crossOrigin = 'anonymous'; stylesheet.href = state.origin + '/tracking-consent.css?v=4'; (document.head || document.documentElement).appendChild(stylesheet); state.preferenceStyle = stylesheet;
   }
   /** @param {Ten98Tracker.State} state */
   function installPreferences(state) {

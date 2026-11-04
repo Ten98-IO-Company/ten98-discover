@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useRef,useState} from 'react';
 import {Alert,Button,DangerZoneFlow,StatusLine,Text} from '@ten98/ui';
 import {analyticsResetInput,analyticsResetState,analyticsResetResult,type AnalyticsResetInput,type AnalyticsResetState,type AnalyticsResetResult} from '../lib/analytics-reset';

@@ -99,21 +99,19 @@ async function contextDto(client:PoolClient,project:ContentProject) {
   const competitors=(await client.query(`SELECT id,primary_domain AS "primaryDomain",domains,name,aliases,notes,updated_at AS "updatedAt",updated_by AS "updatedBy"
     FROM context_competitor WHERE project_id=$1 ORDER BY primary_domain`,[project.id])).rows;
   const keyPages=(await client.query(`SELECT id,url,role,topic,notes,updated_at AS "updatedAt",updated_by AS "updatedBy" FROM context_key_page WHERE project_id=$1 ORDER BY url`,[project.id])).rows;
+  const personas=(await client.query(`SELECT id,name,description,updated_at AS "updatedAt",updated_by AS "updatedBy" FROM context_persona WHERE project_id=$1 ORDER BY name,id`,[project.id])).rows;
   const research=await researchPage(client,project.id);
   const templates=(await client.query(`SELECT id,name,left(brief,200) AS preview,length(brief)>200 AS truncated FROM report_template WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 21`,[project.id])).rows;
   return {project:{id:project.id,name:project.name,origin:project.origin},role:project.role,revision:profile.revision,profile:{name:profile.name,aliases:profile.aliases,citationDomains:profile.citationDomains},citationCategoryOverrides:profile.citationCategoryOverrides,
     sections:sectionKeys.flatMap(key=>sections.filter(row=>row.key===key)),missingSections:sectionKeys.filter(key=>!sections.some(row=>row.key===key)),
-    customSections:sections.filter(row=>row.key.startsWith('custom:')),competitors,keyPages,researchLog:research.entries,researchLogNextCursor:research.nextCursor,
+    customSections:sections.filter(row=>row.key.startsWith('custom:')),competitors,keyPages,personas,researchLog:research.entries,researchLogNextCursor:research.nextCursor,
     reportTemplates:templates.slice(0,20),reportTemplatesTruncated:templates.length>20};
 }
 export async function getProjectContext(projectId:unknown,userId:unknown,apiToken?:string) {return withContentProject(projectId,userId,false,contextDto,apiToken,false,'context:read');}
 
-export async function updateProjectContext(projectId:unknown,userId:unknown,raw:unknown,apiToken?:string) {
-  const input=parse(contextPatch,raw),uid=parse(z.uuid(),userId);
-  return withContentProject(projectId,uid,true,async(client,project)=>{
-    const receipt=await contentReceipt(client,project.id,input.requestId,'context.update',input);
-    // Only token-bearing callers learn whether the receipt replayed; cookie and direct callers keep the unchanged DTO.
-    if(receipt.replayed) return {...await contextDto(client,project),...(apiToken===undefined?{}:{replayed:true})};
+/** Caller holds the current authorized workspace/project mutation locks. */
+export async function applyProjectContextUpdates(client:PoolClient,project:ContentProject,uid:string,raw:unknown){
+  const input=parse(contextPatch,raw);
     await client.query('INSERT INTO project_context(project_id,brand_name) VALUES($1,$2) ON CONFLICT(project_id) DO NOTHING',[project.id,project.name]);
     const profile=await contentProfile(client,project);
     if(profile.revision!==input.revision) throw new FoundationError(409,'Project context changed. Review the latest saved data before saving again.');
@@ -166,11 +164,31 @@ export async function updateProjectContext(projectId:unknown,userId:unknown,raw:
             [randomUUID(),project.id,op.url,op.role??null,op.topic??null,op.notes??null,uid]);
           if((await client.query('SELECT count(*)::int AS count FROM context_key_page WHERE project_id=$1',[project.id])).rows[0].count>100) throw new FoundationError(400,'A project can hold at most 100 key pages.');break;
         case 'remove-key-page':await client.query('DELETE FROM context_key_page WHERE project_id=$1 AND id=$2',[project.id,op.id]);break;
+        case 'persona': {
+          const saved=await client.query(`INSERT INTO context_persona(id,project_id,name,description,updated_by) VALUES($1,$2,$3,$4,$5)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,updated_by=excluded.updated_by,updated_at=clock_timestamp()
+            WHERE context_persona.project_id=excluded.project_id RETURNING id`,[op.id,project.id,op.name,op.description,uid]);
+          if(!saved.rowCount) throw new FoundationError(409,'This persona is unavailable. Review the latest saved context before saving again.');
+          if((await client.query('SELECT count(*)::int AS count FROM context_persona WHERE project_id=$1',[project.id])).rows[0].count>20) throw new FoundationError(400,'A project can hold at most 20 personas.');break;
+        }
+        case 'remove-persona':
+          if(!(await client.query('DELETE FROM context_persona WHERE project_id=$1 AND id=$2',[project.id,op.id])).rowCount) throw new FoundationError(404,'Persona not found or unavailable.');break;
         case 'research':await client.query('INSERT INTO context_research(id,project_id,summary,created_by) VALUES($1,$2,$3,$4)',[randomUUID(),project.id,op.summary,uid]);break;
         case 'remove-research':await client.query('DELETE FROM context_research WHERE project_id=$1 AND id=$2',[project.id,op.id]);break;
       }
     }
     await client.query('UPDATE project_context SET revision=revision+1 WHERE project_id=$1',[project.id]);
+
+  return contextDto(client,project);
+}
+
+export async function updateProjectContext(projectId:unknown,userId:unknown,raw:unknown,apiToken?:string) {
+  const input=parse(contextPatch,raw),uid=parse(z.uuid(),userId);
+  return withContentProject(projectId,uid,true,async(client,project)=>{
+    const receipt=await contentReceipt(client,project.id,input.requestId,'context.update',input);
+    // Only token-bearing callers learn whether the receipt replayed; cookie and direct callers keep the unchanged DTO.
+    if(receipt.replayed) return {...await contextDto(client,project),...(apiToken===undefined?{}:{replayed:true})};
+    await applyProjectContextUpdates(client,project,uid,input);
     await receipt.save({});return {...await contextDto(client,project),...(apiToken===undefined?{}:{replayed:false})};
   },apiToken,false,'context:write');
 }

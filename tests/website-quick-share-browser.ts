@@ -19,7 +19,7 @@ async function fresh({role='owner',width=1440}={}){
  context=await browser.newContext({viewport:{width,height:900},hasTouch:width<=760,serviceWorkers:'block'});await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});context.setDefaultTimeout(7000);
  await context.route('**/*',async (route:any)=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();
   const path=url.pathname,method=request.method(),raw=request.postData(),body=raw?request.postDataJSON():null;calls.push({path,method,raw,body});
-  if(path==='/api/status')return reply(route,{configured:true,appUrl:origin});
+  if(path==='/api/session')return reply(route,{setupRequired:false,appUrl:origin,oidcEnabled:false,user:{id:user,name:'Synthetic owner',email:'synthetic@example.org'}});
   if(path==='/api/me')return reply(route,{user:{id:user,name:'Synthetic owner',email:'synthetic@example.org'},instanceOperator:false,workspaces:[{id:workspace,name:'Synthetic workspace',role}]});
   if(path==='/api/account/preferences')return reply(route,{version:'account-preferences-v1',user:{id:user,name:'Synthetic owner',email:'synthetic@example.org'},preferences:{revision:1,timeZone:'UTC',locale:'en-US',theme:'light',updatedAt:'2026-10-01T00:00:00.000Z'}});
   if(path==='/api/workspaces/'+workspace+'/projects')return reply(route,{projects:[{id:project,name:'Synthetic website',origin:'https://example.org',publicKey:'synthetic-public-key',eventCount:0,lastEventAt:null,retainedFrom:null}]});

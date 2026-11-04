@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import type {GeographyKey} from './analytics-geography.ts';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export const trackedAssetVersion='native-tracked-assets-v1' as const;
 export const trackedAssetLimits=Object.freeze({bodyBytes:16384,responseBytes:2097152,pageSize:20,groups:100});

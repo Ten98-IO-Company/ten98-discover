@@ -5,7 +5,7 @@ import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelPreparation,type ModelPreparationRoute} from './OpenRouterModelPicker';
 import {PromptRecurringPanel} from './PromptRecurringPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role=WorkspaceRole;
 type Model=string;

@@ -50,6 +50,8 @@ export const contextOp=z.discriminatedUnion('kind',[
   z.object({kind:z.literal('remove-competitor'),id:z.uuid()}).strict(),
   z.object({kind:z.literal('key-page'),url:text(2048,1).transform(keyPageUrl),role:z.enum(['hub','spoke','money','other']).optional(),topic:text(200).optional(),notes:text(500).optional()}).strict(),
   z.object({kind:z.literal('remove-key-page'),id:z.uuid()}).strict(),
+  z.object({kind:z.literal('persona'),id:z.uuid(),name:text(120,1),description:text(4000)}).strict(),
+  z.object({kind:z.literal('remove-persona'),id:z.uuid()}).strict(),
   z.object({kind:z.literal('research'),summary:text(1000,1)}).strict(),
   z.object({kind:z.literal('remove-research'),id:z.uuid()}).strict(),
 ]);

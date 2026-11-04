@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {analyticsDay} from './navigation.ts';
 import {isEnvironmentFilter} from './analytics-environment.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 export const performanceMetrics=['lcp','inp','cls','fcp','ttfb'] as const;
 export type PerformanceMetric=typeof performanceMetrics[number];

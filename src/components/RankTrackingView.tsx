@@ -1,6 +1,6 @@
 import type * as React from 'react';
 import { RankTrackingFields, type RankTrackingFieldsValue, type RankLocationOption, type RankLanguageOption, type RankLocationOptions, type RankTrackingFieldErrors } from './RankTrackingFields';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export type RankRole = WorkspaceRole;
 type RankDevices = 'desktop' | 'mobile' | 'both';
@@ -122,7 +122,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
             <div className="row"><button type="button" className="btn ghost" onClick={p.onObservations} disabled={p.locked}>Latest observations</button><button type="button" className="btn ghost" onClick={p.onReporting} disabled={p.locked}>Reporting</button><button type="button" className="btn ghost" onClick={p.onChecks} disabled={p.locked}>Check history</button><button type="button" className="btn ghost" onClick={p.onSchedule} disabled={p.locked}>Schedule</button>{writer&&!archived&&<button type="button" className="btn primary" onClick={p.onPrepareCheck} disabled={busy||t.keywordCount===0}>Prepare a rank check</button>}</div>
             <p>{t.domain} (including subdomains) · {t.locationName}, {t.countryIso} · {t.languageName}</p>
             <p className="hint">Create another tracker to change the target or market.</p>
-            {!(p.editing && writer) && <p className="dim">Devices: {DEVICE_LABELS[t.devices]} · Requested results: {t.depth} · Maximum billable pages: {t.maxCrawlPages}</p>}
+            {!(p.editing && writer) && <p className="dim">Devices: {DEVICE_LABELS[t.devices]} · Requested results: {t.depth} · Maximum pages: {t.maxCrawlPages}</p>}
             {writer && (
             <details open={p.editing}>
               <summary>Tracker settings</summary>
@@ -142,7 +142,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
                     onChange={(e) => p.onEditChange({ ...p.edit, depth: Number(e.target.value) })}>
                     {DEPTHS.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select></div>
-                <div className="field"><label htmlFor={pre + 'edit-pages'}>Maximum billable pages</label>
+                <div className="field"><label htmlFor={pre + 'edit-pages'}>Maximum pages</label>
                   <select id={pre + 'edit-pages'} value={p.edit.maxCrawlPages} disabled={p.locked || archived}
                     onChange={(e) => p.onEditChange({ ...p.edit, maxCrawlPages: Number(e.target.value) })}>
                     {PAGE_CAPS.map((n) => <option key={n} value={n}>{n}</option>)}

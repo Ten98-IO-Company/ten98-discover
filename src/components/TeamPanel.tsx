@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
+import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime/browser';
 import { Alert, Banner, Button, Field, Inline, Input, Select, useConfirmDialog } from '@ten98/ui';
 import { assignableRoles, defaultInviteRole, invitationExpiry, inviteResultText, inviteRoleOptions, roleLabel } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';

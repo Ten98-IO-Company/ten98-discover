@@ -40,7 +40,7 @@ test('fixed native catalog, strict bounded schemas and scope separation',()=>{
   assert.equal(bulk.safeParse(input).success,true);assert.equal(bulk.safeParse({...input,prompts:[...input.prompts,{text:'101'}]}).success,false);
   assert.equal(mcpTools.find(t=>t.name==='ten98_read_realtime')!.schema.safeParse({projectId:input.projectId,query:{}}).success,false);
   const update=mcpTools.find(t=>t.name==='ten98_update_context')!.schema as any,kinds=contextOp.options.map(option=>option.shape.kind.value);
-  assert.deepEqual(update.shape.updates.element.shape.kind.options,kinds);assert.equal(kinds.length,11);
+  assert.deepEqual(update.shape.updates.element.shape.kind.options,kinds);assert.equal(kinds.length,13);assert.deepEqual(kinds.filter(kind=>kind.includes('persona')),['persona','remove-persona']);
   const context={projectId:input.projectId,requestId:randomUUID(),revision:1,updates:Array.from({length:50},(_,i)=>({kind:kinds[i%kinds.length],anyField:i}))};
   assert.equal(update.safeParse(context).success,true);
   for(const bad of [{...context,updates:[]},{...context,updates:[...context.updates,{kind:'research',summary:'51'}]},{...context,updates:[{kind:'delete-everything'}]},{...context,updates:[{summary:'no kind'}]},{...context,execute:true},{...context,revision:0},{...context,revision:2147483647}])assert.equal(update.safeParse(bad).success,false);

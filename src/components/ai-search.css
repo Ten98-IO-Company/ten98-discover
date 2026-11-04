@@ -6,7 +6,7 @@
 .ai-search input[type=checkbox] { min-width: 20px; min-height: 20px; }
 .ai-search label { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: var(--text-sm); }
 .ai-search label:has(input[type=checkbox]) { flex-direction: row; align-items: start; }
-.ai-search .row { flex-wrap: wrap; }
+.ai-search .row { flex-wrap: wrap; min-width: 0; }
 .ai-search .row > * { min-width: 0; }
 .ai-search-cards { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 15px; }
 .ai-search-cards > .card { margin: 0; padding: 19px 19px 17px; }

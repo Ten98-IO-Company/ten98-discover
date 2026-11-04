@@ -1,5 +1,5 @@
 import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {DataTable,Disclosure} from '@ten98/ui';
 import {formatReportInstant} from '../lib/report-time';
 import {boardLimits,decodePublicBoardManifest,decodePublicBoardCard,parseHostedBoardShare,parseHostedWebsiteShare,type PublicBoardCard} from '../lib/boards';

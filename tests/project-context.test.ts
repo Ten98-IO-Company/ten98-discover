@@ -19,6 +19,20 @@ test('strict bounded context input distinguishes absent fields from explicit cle
   assert.throws(()=>parse(contextPatch,{...base,updates:Array(51).fill({kind:'research',summary:'x'})}));
   assert.throws(()=>parse(contextPatch,{...base,updates:[{kind:'research',summary:'\ud800'}]}));
 });
+test('persona edits preserve stable identifiers and enforce strict Unicode and field bounds',()=>{
+  const base={revision:1,requestId:randomUUID()},id=randomUUID();
+  const input=parse(contextPatch,{...base,updates:[{kind:'persona',id,name:'  読者 👩🏽‍💻  ',description:'  Needs clear research.\nWorks in Arabic: العربية.  '},{kind:'remove-persona',id}]});
+  assert.deepEqual(input.updates,[{kind:'persona',id,name:'読者 👩🏽‍💻',description:'Needs clear research.\nWorks in Arabic: العربية.'},{kind:'remove-persona',id}]);
+  assert.ok(parse(contextPatch,{...base,updates:[{kind:'persona',id,name:'x'.repeat(120),description:'x'.repeat(4000)},{kind:'persona',id,name:'Reader',description:''}]}));
+  const persona={kind:'persona',id,name:'Reader',description:'Research needs'};
+  for(const op of [
+    {...persona,id:'invalid'},{...persona,id:undefined},{...persona,name:''},{...persona,name:'   '},
+    {...persona,name:'x'.repeat(121)},{...persona,description:'x'.repeat(4001)},{...persona,description:undefined},
+    {...persona,name:'\ud800'},{...persona,description:'\udc00'},{...persona,description:'bad\0text'},
+    {...persona,updatedBy:randomUUID()},{...persona,projectId:randomUUID()},
+    {kind:'remove-persona',id:'invalid'},{kind:'remove-persona',id,name:'Reader'},
+  ]) assert.throws(()=>parse(contextPatch,{...base,updates:[op]}));
+});
 test('citation context operations normalize exact hosts and distinguish explicit other from removing an override',()=>{
   const base={revision:1,requestId:randomUUID()};
   assert.deepEqual(citationPublisherCategories,['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other']);

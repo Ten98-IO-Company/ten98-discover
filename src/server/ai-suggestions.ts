@@ -56,7 +56,7 @@ export async function assertSuggestionSnapshot(client:PoolClient,projectId:strin
  const p=(await client.query('SELECT id,name,origin FROM project WHERE id=$1',[projectId])).rows[0];if(!p)throw unavailable();
  if((await captureSuggestionSnapshot(client,p,input)).snapshotHash!==snapshotHash)throw new FoundationError(409,'The captured context changed. Prepare the suggestion request again.');
 }
-async function runRow(client:PoolClient,projectId:string,id:string){const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,projectId])).rows[0];if(!row)throw unavailable();return row;}
+async function runRow(client:PoolClient,projectId:string,id:string){const row=(await client.query(suggestionSelect+" WHERE r.id=$1 AND r.project_id=$2 AND r.purpose='prompt'",[id,projectId])).rows[0];if(!row)throw unavailable();return row;}
 async function runDto(client:PoolClient,p:ContentProject,row:any,details:boolean){
  const snapshot=row.input_expired?null:row.snapshot as SuggestionSnapshot|null,proposal=row.result_expired?null:row.proposal as SuggestionProposal|null;
  let acceptance=null;
@@ -70,7 +70,7 @@ async function runDto(client:PoolClient,p:ContentProject,row:any,details:boolean
 }
 async function preparationDto(client:PoolClient,projectId:string,id:string){
  const q=(await client.query(`SELECT q.*,(q.input_purged_at IS NOT NULL OR q.created_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours') AS expired
- FROM ai_suggestion_quote q JOIN workspace w ON w.id=q.workspace_id WHERE q.id=$1 AND q.project_id=$2`,[id,projectId])).rows[0];if(!q)throw unavailable();
+ FROM ai_suggestion_quote q JOIN workspace w ON w.id=q.workspace_id WHERE q.id=$1 AND q.project_id=$2 AND q.purpose='prompt'`,[id,projectId])).rows[0];if(!q)throw unavailable();
  return {id:q.id,requestId:q.request_id,inputHash:q.input_hash,snapshotHash:q.snapshot_hash,createdAt:q.created_at,expiresAt:q.expires_at,
   input:q.expired?null:Object.fromEntries(Object.entries(q.input??{}).filter(([key])=>!['fundedCredits','maxSpendUsd'].includes(key))),snapshot:q.expired?null:q.snapshot,inputExpired:q.expired,route:{model:q.route.model,tag:q.route.tag,providerName:q.route.providerName,promptCapacity:q.route.promptCapacity,completionCapacity:q.route.completionCapacity,contextLength:q.route.contextLength,profile:q.route.profile}};
 }
@@ -78,7 +78,7 @@ export async function getAiSuggestions(projectId:string,userId:string,params=new
  if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one suggestion page cursor.');
  return withContentProject(projectId,userId,false,async(client,p)=>{
   const scope={projectId:p.id,list:'ai-suggestions'},cursor=readContentCursor(params.get('cursor'),scope);
-  const rows=(await client.query(suggestionSelect+` WHERE r.project_id=$1 AND ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2::timestamptz,$3::uuid)) ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[p.id,cursor?.at??null,cursor?.id??null])).rows;
+  const rows=(await client.query(suggestionSelect+` WHERE r.project_id=$1 AND r.purpose='prompt' AND ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2::timestamptz,$3::uuid)) ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[p.id,cursor?.at??null,cursor?.id??null])).rows;
   return {role:p.role,profiles:[...suggestionProfiles.map(profile=>({...profile,admission:'benchmark' as const})),{id:'catalog-text-schema-v1',model:null,label:'Choose a model — evaluation only',admission:'benchmark' as const}],defaults:{economy:null,balanced:null},canPrepare:p.role==='owner',runs:await Promise.all(rows.slice(0,50).map(r=>runDto(client,p,r,false))),
    nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null};
  });
@@ -112,9 +112,9 @@ export async function startAiSuggestions(projectId:string,userId:string,raw:unkn
   requireOwner(p);const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.start',{userId,input});
   const result=async(id:string,replayed:boolean)=>({role:p.role,acknowledgement:{requestId:input.requestId,runId:id,preparationId:input.preparationId,operation:'start' as const},run:await runDto(client,p,await runRow(client,p.id,id),true),replayed});
   if(receipt.replayed)return result(receipt.result.id as string,true);
-  const q=(await client.query('SELECT *,expires_at<=clock_timestamp() AS expired FROM ai_suggestion_quote WHERE id=$1 AND project_id=$2 AND user_id=$3 FOR UPDATE',[input.preparationId,p.id,userId])).rows[0];if(!q)throw unavailable();
+  const q=(await client.query("SELECT *,expires_at<=clock_timestamp() AS expired FROM ai_suggestion_quote WHERE id=$1 AND project_id=$2 AND user_id=$3 AND purpose='prompt' FOR UPDATE",[input.preparationId,p.id,userId])).rows[0];if(!q)throw unavailable();
   if(q.request_version!==1||q.expired||q.input_purged_at)throw new FoundationError(409,'This preparation is stale. Prepare the request again.');
-  if((await client.query("SELECT id FROM ai_suggestion_run WHERE project_id=$1 AND (quote_id=$2 OR status IN('queued','running','uncertain'))",[p.id,q.id])).rowCount)throw new FoundationError(409,'This preparation started already or another suggestion request is unfinished.');
+  if((await client.query("SELECT id FROM ai_suggestion_run WHERE project_id=$1 AND purpose='prompt' AND (quote_id=$2 OR status IN('queued','running','uncertain'))",[p.id,q.id])).rowCount)throw new FoundationError(409,'This preparation started already or another suggestion request is unfinished.');
   await suggestionConnection(client,q.workspace_id,q.connection_id,q.connection_revision);await assertSuggestionSnapshot(client,p.id,q.input,q.snapshot_hash);
   const reservation=await reserveRequestInTransaction(client,q.workspace_id,userId,{connectionId:q.connection_id,requestKey:input.requestId,operation:'ai.suggest',inputHash:q.input_hash},async(tx,id)=>{
    await tx.query("INSERT INTO ai_suggestion_run(id,quote_id,workspace_id,project_id,user_id,request_id,status) VALUES($1,$2,$3,$4,$5,$6,'queued')",[id,q.id,q.workspace_id,p.id,userId,input.requestId]);
@@ -159,6 +159,6 @@ export async function withSuggestionRun<T>(id:string,work:(client:PoolClient,row
  const client=await getDatabase().pool.connect();try{await client.query('BEGIN');
   const ref=(await client.query('SELECT workspace_id,project_id FROM ai_suggestion_run WHERE id=$1',[id])).rows[0];if(!ref)throw unavailable();
   await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[ref.workspace_id]);await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[ref.project_id]);
-  await client.query('SELECT id FROM ai_suggestion_run WHERE id=$1 FOR UPDATE',[id]);const result=await work(client,await runRow(client,ref.project_id,id));await client.query('COMMIT');return result;
+  await client.query('SELECT id FROM ai_suggestion_run WHERE id=$1 FOR UPDATE',[id]);const row=(await client.query(suggestionSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,ref.project_id])).rows[0];if(!row)throw unavailable();const result=await work(client,row);await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
 }

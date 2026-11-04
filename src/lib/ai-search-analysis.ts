@@ -1,4 +1,4 @@
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 import {z} from 'zod';
 import {aiSearchProfileId} from './ai-search.ts';
 

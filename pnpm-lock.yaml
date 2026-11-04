@@ -18,11 +18,11 @@ importers:
         specifier: 1.168.61
         version: 1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0))
       '@ten98/runtime':
-        specifier: file:vendor/ten98-runtime-0.20.0.tgz
-        version: file:vendor/ten98-runtime-0.20.0.tgz(better-auth@1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
+        specifier: file:vendor/ten98-runtime-0.22.0.tgz
+        version: file:vendor/ten98-runtime-0.22.0.tgz(better-auth@1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       '@ten98/ui':
-        specifier: file:vendor/ten98-ui-0.31.1.tgz
-        version: file:vendor/ten98-ui-0.31.1.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: file:vendor/ten98-ui-0.34.3.tgz
+        version: file:vendor/ten98-ui-0.34.3.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -533,9 +533,9 @@ packages:
     resolution: {integrity: sha512-uhOeFyxLcU41HzvrxsGpiWdcMbScY1EDgbZ5K7DVRMYInbLYWAC0EA/kx9wXAoSM8q82bUG2hRl8+EAjE6XAbA==}
     engines: {node: '>=20.19'}
 
-  '@ten98/runtime@file:vendor/ten98-runtime-0.20.0.tgz':
-    resolution: {integrity: sha512-9F0W/6jsZ9FfFqxjnsDgaPy2g9Ns1eHOwqSqz8AYCfGaPXL42XkofhOzlw7dc/ccvfcHtmrdWD9AnZWL6kmyqA==, tarball: file:vendor/ten98-runtime-0.20.0.tgz}
-    version: 0.20.0
+  '@ten98/runtime@file:vendor/ten98-runtime-0.22.0.tgz':
+    resolution: {integrity: sha512-KzuWa2Rlgj3vIgN7heKBKjmr+H0XihS4/tduXBV0LAYZULz5yeao5d+0UroZmMtfhUnys1vTsp6CziKdRbLFMw==, tarball: file:vendor/ten98-runtime-0.22.0.tgz}
+    version: 0.22.0
     engines: {node: '>=24.22.1 <25'}
     peerDependencies:
       better-auth: 1.7.7
@@ -543,9 +543,9 @@ packages:
       better-auth:
         optional: true
 
-  '@ten98/ui@file:vendor/ten98-ui-0.31.1.tgz':
-    resolution: {integrity: sha512-gQdhh/XMc+rcsgy2rjh5rfib7j39avsFmzKYFK92CjmcUd5wX6Oysh5X3JHe1YEeyk8o9JoCxaz5f3SmpA5oyg==, tarball: file:vendor/ten98-ui-0.31.1.tgz}
-    version: 0.31.1
+  '@ten98/ui@file:vendor/ten98-ui-0.34.3.tgz':
+    resolution: {integrity: sha512-AxfPQ/hGKzIBoGM7wKeNGNxYwP68KSN9Ug86Z4rBTzApQDrF2QFxf5vTfKYXeqFo7o8GTvmfcKuJiCsfOec4lQ==, tarball: file:vendor/ten98-ui-0.34.3.tgz}
+    version: 0.34.3
     engines: {node: '>=24.22.1 <25'}
     peerDependencies:
       react: ^18.3.0 || ^19.0.0
@@ -1968,11 +1968,11 @@ snapshots:
 
   '@tanstack/virtual-file-routes@1.162.0': {}
 
-  '@ten98/runtime@file:vendor/ten98-runtime-0.20.0.tgz(better-auth@1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))':
+  '@ten98/runtime@file:vendor/ten98-runtime-0.22.0.tgz(better-auth@1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))':
     optionalDependencies:
       better-auth: 1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
 
-  '@ten98/ui@file:vendor/ten98-ui-0.31.1.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@ten98/ui@file:vendor/ten98-ui-0.34.3.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

@@ -7,6 +7,7 @@ import { assertSchema, closeDatabase, getDatabase } from './db.ts';
 import { migrateDatabase, StartupError, startWhenDatabaseReady } from './startup-migrate.ts';
 import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
+import {assertSiteAuditAccessKeys,rotateSiteAuditAccessEncryption} from './site-audit-access.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
@@ -50,6 +51,7 @@ async function diagnose(checkWorker: boolean) {
     ['Database connection', () => getDatabase().pool.query('SELECT 1')],
     ['Database schema', assertSchema],
     ['Provider credential keyring', assertCredentialKeys],
+    ['Shopify crawler access keyring', assertSiteAuditAccessKeys],
     ['Identity credential keyring', assertOidcCredentialsReadable],
     ['Google reporting credential keyring', assertGoogleCredentialsReadable],
     ['Provider account recovery keyring', assertProviderAccountIdentityReadable],
@@ -118,6 +120,7 @@ async function worker() {
   await startWhenDatabaseReady('worker', async () => {
     await assertSchema();
     await assertCredentialKeys();
+    await assertSiteAuditAccessKeys();
     await assertOidcCredentialsReadable();
     await assertGoogleCredentialsReadable();
     await assertProviderAccountIdentityReadable();
@@ -171,9 +174,10 @@ try {
       const providers = await rotateCredentialEncryption();
       const identities = await rotateOidcCredentials();
       await rotateGoogleCredentials();
+      await rotateSiteAuditAccessEncryption();
       await rotateProviderAccountIdentityEncryption();
       console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
-      console.log('Google reporting credentials re-encrypted with the active key.');
+      console.log('Google reporting and Shopify crawler access credentials re-encrypted with the active key.');
       console.log('Provider account recovery keys re-encrypted with the active key.');
       break;
     }

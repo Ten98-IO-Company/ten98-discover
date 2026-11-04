@@ -4,7 +4,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import {SavedKeywordFilterFields,emptySavedKeywordFilters,type SavedKeywordFilterDraft} from './SavedKeywordFilterFields';
 import {SavedKeywordRefreshPanel} from './SavedKeywordRefreshPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role=WorkspaceRole;
 type Tag={id:string;name:string;color:string|null;count?:number};

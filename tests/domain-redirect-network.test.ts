@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import https from 'node:https';
 import http from 'node:http';
-import {addressKey,publicNetworkAddress} from '../src/server/public-network.ts';
+import {addressKey,publicNetworkAddress} from '@ten98/runtime';
 import {permittedOidcAddress} from '../src/server/oidc.ts';
 import {observeDomainRedirect,pinnedPeer,redirectUrl,requestRedirectHeaders,type RedirectTransport} from '../src/server/domain-redirect-network.ts';
 
