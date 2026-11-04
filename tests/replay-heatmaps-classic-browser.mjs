@@ -21,12 +21,14 @@ const settings={enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:30000
 // The blocked #private-zone text overflows 162px past its 40px box; in RTL that spill extends the recorded page LEFT of the plane while the
 // masked replay renders only the plane, so the RTL scenes exercise the player's extent restoration, LTR the natural-extent path.
 const scenes=[
- {width:320,height:700,direction:'ltr',classic:false,gutter:false,expect:'error',reflow:true},
+ {width:320,height:700,direction:'ltr',classic:false,gutter:false,expect:'ready',reflow:true},
+ {width:1265,height:720,direction:'ltr',classic:false,gutter:false,expect:'ready',reflow:true},
+ {width:1265,height:720,direction:'rtl',classic:false,gutter:false,expect:'ready',reflow:true},
  {width:1440,height:900,direction:'rtl',classic:true,gutter:true,expect:'ready'},{width:320,height:700,direction:'ltr',classic:true,gutter:true,expect:'ready'},{width:320,height:700,direction:'rtl',classic:true,gutter:true,expect:'ready'},
  {width:1440,height:900,direction:'rtl',classic:false,gutter:true,expect:'error'},{width:1440,height:900,direction:'rtl',classic:false,gutter:false,expect:'ready'},{width:320,height:700,direction:'ltr',classic:false,gutter:false,expect:'ready'},
 ];
 const evidence={phase:'starting',qualification:'Classic-scrollbar Edge scenes through the real tracker, recorder and player; synthetic config/Begin/ingress ACKs and an in-memory chunk store only.',scenes:[],external:[],unexpected:[],pageErrors:[],cleanup:[]},save=()=>writeFileSync(out+'/evidence.json',JSON.stringify(evidence,null,2)+'\n');save();
-const started=Date.now(),budgetMs=180000;
+const started=Date.now(),budgetMs=120000;
 const wait=async(predicate,label)=>{const until=Date.now()+8000;while(!await predicate()){assert.ok(Date.now()<until&&Date.now()-started<budgetMs,label);await new Promise(r=>setTimeout(r,15));}};
 const settle=page=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
 let server,context,origin;const browsers={};
@@ -34,7 +36,7 @@ const browserFor=async scene=>browsers[scene.classic]??=await launchChromium({..
 // Explicit control dimensions keep privacy masking from changing the fixed control layout.
 function recordHtml(direction,gutter,reflow){
  let css="html,body{margin:0;padding:0;scroll-behavior:auto;overscroll-behavior:none}"+(gutter?"html{scrollbar-gutter:stable}":"")+"#plane{position:relative;width:2400px;height:3000px;background:#e6eef1}#target{position:absolute;right:48px;bottom:48px;width:64px;height:64px;background:#057a65}#bulk{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;white-space:pre}#controls{position:fixed;top:8px;left:8px;z-index:20;display:flex;flex-direction:column;gap:4px}button{width:104px;height:44px;min-height:44px;max-width:104px}#private-zone{position:absolute;left:20px;top:100px;width:40px;height:40px}input{position:absolute;left:100px;top:100px;width:150px}";
- if(reflow)css+="#flow{margin:0;width:220px;font:20px/22px Arial;overflow-wrap:anywhere}#target{position:relative;right:auto;bottom:auto;margin:20px}";
+  if(reflow)css+="#plane{width:1265px;height:5630px}#flow{margin:0;width:220px;font:20px/22px MissingTen98Font,Arial;overflow-wrap:anywhere}#target{position:relative;right:auto;bottom:auto;margin:20px}";
  const script=[
   "window.nativeFacts={clicks:[]};",
   "const rectangle=node=>{const b=node.getBoundingClientRect();return{left:b.left,top:b.top,right:b.right,bottom:b.bottom,width:b.width,height:b.height};};",
@@ -61,7 +63,7 @@ async function fresh(scene){
    if(url.origin!==origin){evidence.external.push({method:request.method(),origin:url.origin});save();return route.abort();}
    if(!url.pathname.startsWith('/api/')){assert.equal(request.method(),'GET');assert.ok([recordPath,playerPath,'/tracker.js','/destinations.js','/replay.js','/favicon.ico'].includes(url.pathname),url.pathname);return route.continue();}
    assert.equal(request.method(),'POST');const raw=request.postData(),body=JSON.parse(raw),headers=await request.allHeaders();assert.equal(headers.cookie,undefined);assert.ok(secrets.every(s=>!raw.includes(s)),'No masked text may reach ingress');
-   record.api.push({path:url.pathname,bytes:Buffer.byteLength(raw)});assert.ok(record.api.length<=90);
+    assert.ok(!raw.includes('W'.repeat(100)),'Original proportional text must never reach ingress');record.api.push({path:url.pathname,bytes:Buffer.byteLength(raw)});assert.ok(record.api.length<=90);
    const reply=value=>route.fulfill({status:url.pathname==='/api/tracking-config'?200:202,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(value)});
    if(url.pathname==='/api/tracking-config'){assert.equal(body.siteKey,site);return reply({schemaVersion:3,siteKey:site,environment:'live',origin,revisionId:null,consentEpoch:epoch,validUntil:new Date(Date.now()+60000).toISOString(),configuration:{destinations:[]},nativeTracking:{enabled:true,collectionMode:'consent-first',consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[],replay:settings,heatmap:{enabled:true,sampleRate:1}}});}
    if(url.pathname==='/api/collect'){assert.equal(body.name,'page_view');return reply({accepted:true});}
@@ -105,7 +107,7 @@ try{
   assert.deepEqual(background.geometry,native.geometry);
   const reconstructed=reassembleReplay(memory.parts);assert.deepEqual(reconstructed.missingFragments,[]);assert.ok(secrets.every(s=>!JSON.stringify(reconstructed.events).includes(s)));
   const meta=reconstructed.events.find(e=>eventSha(e)===background.meta.eventSha256),snapshot=reconstructed.events.find(e=>eventSha(e)===background.snapshot.eventSha256);
-  assert.equal(snapshot?.data.ten98Layout?.version,1,'The real recorder must capture bounded snapshot layout evidence');
+   assert.equal(snapshot?.data.ten98Layout?.version,scene.reflow?2:1,'The real recorder must capture bounded snapshot layout evidence');
   assert.ok(snapshot.data.ten98Layout.boxes.length>0);
   assert.equal(meta?.type,4);assert.equal(snapshot?.type,2);assert.equal(meta.data.width,native.innerWidth);assert.equal(meta.data.height,native.innerHeight);
   record.recording={geometry:native.geometry,point:{x:point.x,y:point.y},meta:{width:meta.data.width,height:meta.data.height},chunks:memory.chunks};save();
@@ -139,6 +141,10 @@ try{
   assert.equal(!!measure.marker,scene.direction==='rtl','RTL scenes restore the masked spill through the extent marker; LTR renders the exact extent naturally');
   assert.ok(Math.abs(measure.deltaX)<=1&&Math.abs(measure.deltaY)<=1,'Circle centre must coincide with the reconstructed target centre within 1 CSS px (a gutter or iframe-border error is 15 or 2 px): '+JSON.stringify({deltaX:measure.deltaX,deltaY:measure.deltaY}));
   assert.ok(measure.center.x>=measure.target.left&&measure.center.x<=measure.target.right&&measure.center.y>=measure.target.top&&measure.center.y<=measure.target.bottom);
+   if(scene.reflow){
+    const tiles=await outer.evaluate(()=>{const d=document.querySelector('iframe').contentDocument,p=d.getElementById('flow');return{text:p.textContent,height:p.getBoundingClientRect().height,tiles:p.querySelectorAll('[data-ten98-text-redaction]').length};});
+    assert.equal(tiles.text,'');assert.equal(tiles.height,220);assert.equal(tiles.tiles,10);record.redaction=tiles;
+   }
   // The guards that fail closed on drift must survive with the measured origin in place.
   await outer.evaluate(()=>{const plane=document.querySelector('iframe').contentDocument.getElementById('plane');plane.style.height=String(plane.clientHeight-100)+'px';});
   await player.waitForFunction(()=>window.messages.some(m=>m.type==='error'));assert.equal(await outer.locator('.replayer-wrapper').count(),0,'Natural shrink must destroy the preview');
@@ -146,6 +152,23 @@ try{
   // A fully bound root extent does not prove that masking retained the interior layout.
   const changed=structuredClone(snapshot);changed.data.ten98Layout.boxes.find(b=>b.length===5)[2]+=22;
   const variants=[['reflow',changed],['legacy',structuredClone(snapshot)],['duplicate',structuredClone(snapshot)],['foreign',structuredClone(snapshot)],['missing',structuredClone(snapshot)]];
+   if(scene.reflow){
+    const v1=structuredClone(snapshot);v1.data.ten98Layout={version:1,boxes:v1.data.ten98Layout.boxes};variants.push(['v1-masked-reflow',v1]);
+    for(const name of ['text-foreign','text-duplicate','text-nonfinite','text-negative','text-outside','text-limit','text-extra']){
+     const bad=structuredClone(snapshot),e=bad.data.ten98Layout;
+     if(name==='text-foreign')e.texts[0].id=999999;
+     if(name==='text-duplicate')e.texts.push(structuredClone(e.texts[0]));
+     if(name==='text-nonfinite')e.texts[0].rects[0][0]=NaN;
+     if(name==='text-negative')e.texts[0].rects[0][2]=-1;
+     if(name==='text-outside')e.texts[0].rects[0][0]=10000000;
+     if(name==='text-limit')e.texts[0].rects=Array.from({length:65},()=>[0,0,1,1]);
+     if(name==='text-extra')e.texts[0].text='forbidden';
+     variants.push([name,bad]);
+    }
+    await player.evaluate(value=>window.mount(value),{events:[meta,snapshot]});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));
+    const ordinary=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>{const f=document.querySelector('iframe'),p=f.contentDocument.getElementById('flow'),r=f.contentDocument.getElementById('target').getBoundingClientRect();return{text:p.textContent,top:r.top+f.contentWindow.scrollY};});
+    assert.equal(ordinary.text,'*'.repeat(100));assert.equal(ordinary.top-(native.target.top+native.scrollY),-132);record.ordinaryMaskedDelta=-132;
+   }
   delete variants[1][1].data.ten98Layout;
   variants[2][1].data.ten98Layout.boxes.push([...variants[2][1].data.ten98Layout.boxes[0]]);
   variants[3][1].data.ten98Layout.boxes[0][0]=999999;
@@ -166,6 +189,6 @@ try{
   assert.deepEqual(record.faults,[]);await context.close();context=null;record.closed=true;save();
   pass((scene.classic?'CLASSIC ':'OVERLAY ')+scene.width+'x'+scene.height+' '+scene.direction+(scene.gutter?' gutter':' plain')+': recorded viewport '+native.geometry.viewportWidth+'x'+native.geometry.viewportHeight+' page '+native.geometry.pageWidth+'x'+native.geometry.pageHeight+', in-frame viewport origin x='+measure.originX+', marker '+(measure.marker?'installed':'not needed')+', delta '+measure.deltaX.toFixed(3)+'/'+measure.deltaY.toFixed(3)+' px');
  }
- assert.equal(evidence.scenes.length,7);assert.ok(evidence.scenes.flatMap(s=>s.api).length<=100);assert.ok(evidence.scenes.every(s=>s.closed));assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);assert.ok(Date.now()-started<budgetMs);evidence.phase='passed';
+  assert.equal(evidence.scenes.length,9);assert.ok(evidence.scenes.flatMap(s=>s.api).length<=100);assert.ok(evidence.scenes.every(s=>s.closed));assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);assert.ok(Date.now()-started<budgetMs);evidence.phase='passed';
 }catch(error){evidence.phase='failed';evidence.failure={name:error.name,message:error.message,stack:error.stack};throw error;}
 finally{try{await context?.close();}catch(error){evidence.cleanup.push('context:'+error.name);}for(const b of Object.values(browsers)){try{await b?.close();}catch(error){evidence.cleanup.push('browser:'+error.name);}}try{await server?.close();}catch(error){evidence.cleanup.push('server:'+error.name);}evidence.elapsedMs=Date.now()-started;if(evidence.cleanup.length)evidence.phase='failed';save();console.log('evidence '+out+'/evidence.json '+evidence.phase+' '+evidence.elapsedMs+'ms');}

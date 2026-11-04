@@ -172,16 +172,16 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
 
 test('optional snapshot layout capture excludes blocked geometry and drops only evidence at unsupported or size limits',()=>{
  const asset=readFileSync(resolve('public/replay.js'),'utf8'),start=asset.indexOf('// App adapter appended inside the private CommonJS closure around pinned rrweb.'),source=asset.slice(start,asset.lastIndexOf('\n})();'));
- function capture({count=2,padding='',extra={},unsupported=false,blocked=false,empty=false,scrollKind='',scrollTop=0}={}){
+ function capture({count=2,padding='',extra={},unsupported=false,blocked=false,empty=false,scrollKind='',scrollTop=0,textLength=null,rectangles=1,inline=false,mixed=false}={}){
   let options,stopped=0;const emitted=[],lookups=[],hub={},window={__ten98FoundationHub:hub,scrollX:0,scrollY:0};
-  const css={writingMode:'horizontal-tb',position:'static',transform:'none',perspective:'none',rotate:'none',scale:'none',translate:'none',animationName:'none',transitionDuration:'0s',overflowX:'visible',overflowY:'visible'};
+  const css={writingMode:'horizontal-tb',position:'static',transform:'none',perspective:'none',rotate:'none',scale:'none',translate:'none',animationName:'none',transitionDuration:'0s',overflowX:'visible',overflowY:'visible',display:inline?'inline':'block',whiteSpace:'normal',minHeight:'0px',maxHeight:'none',content:'none',paddingTop:'0px',paddingRight:'0px',paddingBottom:'0px',paddingLeft:'0px',borderTopWidth:'0px',borderRightWidth:'0px',borderBottomWidth:'0px',borderLeftWidth:'0px'};
   window.getComputedStyle=node=>({...css,...node===scroller&&scrollKind?{overflowY:'auto'}:{},...unsupported?{transform:'matrix(1,0,0,1,1,0)'}:{}});
   const nodes=Array.from({length:count},(_,i)=>({type:2,id:i+2,tagName:'div',attributes:{},...extra}));
   if(blocked)nodes.push({type:2,id:9000,tagName:'div',attributes:{rr_width:'40px',rr_height:'40px'},childNodes:[{type:2,id:9001,tagName:'span'}]});
-  const liveNode=()=>({nodeType:1,scrollLeft:0,scrollTop:0,getClientRects:()=>empty?[]:[{}],getBoundingClientRect:()=>({left:10,top:20,width:30,height:40})});
+  const liveNode=()=>({nodeType:1,scrollLeft:0,scrollTop:0,...textLength===null?{}:{tagName:'P',textContent:'*'.repeat(textLength),childNodes:mixed?[{nodeType:3},{nodeType:1}]:[{nodeType:3}]},getClientRects:()=>empty?[]:[{}],getBoundingClientRect:()=>({left:10,top:20,width:30,height:40})});
   const scroller={...liveNode(),scrollTop,clientHeight:300,scrollHeight:1200},root=scrollKind==='root'?scroller:liveNode();if(scrollKind==='root')window.scrollY=scrollTop;
   const record=opts=>{options=opts;return()=>{stopped++;};};record.mirror={getNode:id=>{lookups.push(id);if(id>=9000)throw Error('Private blocked geometry was read');return id===2&&scrollKind?scroller:liveNode();}};
-  const document={currentScript:{getAttribute:()=> 'record'},querySelector:()=>null,documentElement:root,scrollingElement:root,body:scrollKind==='body'?scroller:liveNode()};
+  const document={currentScript:{getAttribute:()=> 'record'},querySelector:()=>null,documentElement:root,scrollingElement:root,body:scrollKind==='body'?scroller:liveNode(),createRange:()=>({selectNodeContents(){},getClientRects:()=>Array.from({length:rectangles},()=>({left:10,top:20,width:30,height:20}))})};
   runInNewContext('(function(){'+source+'\n})();',{module:{exports:{record}},document,window,TextEncoder},{timeout:1000});
   const stop=hub.startReplayRecorder({maskLevel:'strict',blockSelector:''},event=>emitted.push(event));assert.equal(typeof stop,'function');
   const event={type:2,timestamp:1,data:{node:{type:0,id:1,childNodes:nodes},initialOffset:{left:0,top:window.scrollY},padding}};if(padding==='byte-limit'){event.data.padding='';event.data.padding='x'.repeat(4194304-Buffer.byteLength(JSON.stringify(event))-10000);}options.emit(event);
@@ -191,6 +191,10 @@ test('optional snapshot layout capture excludes blocked geometry and drops only 
  assert.deepEqual(scrollCases,[true,true,false,false,false,false],'Only the actual document root may scroll: body and div must both omit metadata, including before their first scroll.');
  const visible=capture({blocked:true});assert.deepEqual(visible.event.data.ten98Layout,{version:1,boxes:[[3,10,20,30,40],[2,10,20,30,40]]});assert.deepEqual(visible.lookups,[3,2]);
  assert.deepEqual(capture({empty:true}).event.data.ten98Layout.boxes,[[3],[2]],'Non-rendered elements use an explicit empty marker');
+ assert.equal(capture({textLength:100}).event.data.ten98Layout.version,2);
+ assert.equal(capture({textLength:100,inline:true}).event.data.ten98Layout.version,1,'Inline text receives no block-restoration evidence');
+ assert.equal(capture({textLength:100,mixed:true}).event.data.ten98Layout.version,1,'Mixed inline children receive no block-restoration evidence');
+ for(const settings of [{textLength:8193},{textLength:200,count:200},{textLength:1,count:257},{textLength:1,rectangles:65},{textLength:1,rectangles:64,count:9}])assert.equal(capture(settings).event.data.ten98Layout,undefined,'Optional text evidence is omitted at its bounds without stopping ordinary capture');
  for(const settings of[{unsupported:true},{count:1001},{count:1000,extra:{a:1,b:1,c:1,d:1,e:1,f:1,g:1,h:1,i:1,j:1}},{count:1000,padding:'byte-limit'}]){
   const result=capture(settings);assert.equal(result.event.data.ten98Layout===undefined,true,'Evidence must be dropped for '+JSON.stringify({...settings,padding:settings.padding?.length}));assert.equal(result.event.type,2);assert.equal(result.event.data.node.childNodes.length,settings.count||2);
  }

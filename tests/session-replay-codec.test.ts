@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {randomBytes} from 'node:crypto';
-import {replayBase64,readReplayChunk,readStoredReplayChunk,replayLimits} from '../src/lib/session-replay.ts';
+import {randomBytes,createHash} from 'node:crypto';
+import {replayBase64,readReplayChunk,readStoredReplayChunk,replayLimits,reassembleReplay} from '../src/lib/session-replay.ts';
 import {assembleStoredReplay} from '../src/server/session-replay.ts';
 
 // The previous decode-and-re-encode codec is the oracle for strict canonical behavior.
@@ -33,6 +33,15 @@ test('replay base64 decodes valid input byte-exactly and rejects invalid input i
 });
 
 const fastest=(work:()=>unknown,runs:number)=>{let best=Infinity;for(let n=0;n<runs;n++){const start=performance.now();work();best=Math.min(best,performance.now()-start);}return best;};
+test('historical and text-redacted snapshot evidence preserves exact retained bytes and event identities',()=>{
+ for(const ten98Layout of [undefined,{version:1,boxes:[[2,0,0,220,220]]},{version:2,boxes:[[2,0,0,220,220]],texts:[{id:2,rects:[[0,0,200,22],[0,22,200,22]]}]}]){
+  const event={type:2,timestamp:2,data:{node:{type:0,id:1,childNodes:[{type:2,id:2,tagName:'p',attributes:{},childNodes:[{type:3,id:3,textContent:'***'}]}]},initialOffset:{left:0,top:0},...ten98Layout?{ten98Layout}:{}}};
+  const raw=Buffer.from(JSON.stringify([event])),wire=readReplayChunk(raw.toString('base64url')),stored=readStoredReplayChunk(raw);
+  assert.deepEqual(Buffer.from(wire.bytes),raw);assert.deepEqual(Buffer.from(stored.bytes),raw);
+  const decoded=reassembleReplay(stored.parts).events[0];assert.deepEqual(decoded,event);
+  const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');assert.equal(hash(decoded),hash(event));
+ }
+});
 test('256 KiB replay decoding stays within a generous time bound',()=>{
  const wire=randomBytes(replayLimits.chunkBytes).toString('base64url');replayBase64(wire);
  // The previous codec took about 60 ms per 256 KiB chunk; this one takes about 1 ms.

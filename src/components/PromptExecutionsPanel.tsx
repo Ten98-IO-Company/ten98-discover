@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useConfirmDialog,Disclosure,Tooltip} from '@ten98/ui';
-import {Link} from '@tanstack/react-router';
+import {Link,useBlocker} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelPreparation,type ModelPreparationRoute} from './OpenRouterModelPicker';
@@ -30,7 +30,7 @@ type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConf
 type DetailResponse={role:Role;comparison:Comparison};
 type RecoveryResponse=DetailResponse&{recovery:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
-type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;initialExpiredAnswerIds?:string[];initialExpiredInputComparisonIds?:string[];onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
+type Props={onReadNavigate?:(entry:Exclude<ExecutionEntry,{kind:'configure'}>)=>void;workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;initialExpiredAnswerIds?:string[];initialExpiredInputComparisonIds?:string[];onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
 type Screen='setup'|'preparation'|'unknown'|'history'|'detail';
 type Attempt=Readonly<{preparationId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
@@ -98,7 +98,7 @@ export function PromptExecutionsPanel(props:Props){
   const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:props.entry.kind==='receipt'?`${props.entry.promptId}:${props.entry.comparisonId}`:'history';
   return <Panel key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.entry.kind}:${key}`} {...props}/>;
 }
-function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired,initialExpiredAnswerIds=[],initialExpiredInputComparisonIds=[]}:Props){
+function Panel({onReadNavigate,workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired,initialExpiredAnswerIds=[],initialExpiredInputComparisonIds=[]}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
@@ -176,9 +176,10 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   }
   useEffect(()=>{mounted.current=true;void refreshMetadata();return ()=>{mounted.current=false;generation.current++;operation.current?.controller.abort();operation.current=null;};},[B]);
   useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,preparation?.id,comparison?.id,accessLost]);
+  useBlocker({shouldBlockFn:async()=>!!operation.current?.write||!await mayLeave(),enableBeforeUnload:()=>!!attemptRef.current||!!operation.current?.write});
   async function mayLeave(){return !attemptRef.current||(await confirm({title:'Leave this run?',description:'This start may already have been accepted. Leaving discards local retry controls and does not stop server work.',confirmLabel:'Leave run'})&&!operation.current?.write);}
   async function back(){if(operation.current?.write||!await mayLeave())return;invalidate();setPending(null);backRef.current();}
-  async function history(){if(operation.current?.write||!await mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setPreparation(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
+  async function history(){if(operation.current?.write||!await mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setPreparation(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');onReadNavigate?.({kind:'history'});void refreshMetadata();}
   function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setPreparation(null);setError(null);setNotice(null);change();}
   function showComparison(data:DetailResponse,explicit=true){
     if(data.comparison.inputExpired){expiredInputs.current.add(data.comparison.id);expiryRef.current?.({comparisonId:data.comparison.id,answerIds:[],inputIds:data.comparison.runs.map(run=>run.id)});}
@@ -187,7 +188,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
     applyRole(data.role);setComparison(data.comparison);selection.current=data.comparison.id;
     setCards(old=>Object.fromEntries(data.comparison.runs.map(run=>[run.id,run.resultExpired?emptyCard():{...(old[run.id]??emptyCard()),run:old[run.id]?.run?{...old[run.id].run!,...run}:null,loading:false,sourcesLoading:false}])));
     setMetadata(old=>old?{...old,comparisons:[data.comparison,...old.comparisons.filter(c=>c.id!==data.comparison.id)].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||b.id.localeCompare(a.id)).slice(0,20)}:old);
-    if(explicit){pollingUntil.current=Date.now()+300_000;setPolling(active(data.comparison)&&!document.hidden);move('detail');}else if(!active(data.comparison))setPolling(false);
+    if(explicit){pollingUntil.current=Date.now()+300_000;setPolling(active(data.comparison)&&!document.hidden);move('detail');onReadNavigate?.({kind:'receipt',comparisonId:data.comparison.id,promptId:data.comparison.prompt.id});}else if(!active(data.comparison))setPolling(false);
   }
   async function readComparison(op:Operation,id:string,automatic=false,expected?:Summary){
     const raw=await api<unknown>(B+'/comparisons/'+encodeURIComponent(id)+'/summary',{signal:op.controller.signal});if(!current(op)||selection.current!==id)return false;
@@ -343,26 +344,28 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
       {screen==='preparation'&&runRequested.current&&<p role="status">Starting answers…</p>}
       {screen==='unknown'&&preparation&&writer&&<div className="banner"><p>The run may already have started. Retry this same request or inspect Recent runs.</p><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||!attempt}>Retry same request</button></div>}
       {screen==='unknown'&&attempt&&!writer&&<div className="banner"><p>The pending Start request is retained. Your current role cannot start or retry requests; inspect saved runs or refresh access before recovery.</p><button type="button" className="btn" disabled={writing} onClick={()=>void refreshMetadata()}>Refresh recovery access</button></div>}
-      {screen==='history'&&<div className="card stack"><div className="row between"><h3>Recent prompt runs</h3><button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Refresh</button></div><p className="hint">Latest 20 prompt runs across this project, regardless of prompt-library filters.</p>
+      {screen==='history'&&<div className="card stack"><div className="row between"><Tooltip content="Latest 20 prompt runs across this project, regardless of prompt-library filters."><button type="button" className="btn ghost" aria-label="About recent runs">About recent runs</button></Tooltip><button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Refresh</button></div>
         {metadata.comparisons.length===0&&!error?<p>No prompt runs yet. Choose a saved prompt in the library to review your first run.</p>:metadata.comparisons.length>0&&<div className="table-wrap" role="region" aria-label="Recent prompt runs" tabIndex={0}><table style={{minWidth:680}}><thead><tr><th>Authored prompt version</th><th>Models</th><th>Started</th><th>Outcome</th><th>Action</th></tr></thead><tbody>{metadata.comparisons.map(c=><tr key={c.id}><td style={{minWidth:200,...textStyle}}>{c.prompt.textPreview}</td><td>{c.runs.map(r=>modelName(r.model)).join(' + ')}</td><td>{when(c.createdAt)}</td><td>{c.runs.filter(r=>r.requestStatus==='uncertain').length>0?`${c.runs.filter(r=>r.requestStatus==='uncertain').length} need request review`:c.runs.map(outcome).join(' · ')}</td><td><button type="button" className="btn" onClick={()=>void openComparison(c.id)} disabled={writing}>Open run</button></td></tr>)}</tbody></table></div>}
       </div>}
-      {metadata.scheduling?.available===true&&metadata.scheduling.kind==='owner-approved-text-v1'&&<PromptRecurringPanel projectId={projectId} userId={userId} role={role} preparation={screen==='preparation'&&!attempt?preparation:null} onUnauthorized={onUnauthorized} onRole={value=>{if(roleAuthority.current===recurringAuthority)applyRole(value);}} onOpenComparison={id=>void openComparison(id)}/>}
       {screen==='detail'&&(comparison?<div className="stack">
-        <div className="card"><div className="row between"><h3>Authored prompt version</h3><button type="button" className="btn" onClick={()=>void openComparison(comparison.id)} disabled={writing}>Refresh status</button></div><p style={textStyle}>{comparison.prompt.textPreview}</p><p>Started {when(comparison.createdAt)} · {comparison.runs.length} model {comparison.runs.length===1?'request':'requests'}</p>
+        <div><div className="row between"><h3 style={textStyle}>{comparison.prompt.textPreview}</h3><button type="button" className="btn" onClick={()=>void openComparison(comparison.id)} disabled={writing}>Refresh status</button></div>
           {active(comparison)&&<p className="hint">{polling?'Checking saved status every 5 seconds, for at most 5 minutes.':'Automatic status checks stopped. Refresh status to check again.'}</p>}
           {writer&&comparison.canCancel&&<div><button type="button" className="btn" onClick={()=>void cancel()} disabled={writing}>Stop remaining requests</button><p className="hint">Requests already sent may still complete. Leaving this page does not cancel them.</p></div>}
-          {comparison.inputExpired?<p>Copied execution input expired under workspace retention. The authored version preview above is preserved separately.</p>:<Disclosure summary="Copied prompt and system input" variant="plain">{comparison.messages?<Messages messages={comparison.messages}/>:<p>Copied input is unavailable.</p>}</Disclosure>}
-          {(comparison.runs.some(r=>r.requestStatus==='uncertain')||metadata.requestsPaused)&&<div className="banner">{comparison.runs.some(r=>r.requestStatus==='uncertain')&&<p>This request outcome is unconfirmed. Check the original request before retrying it.</p>}{metadata.requestsPaused&&<p>Provider requests are paused by an owner.</p>}{providerHelp}</div>}
+          {comparison.runs.some(r=>r.requestStatus==='uncertain')&&<div className="banner"><p>This request outcome is unconfirmed. Check the original request before retrying it.</p></div>}
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,320px),1fr))',gap:16,minWidth:0}}>{comparison.runs.map(summary=>{const card=cards[summary.id]??emptyCard(),run=card.run??summary,detail=card.run;return <article className="card stack" key={run.id} style={{minWidth:0}}>
           <h3 style={{overflowWrap:'anywhere'}}><bdi dir="ltr">{modelName(run.model)}</bdi> · {run.provider}</h3><strong>{outcome(run)}</strong>
-          <Disclosure summary="Request details" variant="plain"><p>Request state: {run.requestStatus??'Saved answer reused'}</p><p>Request ID: <bdi dir="ltr">{run.id}</bdi></p><p>{run.reuse?'Saved answer reused; no new provider request.':'One model request'}</p></Disclosure>
           {run.reuse&&<div><p>Reused answer observed {when(run.reuse.observedAt)}. This action made no provider request.</p><p className="hint">Source run <bdi dir="ltr">{run.reuse.sourceRunId}</bdi>.</p></div>}
           {run.diagnostic&&<p style={textStyle}>{run.diagnostic}</p>}
           {run.status==='uncertain'&&<div className="banner"><p>The request outcome is unconfirmed.</p>{role==='owner'?(detail?.generationId?<><button type="button" className="btn" onClick={()=>void recover(detail)} disabled={writing}>Check original request</button><p className="hint">Read-only provider lookup; does not request another answer.</p></>:<p>{card.loading?'Loading the saved request metadata.':card.error?'Request metadata is unavailable until this answer is reloaded.':'No saved generation ID is available for automatic matching. The request outcome remains unresolved.'}</p>):<p>A workspace owner can review this request.</p>}</div>}
           <AnswerView run={run} card={card} busy={busy} onAnswer={()=>void retryCard(summary)} onSources={()=>void retryCard(summary,true)}/>
-        </article>;})}</div><p className="hint">These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Recurring tracking requires a separate explicit owner approval and always requests fresh answers.</p>
+          <Disclosure summary="Request details" variant="plain"><p>Request state: {run.requestStatus??'Saved answer reused'}</p><p>Request ID: <bdi dir="ltr">{run.id}</bdi></p><p>{run.reuse?'Saved answer reused; no new provider request.':'One model request'}</p></Disclosure>
+        </article>;})}</div>
+        <Disclosure summary="Run details" variant="plain"><p>Started {when(comparison.createdAt)} · {comparison.runs.length} model {comparison.runs.length===1?'request':'requests'}</p>{metadata.requestsPaused&&<><p>Provider requests are paused by an owner.</p>{providerHelp}</>}</Disclosure>
+        {comparison.inputExpired?<p>Copied execution input expired under workspace retention. The authored version preview above is preserved separately.</p>:<Disclosure summary="Copied prompt and system input" variant="plain">{comparison.messages?<Messages messages={comparison.messages}/>:<p>Copied input is unavailable.</p>}</Disclosure>}
+        <Tooltip content="These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Recurring tracking requires a separate explicit owner approval and always requests fresh answers."><button type="button" className="btn ghost">About these answers</button></Tooltip>
       </div>:<div><p>{error?'The selected run could not be read.':'Loading the selected run.'}</p>{error&&selection.current&&<button type="button" className="btn" onClick={()=>void openComparison(selection.current!)} disabled={writing}>Retry loading run</button>}</div>)}
+      {metadata.scheduling?.available===true&&metadata.scheduling.kind==='owner-approved-text-v1'&&<PromptRecurringPanel projectId={projectId} userId={userId} role={role} preparation={screen==='preparation'&&!attempt?preparation:null} onUnauthorized={onUnauthorized} onRole={value=>{if(roleAuthority.current===recurringAuthority)applyRole(value);}} onOpenComparison={id=>void openComparison(id)}/>}
     </>}
     {confirmDialog}
   </section>;
@@ -375,7 +378,7 @@ function AnswerView({run,card,busy,onAnswer,onSources}:{run:RunSummary;card:Card
   const result=card.run.result;
   return <>
     {state}
-    {result.text===''?<p>Provider returned an empty answer.</p>:<div role="region" aria-label={`Answer from ${modelName(run.model)}`} tabIndex={0} style={{...textStyle,maxHeight:'28rem',overflow:'auto',minWidth:0}}>{result.text}</div>}
+    {result.text===''?<p>Provider returned an empty answer.</p>:<div role="region" aria-label={`Answer from ${modelName(run.model)}`} tabIndex={0} style={{...textStyle,maxHeight:'28rem',maxWidth:'75ch',overflow:'auto',minWidth:0}}>{result.text}</div>}
     <Disclosure summary={<>Reported citations ({card.total??'Unavailable'})</>} variant="plain">{card.total===0?<p>No citations reported.</p>:<><p>{card.sources.length} of {card.total??'an unavailable number of'} reported sources loaded.</p><ul>{card.sources.map((citation,index)=><li key={index} style={{overflowWrap:'anywhere'}}><a href={citation.url} target="_blank" rel="noopener noreferrer">{citation.title||citation.url}</a></li>)}</ul>{card.sourcesLoading&&<p role="status">Loading reported sources.</p>}{card.sourcesError?<div role="alert"><p>Could not load reported sources. {card.sourcesError}</p><button type="button" className="btn" onClick={onSources} disabled={busy}>Retry loading sources</button></div>:card.nextOffset!==null&&<button type="button" className="btn" onClick={onSources} disabled={busy||card.sourcesLoading}>Show more sources</button>}</>}</Disclosure>
     <Disclosure summary="Response metadata" variant="plain"><p>Resolved model: {result.resolvedModel} · Provider: {result.provider} · Finish: {result.finishReason}</p><p>Prompt tokens: {result.promptTokens??'Unavailable'} · Completion tokens: {result.completionTokens??'Unavailable'} · Received {when(result.receivedAt)}</p></Disclosure>
   </>;
