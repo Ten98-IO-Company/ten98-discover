@@ -3,7 +3,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import type {RankRole,RankTracker} from './RankTrackingView';
 import type {RankHistoryTarget,RankHistoryObservation,RankLatestRow,RankBaseline} from '../server/rank-history';
 import {RankHistoryView,type RankObservationFilters,type RankLatestDisplay,type RankObservationDisplay} from './RankHistoryView';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;entryKeywordId?:string;backLabel?:'Back to tracker'|'Back to reporting';onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void};
 type Keyword={id:string;keyword:string;matchCase:boolean;removed:boolean};

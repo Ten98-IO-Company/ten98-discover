@@ -30,7 +30,7 @@ try {
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'editor'),($1,$4,'viewer'),($5,$6,'owner')",[workspace,owner,editor,viewer,foreignWorkspace,outsider]);
   await pool.query(`INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Acme Corp','https://www.acmecorp.example.com',$3),($4,$2,'Other project','https://other.example.com',$5),($6,$7,'Foreign','https://foreign.example.com',$8)`,[project,workspace,randomUUID(),other,randomUUID(),foreignProject,foreignWorkspace,randomUUID()]);
   let context=await getProjectContext(project,owner);
-  assert.equal(context.revision,1);assert.equal(context.missingSections.length,4);assert.equal(context.profile.name,'Acme Corp');
+  assert.equal(context.revision,1);assert.equal(context.missingSections.length,4);assert.equal(context.profile.name,'Acme Corp');assert.deepEqual(context.personas,[]);
   assert.equal((await getProjectContext(project,viewer)).role,'viewer');
   for(const uid of [viewer,outsider]) await assert.rejects(updateProjectContext(project,uid,{revision:1,requestId:randomUUID(),updates:[{kind:'research',summary:'denied'}]}),fail(404));
   await assert.rejects(getProjectContext(foreignProject,owner),fail(404));
@@ -64,6 +64,48 @@ try {
   await assert.rejects(getContextResearch(other,owner,new URLSearchParams({cursor:context.researchLogNextCursor!})),fail(400));
   await pool.query('INSERT INTO report_template(id,project_id,name,brief) VALUES($1,$2,\'Brief\',$3)',[randomUUID(),project,'x'.repeat(300)]);
   context=await getProjectContext(project,owner);assert.equal(context.reportTemplates[0].preview.length,200);assert.equal(context.reportTemplates[0].truncated,true);
+
+  const personaIds=[randomUUID(),randomUUID()].sort();
+  const personaReceiptCount=async()=>(await pool.query('SELECT count(*)::int AS count FROM project_content_request WHERE project_id=$1',[project])).rows[0].count;
+  const personaReceiptsBefore=await personaReceiptCount(),personaRevision=context.revision;
+  const personasRequest={revision:personaRevision,requestId:randomUUID(),updates:personaIds.toReversed().map(id=>({kind:'persona',id,name:'Reader',description:'Needs reliable research. العربية 👩🏽‍💻'}))};
+  const personaReplies=await Promise.all([updateProjectContext(project,editor,personasRequest),updateProjectContext(project,editor,personasRequest)]);
+  for(const reply of personaReplies) {
+    assert.equal(reply.revision,personaRevision+1,'A replay increments the context revision only once.');
+    assert.deepEqual(reply.personas.map(persona=>persona.id),personaIds,'Equal persona names have stable id ordering.');
+    assert.ok(reply.personas.every(persona=>persona.updatedBy===editor&&Number.isFinite(new Date(persona.updatedAt).getTime())));
+  }
+  assert.equal(await personaReceiptCount(),personaReceiptsBefore+1,'A replay retains exactly one persona save receipt.');
+  context=personaReplies[0];
+  const personaEdit={revision:context.revision,requestId:randomUUID(),updates:[{kind:'persona',id:personaIds[1],name:'Advisor',description:''}]};
+  context=await updateProjectContext(project,editor,personaEdit);
+  assert.deepEqual(context.personas.map(persona=>[persona.id,persona.name,persona.description]),[[personaIds[1],'Advisor',''],[personaIds[0],'Reader','Needs reliable research. العربية 👩🏽‍💻']],'An edit keeps the stable id, clears description and sorts by name.');
+  for(const uid of [viewer,outsider]) for(const op of [{kind:'persona',id:randomUUID(),name:'Denied',description:''},{kind:'persona',id:personaIds[0],name:'Denied',description:''},{kind:'remove-persona',id:personaIds[0]}])
+    await assert.rejects(updateProjectContext(project,uid,{revision:context.revision,requestId:randomUUID(),updates:[op]}),fail(404));
+  await assert.rejects(updateProjectContext(project,editor,{revision:personaRevision,requestId:randomUUID(),updates:[{kind:'persona',id:personaIds[0],name:'Stale',description:''}]}),fail(409));
+  assert.deepEqual(await getProjectContext(project,viewer),{...context,role:'viewer'},'Denied and stale persona writes leave the context unchanged.');
+  context=await updateProjectContext(project,editor,{revision:context.revision,requestId:randomUUID(),updates:Array.from({length:18},(_,i)=>({kind:'persona',id:randomUUID(),name:'Reader '+i,description:''}))});
+  assert.equal(context.personas.length,20);
+  const atPersonaCap=context,receiptsAtPersonaCap=await personaReceiptCount();
+  await assert.rejects(updateProjectContext(project,editor,{revision:context.revision,requestId:randomUUID(),updates:[{kind:'persona',id:personaIds[0],name:'Must roll back',description:''},{kind:'persona',id:randomUUID(),name:'Twenty first',description:''}]}),fail(400));
+  assert.deepEqual(await getProjectContext(project,editor),atPersonaCap,'Exceeding the persona cap rolls back earlier edits in the batch.');
+  assert.equal(await personaReceiptCount(),receiptsAtPersonaCap);
+  await assert.rejects(updateProjectContext(other,editor,{revision:1,requestId:randomUUID(),updates:[{kind:'research',summary:'Must roll back with personas'},...Array.from({length:21},(_,i)=>({kind:'persona',id:randomUUID(),name:'Reader '+i,description:''}))]}),fail(400));
+  const rolledBackPersonas=await getProjectContext(other,editor);
+  assert.equal(rolledBackPersonas.revision,1);assert.deepEqual(rolledBackPersonas.personas,[]);assert.deepEqual(rolledBackPersonas.researchLog,[]);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM project_content_request WHERE project_id=$1',[other])).rows[0].count,0);
+  const foreignPersonaId=randomUUID();
+  const foreignPersonaContext=await updateProjectContext(foreignProject,outsider,{revision:1,requestId:randomUUID(),updates:[{kind:'persona',id:foreignPersonaId,name:'Foreign reader',description:'Keep foreign content'}]});
+  await assert.rejects(updateProjectContext(project,editor,{revision:context.revision,requestId:randomUUID(),updates:[{kind:'persona',id:personaIds[0],name:'Must roll back',description:''},{kind:'persona',id:foreignPersonaId,name:'Hijacked',description:''}]}),fail(409));
+  await assert.rejects(updateProjectContext(project,editor,{revision:context.revision,requestId:randomUUID(),updates:[{kind:'remove-persona',id:foreignPersonaId}]}),fail(404));
+  assert.deepEqual(await getProjectContext(foreignProject,outsider),foreignPersonaContext,'Foreign persona identifiers cannot be updated or removed.');
+  assert.deepEqual(await getProjectContext(project,editor),atPersonaCap,'A foreign id refuses the entire batch.');
+  assert.equal(await personaReceiptCount(),receiptsAtPersonaCap);
+  const personaRemoval={revision:context.revision,requestId:randomUUID(),updates:[{kind:'remove-persona',id:personaIds[1]}]};
+  context=await updateProjectContext(project,editor,personaRemoval);
+  assert.equal(context.personas.length,19);assert.ok(!context.personas.some(persona=>persona.id===personaIds[1]));
+  assert.deepEqual(await updateProjectContext(project,editor,personaRemoval),context,'Removal replay uses the original receipt.');
+  await pool.query("UPDATE context_persona SET updated_at=now()-interval '400 days' WHERE project_id=$1",[project]);
 
   const batch={requestId:randomUUID(),prompts:[{text:'Is Acme Corp useful?',tags:['TOFU','tofu']},{text:'Generic products',tags:['branded']},{text:'Question to version',topic:'Research'}]};
   const made=await Promise.all([createPrompts(project,editor,batch),createPrompts(project,editor,batch)]);
@@ -193,14 +235,20 @@ try {
   await lockedRead(demoted.token,demoted.key.id,true);
   const timedOutAt=Date.now();await lockedRead(readKey.token,readKey.key.id,false);console.log(`Bearer read lock_timeout path answered 401 after ${Date.now()-timedOutAt}ms while the table lock was still held.`);
   assert.equal((await http(`${root}/prompts`,'GET',undefined,{cookie:''})).status,401);
-  const authoredTables=['project_context','context_section','context_competitor','context_key_page','context_research','project_content_request','project_prompt','prompt_text_version'];
+  const authoredTables=['project_context','context_section','context_competitor','context_key_page','context_persona','context_research','project_content_request','project_prompt','prompt_text_version'];
   async function authoredSnapshot(){const result=[];for(const table of authoredTables)result.push((await pool.query(`SELECT count(*)::int AS count,md5(string_agg(row_to_json(t)::text,'' ORDER BY row_to_json(t)::text)) AS digest FROM ${table} t WHERE project_id=$1`,[project])).rows[0]);return result;}
   const beforeCleanup=await authoredSnapshot();
   await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at) VALUES($1,$2,'page_view','/expired',now()-interval '400 days')",[randomUUID(),project]);
   const cleanup=await runRetentionBatch(project);assert.equal(cleanup?.deletedEvents,1);
   assert.deepEqual(await authoredSnapshot(),beforeCleanup,'Analytics retention preserves authored context, prompt versions and mutation receipts.');
+  const cascadeProject=randomUUID(),cascadePersona=randomUUID();
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Cascade persona','https://cascade.example.com',$3)",[cascadeProject,workspace,randomUUID()]);
+  await updateProjectContext(cascadeProject,owner,{revision:1,requestId:randomUUID(),updates:[{kind:'persona',id:cascadePersona,name:'Delete with project',description:''}]});
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM context_persona WHERE id=$1',[cascadePersona])).rows[0].count,1);
+  await pool.query('DELETE FROM project WHERE id=$1',[cascadeProject]);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM context_persona WHERE id=$1',[cascadePersona])).rows[0].count,0,'Deleting a project cascades to its authored personas.');
   assert.equal(fetches,0);assert.equal(dnsLookups,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM provider_request')).rows[0].count,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM import_probe')).rows[0].count,0);
-  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP, bearer CAS receipts, cross-issuer replay, error-path authority recheck, authored-data retention protection; zero provider/DNS/job activity.');
+  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP, bearer CAS receipts, cross-issuer replay, error-path authority recheck, authored-data retention protection, persona CAS/edit/remove/caps/foreign-id isolation and project cascade; zero provider/DNS/job activity.');
 } finally {globalThis.fetch=fetchOriginal;Resolver.prototype.resolveTxt=dnsOriginal;await closeDatabase();}

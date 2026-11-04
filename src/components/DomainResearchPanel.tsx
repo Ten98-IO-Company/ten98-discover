@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {ApiError} from '../lib/api';
 import {Link} from '@tanstack/react-router';
@@ -6,7 +6,7 @@ import {Disclosure} from '@ten98/ui';
 import type {DomainRequest,DomainScope,DomainReport,DomainOrganicMetrics} from '../server/domain-research-input';
 import {citationPublicHost} from '../lib/citation-report';
 import type {BacklinkRequest,BacklinkResult,DomainResearchRequest,DomainResearchResult} from '../server/backlink-research-input';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role=WorkspaceRole;
 type Summary={id:string;preparationId:string;request:DomainResearchRequest;status:'queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';createdAt:string;completedAt:string|null;requestStatus:'reserved'|'dispatched'|'settled'|'uncertain'|'cancelled'};

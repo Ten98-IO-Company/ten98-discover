@@ -121,8 +121,8 @@ try {
   await (await editFilters()).getByLabel('Enable Origin', { exact: true }).check();
   await (await editFilters()).getByLabel('Origin equals', { exact: true }).fill(serving);
   await (await editFilters()).getByRole('button', { name: 'Apply filters', exact: true }).click();
-  await table.getByRole('cell', { name: serving, exact: true }).waitFor();
-  assert.equal(await table.getByRole('cell', { name: canonical, exact: true }).count(), 0);
+  await table.getByRole('rowheader', { name: serving, exact: true }).waitFor();
+  assert.equal(await table.getByRole('rowheader', { name: canonical, exact: true }).count(), 0);
   const downloadEvent = dashboard.waitForEvent('download');
   await explore.getByRole('button', { name: 'Download CSV', exact: true }).click();
   const download = await downloadEvent, stream = await download.createReadStream();
@@ -135,9 +135,10 @@ try {
     await dashboard.screenshot({ path: join(process.env.BROWSER_ARTIFACT_DIR, 'serving-origin-mobile.png'), fullPage: true });
   }
   await section('Overview', 'Latest events');
-  await dashboard.getByRole('columnheader', { name: 'Origin', exact: true }).waitFor();
-  assert.equal(await dashboard.getByRole('cell', { name: serving, exact: true }).count(), 1);
-  assert.equal(await dashboard.getByRole('cell', { name: canonical, exact: true }).count(), 1);
+  const eventTable = dashboard.getByRole('table', { name: 'Retained event rows', exact: true });
+  await eventTable.getByRole('columnheader', { name: 'Origin', exact: true }).waitFor();
+  assert.equal(await eventTable.getByRole('cell').filter({ has: dashboard.getByText(serving, { exact: true }) }).count(), 1);
+  assert.equal(await eventTable.getByRole('cell').filter({ has: dashboard.getByText(canonical, { exact: true }) }).count(), 1);
   stage = 'UI revocation and live consent reset';
   await section('Settings', 'Domains');
   await dashboard.getByRole('heading', { name: 'Domains and aliases', exact: true }).waitFor();

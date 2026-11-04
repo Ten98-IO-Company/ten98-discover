@@ -1,6 +1,6 @@
 import type * as React from 'react';
 import {Disclosure} from '@ten98/ui';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export type RankObservationFilters={device:'both'|'desktop'|'mobile';search:string;pinned:'all'|'true'|'false'};
 type RankBaselineDisplay={days:1|7|30|90;change:string;source:string;targetAt:string;observedAt:string;position:string};

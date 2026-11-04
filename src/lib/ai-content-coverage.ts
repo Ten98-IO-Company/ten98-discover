@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {auditPageOrder,auditPageSearchIn,auditPageSort,normalizeAuditPageFields} from './site-audit-pages.ts';
 import {aiQueryFilters,aiQueryFiltersSchema,aiQueryReportSchema} from './ai-search-analysis.ts';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 export const contentCoverageMethod='literal-phrase-boundary-v1' as const;
 export const contentCoverageLimits=Object.freeze({selectedPages:10000,readablePages:1000,rawBytes:8*1024*1024,queries:100,work:100_000_000,responseBytes:2*1024*1024,examples:5});

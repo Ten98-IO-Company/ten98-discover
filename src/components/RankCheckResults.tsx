@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 export type RankHistoryDisplay={id:string;createdAt:string;method:string;selection:string;status:string;requestStatus:string;availability:string};
 export type RankResultDisplay={id:string;status:string;target:string;method:string;selection:string;requestStatus:'not_started'|'reserved'|'dispatched'|'settled'|'uncertain'|'cancelled';createdAt:string;startedAt:string;completedAt:string;
  diagnostic:string|null;expired:boolean;rawExpired:boolean;canCancel:boolean;

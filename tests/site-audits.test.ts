@@ -54,3 +54,23 @@ test('Pages export accepts only the complete applied selector and exact revision
  for(const key of Object.keys(selection)){const missing={...selection} as Record<string,unknown>;delete missing[key];assert.throws(()=>parseSiteAuditPagesExport(missing),{status:400});}
  for(const change of [{limit:50},{cursor:'copied'},{pageIds:[randomUUID()]},{projectId:randomUUID()},{columns:['url']},{coverage:'complete'},{resourceKind:'script'},{search:null},{search:'x\n'},{search:'🐎'.repeat(201)},{searchIn:'title'},{sort:'p.id'},{order:'ASC'},{expectedSelectionRevision:'A'.repeat(64)},{expectedSelectionRevision:'a'.repeat(64)+'\n'}])assert.throws(()=>parseSiteAuditPagesExport({...selection,...change}),{status:400});
 });
+
+
+test('manual query opt-in preserves exact normalized full start paths',()=>{
+ assert.equal(parseSiteAuditStart(input).includeQueryUrls,false);
+ assert.equal(parseSiteAuditStart({...input,includeQueryUrls:false}).includeQueryUrls,false);
+ for(const [startPath,normalized] of [
+  ['/a/../Page/%2F?b=2&a=1&a=3','/Page/%2F?b=2&a=1&a=3'],
+  ['/page?','/page?'],
+  ['/page?term=a+b&term=a%20b&escape=%2f','/page?term=a+b&term=a%20b&escape=%2f'],
+  ['/page%3Fpart?q=1','/page%3Fpart?q=1'],
+ ]){const result=parseSiteAuditStart({...input,startPath,includeQueryUrls:true});assert.equal(result.startPath,normalized);assert.equal(result.includeQueryUrls,true);}
+ for(const startPath of ['/page?','/page?q=1'])assert.throws(()=>parseSiteAuditStart({...input,startPath,includeQueryUrls:false}),{status:400});
+});
+
+test('manual query opt-in does not admit fragments, authorities or malformed input',()=>{
+ for(const includeQueryUrls of [null,0,1,'true',{},[]])assert.throws(()=>parseSiteAuditStart({...input,includeQueryUrls}),{status:400});
+ for(const startPath of ['//other.example/?q=1','https://example.com/?q=1','/page?q=1#fragment','/page?q=%00','/page?q=%5c','/page?q=%zz','/page?q=\ud800','/page?q='+ 'a'.repeat(2048)])assert.throws(()=>parseSiteAuditStart({...input,startPath,includeQueryUrls:true}),{status:400});
+ const source=row();assert.equal(auditRunDto(source,'owner').config.includeQueryUrls,false);assert.equal(Object.hasOwn(source.config!,'includeQueryUrls'),false);
+ source.config!.includeQueryUrls=true;assert.equal(auditRunDto(source,'owner').config.includeQueryUrls,true);
+});

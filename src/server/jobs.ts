@@ -12,11 +12,13 @@ import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keywor
 import {domainResearchQueue,executeDomainResearch,reconcileDomainResearchJobs} from './domain-research.ts';
 import {promptExecutionQueue,executePromptExecution,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 import {suggestionQueue} from './ai-suggestions.ts';
+import {reconcileSiteAnalyses} from './site-analysis.ts';
 import {executeAiSuggestion,reconcileAiSuggestionJobs} from './ai-suggestion-worker.ts';
 import {aiSearchQueue,executeAiSearch,reconcileAiSearchJobs} from './ai-search.ts';
 import {contentSupportQueue} from './ai-content-support.ts';
 import {executeContentSupport,reconcileContentSupportJobs} from './ai-content-support-worker.ts';
 import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectChecks} from './domain-redirects.ts';
+import {claimDueSiteAuditOccurrence} from './site-audit-recurring.ts';
 import {siteAuditQueue} from './site-audits.ts';
 import {rankQueue} from './rank-execution.ts';
 import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
@@ -24,7 +26,7 @@ import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 import {accountClosureRetentionCron,accountClosureRetentionJobOptions,accountClosureRetentionQueue,runClosedAccountRetention} from './account-closure-retention.ts';
-const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
+const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileSiteAnalyses, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
 /**
@@ -236,7 +238,7 @@ export function startWorker(): Promise<void> {
       // prior claim. ponytail: one due tracker per family per tick caps each at six
       // starts/minute; use a bounded claim queue if workload requires more.
       recurringTimer = setInterval(() => {
-        if (!recurringTask) recurringTask = Promise.allSettled([claimDueRankOccurrence(),claimDuePromptOccurrence()])
+        if (!recurringTask) recurringTask = Promise.allSettled([claimDueRankOccurrence(),claimDuePromptOccurrence(),claimDueSiteAuditOccurrence()])
           .then(results=>{if(results.some(result=>result.status==='rejected'))console.error('Recurring schedule check failed; inspect schedule status and database availability.');})
           .finally(() => { recurringTask = undefined; });
       }, 10_000);

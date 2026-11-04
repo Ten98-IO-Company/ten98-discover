@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {Disclosure,SegmentedControl} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {useEffect,useId,useRef,useState,type FormEvent}from'react';
@@ -17,7 +17,7 @@ import{revenueCalendarPresets,revenueCalendarRange,revenueCalendarMonthCount,adj
 import{TimeSeriesChart,foldChartSeries,type ChartPoint,type ChartSeries}from'@ten98/ui';
 import{formatReportInstant}from'../lib/report-time';
 import'./revenue.css';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type RevenueDraft={scope:Draft;currency:string;cohort:CohortRef|null;compare:AnalyticsComparisonMode|null};
 type PickerKind='segments'|'cohorts';

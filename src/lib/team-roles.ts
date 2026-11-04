@@ -1,4 +1,4 @@
-import { mayGrantWorkspaceRole, workspaceRoles, type WorkspaceRole } from '@ten98/runtime';
+import { mayGrantWorkspaceRole, workspaceRoles, type WorkspaceRole } from '@ten98/runtime/browser';
 
 /** Roles the actor may assign to an existing member. */
 export function assignableRoles(actor: unknown): WorkspaceRole[] {

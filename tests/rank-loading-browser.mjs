@@ -18,7 +18,7 @@ const cwd = process.cwd(), artifactDir = resolve(cwd, 'private/rank-loading-brow
 const fixture = await loadNavigationSession({baseUrl: process.env.BASE_URL ?? 'http://localhost:3094', override: process.env.TEN98_SHELL_FIXTURE});
 assert.equal(fixture.synthetic, true); assert.equal(fixture.role, 'viewer'); assert.equal(fixture.externalRequests, 0);
 const initialUrl = new URL(fixture.url), origin = initialUrl.origin;
-assert.equal(origin, 'http://localhost:3094', 'Only the released, owned synthetic app is allowed');
+assert.ok(['http://localhost:3094', 'http://127.0.0.1:3094'].includes(origin), 'Only the released, owned synthetic app is allowed');
 const workspaceId = initialUrl.searchParams.get('workspace'), projectId = initialUrl.searchParams.get('project');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 assert.match(workspaceId ?? '', uuid); assert.match(projectId ?? '', uuid);
@@ -37,7 +37,7 @@ const modules = new Map();
 for (const name of (await readdir(resolve(publicDir, 'assets'))).filter(name => name.endsWith('.js'))) {
   modules.set('/assets/' + name, await readFile(resolve(publicDir, 'assets', name), 'utf8'));
 }
-const candidates = [...modules].filter(([, code]) => code.includes('Saved trackers') && code.includes('Maximum billable pages'));
+const candidates = [...modules].filter(([, code]) => code.includes('Saved trackers') && code.includes('Maximum pages'));
 assert.equal(candidates.length, 1, 'Find the emitted rank family by its real code, not a filename guess');
 const [rankAsset, rankCode] = candidates[0], routeAsset = routeAssets[0], routeCode = modules.get(routeAsset);
 assert.ok(routeCode); assert.notEqual(rankAsset, routeAsset, 'Rank family must leave the eagerly loaded routes chunk');

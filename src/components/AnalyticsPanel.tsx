@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AppliedFilters, BarList, DataTable, EvidenceSummary, Text, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
+import { AppliedFilters, BarList, DataTable, Disclosure, EvidenceSummary, ReportToolbar, Text, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { formatReportInstant } from '../lib/report-time';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
@@ -13,7 +13,7 @@ import {GeographyCard,geographyLabel,geographyLabels,validGeography,validGeograp
 import {analyticsDimensions,analyticsSelectionFields,analyticsFieldLimit,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionKey} from '../lib/analytics-dimensions';
 import {emptyAdvanced,readAdvanced,buildAdvanced,clean,focusAdvanced,initialDraft,buildParams,ExactFilterControls,TIMEZONES,patchLocationFilters,type Draft} from './ExplorerFilters';
 import './analytics.css';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type AnalyticsPanelProps = {
   projectId: string;
@@ -463,6 +463,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     <div className={'analytics'+(compareView?' analytics-compare':'')} aria-busy={busy}>
       {invalid&&<div className="alert" role="alert"><p>This Analytics link has invalid or unsupported applied scope. No analytics report was loaded. Analytics supports UTC dates, environment, location and literal page, event or campaign selections; cohorts, properties, other event kinds and advanced selections stay in Explore.</p>{onReturnToExplorer?<button type="button" className="btn" onClick={onReturnToExplorer}>Return to Explorer</button>:<p>The exact previous Explore link is not available in this history entry. Use browser Back or open Explore to choose a scope.</p>}<p>Reset deliberately clears these filters and loads the default Analytics range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
       <section className="card analytics-toolbar">
+        <ReportToolbar label="Analytics report controls" controls={<>
         <form onSubmit={applyDraft}>
           <fieldset className="analytics-fieldset" disabled={busy||invalid}>
             <legend className="sr-only">Time range (UTC)</legend>
@@ -517,6 +518,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
           )}
         </form>
         <AnalyticsExport key={queryKey+':'+readOwner} projectId={projectId} initial={exportDraft} unsupported={exportUnsupported} readOwner={readOwner+':'+String(reqRef.current)} readEnabled={exportEnabled} isParentCurrent={exportCurrent} onAccessLoss={exportAccessLost}/>        {compareView&&<div className="analytics-comparison-mode"><label htmlFor={`${uid}-compare`}>Compare with</label><select id={`${uid}-compare`} value={mode} disabled={busy||invalid} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsCompare:e.target.value as AnalyticsComparisonMode})}><option value="prev">Previous period</option><option value="yoy">Previous year</option></select></div>}
+        </>}/>
       </section>
       {!invalid&&(compareView||selection?.query)&&<SelectionControls key={queryKey} value={selection!.draft} busy={busy||Boolean(view.denied)} onApply={applySelection}/>}
       {!invalid&&Boolean(selection?.draft.fields.length)&&<section className="card analytics-environment-filters" aria-label="Applied report selection"><AppliedFilters label={compareView?'Selection applied to both periods':'Selection applied to all analytics'} filters={selection!.draft.fields.map(row=>({id:row.field,label:selectionLabel(row.field),operator:'is',value:row.operator==='eq'?JSON.stringify(row.value):row.operator==='exists'?'recorded':'missing',removeLabel:`Remove ${selectionLabel(row.field)} selection`}))} disabled={busy} onRemove={field=>{const built=buildAdvanced({...selection!.draft,fields:selection!.draft.fields.filter(item=>item.field!==field)});if('error'in built)return;applySelection(built.predicates?new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString():undefined);}}/></section>}
@@ -547,12 +549,11 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
         <>
           <section className="card analytics-overview">
             <div className="row between">
-              <h2>Overview</h2>
+              <h2 className="sr-only">Traffic summary</h2>
               <span className="dim analytics-range-label">
                 {data.range.from} to {data.range.to} (UTC)
               </span>
             </div>
-            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
             {data.coverage.status !== 'complete' && <p className="alert" role="status">
               {data.coverage.status === 'unavailable' ? 'This date range is unavailable after retention.' : 'This date range is partial after retention. Counts and estimates cover only retained observations.'}
               {data.coverage.retainedFrom && ` History is retained from ${formatReportInstant(data.coverage.retainedFrom,'UTC')}. Extending retention cannot restore deleted data.`}
@@ -587,6 +588,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.coverage.status !== 'unavailable' && data.measurement.identifiedPageViews !== null && data.totals.pageViews !== null && data.measurement.identifiedPageViews < data.totals.pageViews && <Text tone='muted'>Estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views.</Text>}
             <details className="analytics-details">
               <summary>How these numbers are measured</summary>
+              <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
               {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
               {data.collection && <p className="hint">
                 Current collection: {data.collection.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}.
@@ -599,17 +601,11 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
               <p>Cookieless and consented events use separate estimates. Changing consent may split one person into two estimates; basic activity is not attached to a later identified profile.</p>
               <p>Visits use hourly keys, with an existing page context retained for up to 30 minutes. A bounce has one page view and no custom events within this date range. Duration runs from the first to the last page view; it does not measure active engagement or time after the last page view.</p>
             </details>
-            <p className="footnote dim">
-              {data.lastReceivedAt
-                ? `Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`
-                : data.coverage.status === 'complete' ? 'No events in this date range.' : 'No events are available in the retained portion of this range.'}
-            </p>
           </section>
 
         </>
       )}
-          {!compareView&&<section className="card analytics-activity">
-            <h2>Daily activity (UTC)</h2>
+          {!compareView&&<section className="card analytics-activity" aria-label="Daily activity (UTC)">
             {data && <>
             {!hasData && data.coverage.status === 'complete' ? (
               <div className="empty analytics-empty-chart">
@@ -657,7 +653,6 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
           <GeographyCard key={queryKey} period="current" detail={data.geographyDetail} onDetail={loadLocation} data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
           {data.referrers&&<section className="card analytics-breakdown">
             <h2>Top referrers</h2>
-            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed. Referring website is on by default for new websites; older websites can turn it on in Settings › Privacy. Selecting a host filters every report to page views carrying that referrer; on every card, bounce rate and visit duration cover each whole visit that includes one.</p>
             {data.referrers.length === 0 ? (
               <><p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>{data.coverage.status!=='unavailable'&&search?.workspace&&<><p className="hint">Referrer capture is optional. Collection changes apply to future events.</p><Link className="btn ghost" to="/" search={{workspace:search.workspace,project:projectId,view:'collection'}}>Review collection settings</Link></>}</>
             ) : (
@@ -665,6 +660,9 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 columns={[{ key: 'host', header: 'Referrer', rowHeader: true, wrap: true, render: row => <button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('referrer',{type:'string',value:row.host})} aria-label={`Filter Referrer: ${row.host}`}><bdi dir="ltr">{row.host}</bdi></button> },
                   { key: 'measure', header: referrersMeasured ? 'Estimated visitors' : 'Page views', numeric: true, render: row => fmtNum(referrersMeasured ? row.visitors : row.pageViews) }]} />
             )}
+            <Disclosure summary="About referring sites" variant="plain">
+            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed. Referring website is on by default for new websites; older websites can turn it on in Settings › Privacy. Selecting a host filters every report to page views carrying that referrer; on every card, bounce rate and visit duration cover each whole visit that includes one.</p>
+            </Disclosure>
           </section>}
           <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>
         </>

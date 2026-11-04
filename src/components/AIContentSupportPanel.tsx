@@ -7,7 +7,7 @@ import {contentSupportPrepareInputSchema,contentSupportStartInputSchema,contentS
 import type {OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi,readModelCatalog,modelUnavailableReason,validModelPreparation} from './OpenRouterModelPicker';
 import {readSupportList,readSupportPreparation,readSupportRun,supportQueryId,supportSource,supportSourceKey,supportReceipt,sameSupportReceipt,preparationCurrent,type SupportRole,type SupportList,type SupportSourceReport} from './ai-content-support-ui';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 type Props={workspaceId:string;projectId:string;report?:SupportSourceReport;alive:()=>boolean;onUnauthorized:()=>void;onDenied:()=>void;onRole:(role:SupportRole)=>void;onClose:()=>void};
 type Run=ContentSupportRunDto['run'];type Preparation=ContentSupportPreparationDto['preparation'];

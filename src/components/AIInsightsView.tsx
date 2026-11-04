@@ -2,7 +2,7 @@ import {useEffect,useState} from 'react';
 import {Alert, BarList, Button, Card, DataTable, Inline, Input, MetricCard, ReportToolbar, Select, Sparkline, Stack, Tabs, TimeSeriesChart,Tooltip,Disclosure} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg} from './ai-trend-svg';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 export type AIInsightsDraft = {
   from: string; to: string; timeZone: string; model: string;
   promptId: string; tag: string;

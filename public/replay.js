@@ -17690,6 +17690,43 @@ function replayAttributes(attributes, strict) {
     else if (strict && ['title', 'alt', 'placeholder', 'aria-label', 'aria-description'].includes(lower)) attributes[key] = replayMask(value);
   }
 }
+
+/** @param {unknown} snapshot @returns {Ten98Tracker.LayoutNode[]} */
+function replayLayoutNodes(snapshot){
+  var pending=[/** @type {Ten98Tracker.LayoutNode} */ (snapshot)],result=[],ids=new Set();
+  while(pending.length){var node=/** @type {Ten98Tracker.LayoutNode} */ (pending.pop());
+    if(!node||typeof node!=='object'||node.isShadow||node.isShadowHost)throw Error('Unsupported layout tree.');
+    if(node.type===2){
+      if(!Number.isSafeInteger(node.id)||node.id<1||ids.has(node.id))throw Error('Invalid layout ID.');ids.add(node.id);
+      if(node.attributes&&('rr_width' in node.attributes||'rr_height' in node.attributes))continue;
+      if(result.length===1000)throw Error('Layout limit.');result.push(node);
+    }
+    if(Array.isArray(node.childNodes))pending.push(...node.childNodes);
+  }return result;
+}
+/** @param {Element} node @param {Document} doc @param {Window} view */
+function replayLayoutSupported(node,doc,view){
+  var s=view.getComputedStyle(node);
+  return !node.shadowRoot&&s.writingMode==='horizontal-tb'&&s.position!=='sticky'&&
+    /** @type {const} */ (['transform','perspective','rotate','scale','translate']).every(function(k){return s[k]==='none';})&&
+    (!s.animationName||s.animationName==='none')&&(!s.transitionDuration||s.transitionDuration.split(',').every(function(v){return parseFloat(v)===0;}))&&
+    (node===doc.scrollingElement||!(node.scrollLeft||node.scrollTop)&&!((/auto|scroll/.test(s.overflowX)&&node.scrollWidth>node.clientWidth)||(/auto|scroll/.test(s.overflowY)&&node.scrollHeight>node.clientHeight)));
+}
+/** @param {Element} node @returns {number[]} */
+function replayLayoutRect(node){if(!node.getClientRects().length)return[];var r=node.getBoundingClientRect(),v=[r.left,r.top,r.width,r.height];if(!v.every(Number.isFinite))throw Error('Invalid layout box.');return v;}
+/** @param {Ten98Tracker.RrwebEvent} event */
+function replayCaptureLayout(event){
+  try{
+    var offset=/** @type {{left:number;top:number}} */ (event.data.initialOffset);
+    if(!offset||offset.left!==window.scrollX||offset.top!==window.scrollY)throw Error('Snapshot moved.');
+    var boxes=replayLayoutNodes(event.data.node).map(function(n){var node=core.record.mirror.getNode(n.id);if(!node||node.nodeType!==1||!replayLayoutSupported(/** @type {Element} */ (node),document,window))throw Error('Unsupported layout.');return[n.id].concat(replayLayoutRect(/** @type {Element} */ (node)));});
+    event.data.ten98Layout={version:1,boxes:boxes};
+    var pending=/** @type {unknown[]} */ ([event]),count=0;
+    while(pending.length){var value=pending.pop();if(++count>20000)throw Error('Layout structure limit.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
+    if(new TextEncoder().encode(JSON.stringify(event)).length>4194304)throw Error('Layout byte limit.');
+  }catch(_){delete event.data.ten98Layout;}
+}
+
 /** @param {Ten98Tracker.RrwebEvent} original @param {boolean} strict @returns {Ten98Tracker.RecorderEvent|null} */
 function replaySafeEvent(original, strict) {
   if (!original || !Number.isInteger(original.type) || original.type < 0 || original.type > 4) return null;
@@ -17725,6 +17762,7 @@ function replaySafeEvent(original, strict) {
     for (var field of ['replace','replaceSync']) if (typeof event.data[field] === 'string') event.data[field] = replayCss(/** @type {string} */ (event.data[field]),strict);
     if (event.data.set && typeof event.data.set.property === 'string' && typeof event.data.set.value === 'string') event.data.set.value = replayCss(event.data.set.value,strict,event.data.set.property);
   }
+  if(event.type===2)replayCaptureLayout(event);
   // The integer event kind was bounded above; metadata is replaced with the local safe viewport.
   return /** @type {Ten98Tracker.RecorderEvent} */ (event);
 }
@@ -17772,13 +17810,19 @@ if (mode === 'record') {
   /** @type {number|null} */
   var heatmapFrame = null;
   var heatmapAttempts = 0;
+  /** @type {Record<string,unknown>|null} */
+  var heatmapSnapshot=null;
+  /** @type {(()=>boolean)|null} */
+  var heatmapLayoutCheck=null;
+  /** @type {MutationObserver|null} */
+  var heatmapLayoutObserver=null;
   /** @type {(()=>void)|null} */
   var heatmapPaint = null;
   /** @type {Ten98Tracker.HeatmapExtent|null} */
   var heatmapExtent = null;
   /** @param {Ten98Tracker.ReplayPlayerMessage} value */
   function send(value) { if (port) port.postMessage(value); }
-  function destroy() { playing = false; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
+  function destroy() { playing = false; heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
   function fail() { destroy(); send({type:'error',message:'This recording could not be played safely.'}); }
   function position() { return player ? playing ? Math.max(0,Math.min(duration,player.getCurrentTime())) : pausedOffset : 0; }
   // rrweb 2.1.7 pauses before equal-timestamp events; recorded timestamps are integer ms.
@@ -17841,6 +17885,24 @@ if (mode === 'record') {
       addEventListener('pagehide',destroy,{once:true});addEventListener('unload',destroy,{once:true});return origin;
     }catch(_){release();return false;}
   }
+
+  /** @param {Document} doc @param {Window} view @param {Ten98Tracker.HeatmapOrigin} origin */
+  function verifyHeatmapLayout(doc,view,origin){
+    try{
+      var data=/** @type {Record<string,unknown>} */ (heatmapSnapshot),evidence=/** @type {Ten98Tracker.LayoutEvidence} */ (data.ten98Layout),offset=/** @type {{left:number;top:number}} */ (data.initialOffset);
+      if(!evidence||Object.keys(evidence).sort().join(',')!=='boxes,version'||evidence.version!==1||!Array.isArray(evidence.boxes)||!offset||!Number.isFinite(offset.left)||!Number.isFinite(offset.top))return false;
+      var nodes=replayLayoutNodes(data.node);if(nodes.length!==evidence.boxes.length)return false;
+      var boxes=new Map();for(var box of evidence.boxes){if(!Array.isArray(box)||![1,5].includes(box.length)||!box.every(Number.isFinite)||!Number.isSafeInteger(box[0])||boxes.has(box[0])||box.length===5&&(box[3]<0||box[4]<0))return false;boxes.set(box[0],box.slice(1));}
+      view.scrollTo(offset.left,offset.top);if(Math.abs(view.scrollX-offset.left)>1||Math.abs(view.scrollY-offset.top)>1)return false;
+      var mirror=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror();
+      var entries=nodes.map(function(n){var node=mirror.getNode(n.id),expected=boxes.get(n.id);if(!node||node.nodeType!==1||!expected)throw Error('Missing layout node.');var element=/** @type {Element} */ (node);if(!replayLayoutSupported(element,doc,view))throw Error('Unsupported layout.');var actual=replayLayoutRect(element);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;}if(actual.length!==expected.length||actual.some(function(v,i){return Math.abs(v-expected[i])>1;}))throw Error('Snapshot layout changed.');var fixed=false;for(var ancestor=element;ancestor;ancestor=/** @type {Element} */ (ancestor.parentElement)){if(view.getComputedStyle(ancestor).position==='fixed'){fixed=true;break;}}return{node:element,box:actual,fixed:fixed};});
+      heatmapLayoutCheck=function(){return entries.every(function(entry){var actual=replayLayoutRect(entry.node);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;if(!entry.fixed){actual[0]+=view.scrollX-offset.left;actual[1]+=view.scrollY-offset.top;}}return actual.length===entry.box.length&&actual.every(function(v,i){return Math.abs(v-entry.box[i])<=1;});});};
+      heatmapLayoutObserver=new MutationObserver(function(records){if(!player)return;for(var record of records)if(record.type!=='attributes'||record.target!==doc.documentElement||record.attributeName!=='class'||record.oldValue!==doc.documentElement.getAttribute('class')){fail();return;}});
+      heatmapLayoutObserver.observe(doc.documentElement,{subtree:true,attributes:true,attributeOldValue:true,childList:true,characterData:true});
+      return true;
+    }catch(_){return false;}
+  }
+
   function prepareHeatmap(){
     if(!player||!heatmap)return;
     var g=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap).geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement,origin=null;
@@ -17848,6 +17910,7 @@ if (mode === 'record') {
     if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
       if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;
     }
+    if(!origin||!verifyHeatmapLayout(doc,view,origin)){fail();return;}
     player.wrapper.style.position='relative';var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.setAttribute('viewBox','0 0 '+g.viewportWidth+' '+g.viewportHeight);svg.setAttribute('width',String(g.viewportWidth));svg.setAttribute('height',String(g.viewportHeight));
     // Anchor the plane at the frame's viewport origin: past the iframe's own border and the measured in-frame scrollbar offset.
@@ -17858,7 +17921,7 @@ if (mode === 'record') {
       if(!player)return;
       // Read the current validated setting per callback, without capturing the mutable global.
       var currentHeatmap=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap);
-      if(!heatmapRootSupported(readyDoc,readyView,g)||heatmapExtent&&!heatmapExtent.check()||readyRoot.scrollWidth!==g.pageWidth||readyRoot.scrollHeight!==g.pageHeight||readyRoot.clientWidth!==g.viewportWidth||readyRoot.clientHeight!==g.viewportHeight||readyView.getComputedStyle(readyRoot).direction!==g.direction){fail();return;}
+      if(!heatmapRootSupported(readyDoc,readyView,g)||!heatmapLayoutCheck||!heatmapLayoutCheck()||heatmapExtent&&!heatmapExtent.check()||readyRoot.scrollWidth!==g.pageWidth||readyRoot.scrollHeight!==g.pageHeight||readyRoot.clientWidth!==g.viewportWidth||readyRoot.clientHeight!==g.viewportHeight||readyView.getComputedStyle(readyRoot).direction!==g.direction){fail();return;}
       var left=readyView.scrollX+(g.direction==='rtl'?g.pageWidth-g.viewportWidth:0),top=readyView.scrollY;
       if(!Number.isFinite(left)||!Number.isFinite(top)||left<0||left>g.pageWidth-g.viewportWidth&&!(g.direction==='rtl'&&readyView.scrollX>0&&readyView.scrollX<=1)||top<0||top>g.pageHeight-g.viewportHeight){fail();return;}
       svg.replaceChildren();
@@ -17868,7 +17931,7 @@ if (mode === 'record') {
       }else { var scrollHeatmap=/** @type {Extract<Ten98Tracker.HeatmapPlayback,{mode:'scroll'}>} */ (currentHeatmap); scrollHeatmap.bands.forEach(function(band,i){var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');rect.setAttribute('x','0');rect.setAttribute('y',String(i*g.pageHeight/10-top));rect.setAttribute('width',String(g.viewportWidth));rect.setAttribute('height',String(g.pageHeight/10));rect.setAttribute('fill','#1d4ed8');rect.setAttribute('fill-opacity',String(scrollHeatmap.captures===0?0:.5*band.captures/scrollHeatmap.captures));svg.appendChild(rect);}); }
     }
     ['click','submit','beforeinput'].forEach(function(type){readyDoc.addEventListener(type,function(e){e.preventDefault();e.stopImmediatePropagation();},true);});
-    heatmapPaint=paint;doc.addEventListener('scroll',paint,true);heatmapObserver=new ResizeObserver(paint);heatmapObserver.observe(root);if(doc.body)heatmapObserver.observe(doc.body);
+    heatmapPaint=paint;doc.addEventListener('scroll',function(event){if(event.target!==doc&&event.target!==root){fail();return;}paint();},true);heatmapObserver=new ResizeObserver(paint);heatmapObserver.observe(root);if(doc.body)heatmapObserver.observe(doc.body);replayLayoutNodes(/** @type {Record<string,unknown>} */ (heatmapSnapshot).node).forEach(function(n){var element=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror().getNode(n.id);if(element)/** @type {ResizeObserver} */ (heatmapObserver).observe(/** @type {Element} */ (element));});
     view.scrollTo(g.direction==='rtl'?-(g.pageWidth-g.viewportWidth):0,0);paint();if(player)send({type:'ready',duration:duration});
   }
   /** @param {unknown} raw @returns {raw is Ten98Tracker.HeatmapPlayback} */
@@ -17903,6 +17966,7 @@ if (mode === 'record') {
         snapshots = snapshots || item.type === 2; meta = meta || item.type === 4; first = Math.min(first,item.timestamp); last = Math.max(last,item.timestamp);
       }
       if (!snapshots || !meta || last - first > 1200000) throw Error('Invalid recording.');
+      if(heatmap)heatmapSnapshot=backgroundEvents[1].data;
       document.body.style.margin = '0'; document.body.style.overflow = 'hidden';
       // The same array is narrowed only after every original envelope/tree/time check.
       var replayEvents=/** @type {Ten98Tracker.ReplayEnvelope[]} */ (events);

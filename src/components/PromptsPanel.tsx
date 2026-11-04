@@ -7,7 +7,7 @@ import {PromptDiscoveryPanel} from './PromptDiscoveryPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Role = WorkspaceRole;
 

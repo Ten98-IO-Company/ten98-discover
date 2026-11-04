@@ -6,10 +6,11 @@ import {Readable,Transform,Writable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createGunzip} from 'node:zlib';
 import {pinnedPeer,redirectUrl,resolveRedirectHost} from './domain-redirect-network.ts';
-import {publicNetworkAddress} from './public-network.ts';
+import {publicNetworkAddress} from '@ten98/runtime';
+import {shopifyCrawlerHeadersFor,type ShopifyCrawlerAccess} from '@ten98/runtime';
 
 export type CrawlDocumentKind='html'|'robots'|'sitemap';
-export type CrawlDownloadReason='blocked'|'dns_error'|'network_error'|'peer_mismatch'|'timeout'|'aborted'|'invalid_response'|'redirect'|'http_status'|'bodyless'|'partial_response'|'unsupported_mime'|'unsupported_encoding'|'wire_limit'|'expanded_limit'|'incomplete_body'|'invalid_compression';
+export type CrawlDownloadReason='crawler_access_unavailable'|'blocked'|'dns_error'|'network_error'|'peer_mismatch'|'timeout'|'aborted'|'invalid_response'|'redirect'|'http_status'|'bodyless'|'partial_response'|'unsupported_mime'|'unsupported_encoding'|'wire_limit'|'expanded_limit'|'incomplete_body'|'invalid_compression';
 export type CrawlResponseHeaders={contentType:string|null;contentEncoding:string|null;location:string|null;retryAfter:string|null;challenge:boolean;link:string[];xRobotsTag:string[]};
 type Observation={status:number|null;headers:CrawlResponseHeaders;wireBytes:number;httpDecodedBytes:number;decodedBytes:number;dnsMs:number|null;headersMs:number|null;durationMs:number};
 export type CrawlDocumentObservation=Observation&({complete:true;body:Buffer;reason:null}|{complete:false;body:null;reason:CrawlDownloadReason});
@@ -56,7 +57,9 @@ async function gunzipFile(body:Buffer,limit:number,signal:AbortSignal,onBytes:(c
   }catch(error){if(error instanceof DownloadFailure||signal.aborted)throw error;throw failure('invalid_compression');}
 }
 
-async function requestDocument(url:URL,address:{address:string;family:4|6},kind:CrawlDocumentKind,signal:AbortSignal,observation:Observation):Promise<Buffer> {
+async function requestDocument(url:URL,address:{address:string;family:4|6},kind:CrawlDocumentKind,signal:AbortSignal,observation:Observation,access:ShopifyCrawlerAccess|null):Promise<Buffer> {
+  const accessHeaders=access?shopifyCrawlerHeadersFor(url.href,access):{};
+  if(access&&url.origin===access.origin&&!accessHeaders.Signature)throw failure('crawler_access_unavailable');
   const client=url.protocol==='https:'?https:http;
   const agent=url.protocol==='https:'?new https.Agent({keepAlive:false,proxyEnv:{}}):new http.Agent({keepAlive:false,proxyEnv:{}});
   const started=performance.now(),limit=capacities[kind],hostname=url.hostname.replace(/^\[|\]$/g,'');
@@ -69,9 +72,11 @@ async function requestDocument(url:URL,address:{address:string;family:4|6},kind:
     };
     const abort=()=>{request.destroy();if(response)response.destroy(failure('aborted'));else finish(failure('aborted'));};
     const request=client.request(url,{
+      // Node's URL conversion drops a trailing empty query delimiter. Preserve the admitted request target.
+      path:url.href.slice(url.origin.length),
       method:'GET',agent,signal,maxHeaderSize:HEADER_LIMIT,insecureHTTPParser:false,family:address.family,
       ...(url.protocol==='https:'?{servername:isIP(hostname)?'':hostname,rejectUnauthorized:true}:{}),
-      headers:{accept:kind==='html'?'text/html,application/xhtml+xml':'*/*','accept-encoding':'gzip, identity','user-agent':'TenMonitorBot/1.0',connection:'close'},
+      headers:{...accessHeaders,accept:kind==='html'?'text/html,application/xhtml+xml':'*/*','accept-encoding':'gzip, identity','user-agent':'TenMonitorBot/1.0',connection:'close'},
       lookup:(name,options,callback)=>{
         if(name!==hostname){callback(new Error('Pinned hostname mismatch.'),'',0);return;}
         if(options.all)callback(null,[address]);else callback(null,address.address,address.family);
@@ -143,8 +148,8 @@ async function requestDocument(url:URL,address:{address:string;family:4|6},kind:
 }
 
 /** Transient bytes/headers only: this neither follows redirects nor establishes crawl permission or scope. */
-export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,signal?:AbortSignal):Promise<CrawlDocumentObservation> {
-  const started=performance.now(),controller=new AbortController();let timedOut=false;
+export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,signal?:AbortSignal,authorizeShopify?:()=>Promise<ShopifyCrawlerAccess|null>):Promise<CrawlDocumentObservation> {
+  const started=performance.now(),controller=new AbortController();let timedOut=false,accessFailure=false;
   const timer=setTimeout(()=>{timedOut=true;controller.abort();},TOTAL_MS);
   const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
   const observation:Observation={status:null,headers:{contentType:null,contentEncoding:null,location:null,retryAfter:null,challenge:false,link:[],xRobotsTag:[]},wireBytes:0,httpDecodedBytes:0,decodedBytes:0,dnsMs:null,headersMs:null,durationMs:0};
@@ -157,10 +162,15 @@ export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,si
     finally{observation.dnsMs=Math.round(performance.now()-dnsStarted);}
     controller.signal.throwIfAborted();
     if(addresses.length<1||addresses.length>32||addresses.some(a=>isIP(a.address)!==a.family||!publicNetworkAddress(a.address)))throw failure('blocked');
-    const body=await requestDocument(url,addresses[0],kind,controller.signal,observation);
+    // Recheck the selected credential after DNS and pacing, immediately before native dispatch.
+    let access:ShopifyCrawlerAccess|null=null;
+    if(authorizeShopify){try{access=await authorizeShopify();}catch(error){accessFailure=true;throw error;}}
+    controller.signal.throwIfAborted();
+    const body=await requestDocument(url,addresses[0],kind,controller.signal,observation,access);
     controller.signal.throwIfAborted();
     return {...observation,durationMs:Math.round(performance.now()-started),complete:true,body,reason:null};
   }catch(error){
+    if(accessFailure)throw error;
     const reason=signal?.aborted?'aborted':timedOut?'timeout':error instanceof DownloadFailure?error.reason:'network_error';
     return {...observation,durationMs:Math.round(performance.now()-started),complete:false,body:null,reason};
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel);controller.abort();}

@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -8,7 +8,7 @@ import {analyticsDay,applyGeographyFilter,geographyNavigationNames,type Analytic
 import {isEnvironmentFilter,environmentCatalog} from '../lib/analytics-environment';
 import {geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeographyKey,type GeoCountryKey} from '../lib/analytics-geography';
 import {CountryMap,geographyLabel} from './GeographyCard';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 import {CopyButton,DataTable,StatusLine,TimeSeriesChart,type ChartPoint,useConfirmDialog,useToast,Disclosure} from '@ten98/ui';
 
 type Kind='link'|'pixel';

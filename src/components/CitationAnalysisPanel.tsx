@@ -7,7 +7,7 @@ import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,Cit
 import type {CarriedCitations} from '../server/citation-carried';
 import {CitationAnalysisView,type CitationAnalysisViewProps,type CitationCarriedScreen,type CitationFilterDraft,type CitationTaskDraft,type CitationReportView,type CitationPublisherCategory} from './CitationAnalysisView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:Pick<CitationFilters,'from'|'to'|'timeZone'|'model'|'promptId'|'tag'>;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
 type Role=CitationReport['role'];

@@ -83,7 +83,7 @@ try{
  await check('detail hierarchy',async()=>{
   const heading=page.getByRole('heading',{name:'Synthetic main tracker',exact:true}),header=heading.locator('xpath=ancestor::*[.//button[normalize-space()="Back to trackers"] and .//button[normalize-space()="Refresh tracker"]][1]'),table=page.getByRole('region',{name:'Keywords',exact:true});
   for(const name of ['Back to trackers','Refresh tracker'])assert.equal(await header.getByRole('button',{name,exact:true}).count(),1);assert.equal(await header.getByRole('region').count(),0);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);assert.equal(await page.getByRole('button',{name:'Edit settings',exact:true,includeHidden:true}).count(),1);
-  for(const text of ['example.com (including subdomains) · United States, US · English','Devices: Mobile · Requested results: 10 · Maximum billable pages: 1']){const item=page.getByText(text,{exact:true});assert.equal(await item.isVisible(),true);assert.equal(await item.evaluate(node=>node.closest('details')===null),true);}
+  for(const text of ['example.com (including subdomains) · United States, US · English','Devices: Mobile · Requested results: 10 · Maximum pages: 1']){const item=page.getByText(text,{exact:true});assert.equal(await item.isVisible(),true);assert.equal(await item.evaluate(node=>node.closest('details')===null),true);}
   for(const name of ['Latest observations','Reporting','Check history','Schedule','Prepare a rank check','Pin selected','Unpin selected','Remove selected','Check selected keywords']){const action=page.getByRole('button',{name,exact:true});assert.equal(await action.evaluate(node=>node.closest('details')===null),true);await before(action,table);}
   assert.equal(await table.evaluate(node=>node.closest('details')===null),true);const keywordHeader=page.getByRole('heading',{name:'Keywords',exact:true}).locator('xpath=ancestor::*[.//button[normalize-space()="Add keywords"] and .//*[normalize-space()="2 of 1,000 keywords"]][1]');assert.equal(await keywordHeader.getByRole('button',{name:'Add keywords',exact:true}).count(),1);assert.equal(await keywordHeader.getByText('2 of 1,000 keywords',{exact:true}).count(),1);assert.equal(await keywordHeader.getByRole('region').count(),0);
   for(const name of ['Pin selected','Unpin selected','Remove selected','Check selected keywords'])assert.equal(await page.getByRole('button',{name,exact:true}).isDisabled(),true);
@@ -97,7 +97,7 @@ try{
  await page.getByLabel('Country or territory',{exact:true}).selectOption('2840');
  await page.getByLabel('Language',{exact:true}).selectOption('en');
  assert.equal(await page.getByLabel('Requested results',{exact:true}).inputValue(),'10');
- assert.equal(await page.getByLabel('Maximum billable pages',{exact:true}).inputValue(),'1');
+ assert.equal(await page.getByLabel('Maximum pages',{exact:true}).inputValue(),'1');
  await page.getByLabel('Search targeting',{exact:true}).selectOption('local');
  await page.getByLabel('Find a city or region',{exact:true}).fill('New');
  nextGet='hold';await page.getByLabel('Find a city or region',{exact:true}).press('Enter');
@@ -136,7 +136,7 @@ try{
  await openSettings();await page.getByRole('button',{name:'Edit settings',exact:true}).click();
  await check('edit opens and focuses its heading',async()=>{await page.waitForFunction(()=>document.activeElement?.id.endsWith('edit-heading'));assert.equal(await settings().evaluate(node=>node.parentElement.open),true);});
  await page.getByLabel(/^(Tracker name|Name)$/).fill('Edited after malformed acknowledgement');
- await check('native edit draft retention',async()=>{assert.equal(await settings().evaluate(node=>node.parentElement.open),true);for(const name of ['Devices','Requested results','Maximum billable pages'])assert.equal(await page.getByLabel(name,{exact:true}).isVisible(),true);const count=calls.length;await settings().click();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(await page.getByLabel('Tracker name',{exact:true}).isVisible(),false);await openSettings();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(calls.length,count);});
+ await check('native edit draft retention',async()=>{assert.equal(await settings().evaluate(node=>node.parentElement.open),true);for(const name of ['Devices','Requested results','Maximum pages'])assert.equal(await page.getByLabel(name,{exact:true}).isVisible(),true);const count=calls.length;await settings().click();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(await page.getByLabel('Tracker name',{exact:true}).isVisible(),false);await openSettings();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(calls.length,count);});
  await mkdir(resolve('private/rank-panel-evidence'),{recursive:true});await page.screenshot({path:resolve('private/rank-panel-evidence/r01-edit-draft.png'),fullPage:true});
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('link',{name:'Fixture elsewhere',exact:true}).click();
  assert.equal(new URL(page.url()).pathname,'/');

@@ -68,10 +68,13 @@ import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain
 import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
+import {getSiteAuditSchedule,saveSiteAuditSchedule,pauseSiteAuditSchedule} from './site-audit-recurring.ts';
+import {getSiteAuditAccess,saveSiteAuditAccess,removeSiteAuditAccess} from './site-audit-access.ts';
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,preparePromptExecution,startPromptExecution,cancelPromptComparison,recoverPromptExecution} from './prompt-execution.ts';
 import {getPromptTrackers,getPromptTracker,createPromptTracker,approvePromptTracker,pausePromptTracker,runPromptTrackerNow,setPromptTrackerArchived} from './prompt-recurring.ts';
+import {getSiteAnalyses,getSiteAnalysis,startSiteAnalysis,cancelSiteAnalysis,recoverSiteAnalysis,acceptSiteAnalysis} from './site-analysis.ts';
 import {getAiSuggestions,getAiSuggestion,prepareAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {recoverAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
@@ -571,6 +574,30 @@ export async function handleApi(request: Request): Promise<Response> {
       try{return await exportSiteAuditPages(auditExportRoute[1],user.id,auditExportRoute[2],await readJson(request,4096),request.signal);}
       catch(error){if(error instanceof FoundationError&&error.status===503)return json({error:error.message},503,{'retry-after':'5'});throw error;}
     }
+    const auditAccessRoute=path.match(new RegExp(`^/api/projects/(${id})/audits/access(?:/(remove))?$`,'i'));
+    if(auditAccessRoute){
+      const [,projectId,action]=auditAccessRoute;
+      if(url.search)throw new FoundationError(400,'Crawler access does not accept query parameters.');
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`audit-access:${user.id}`,60);
+      if(request.method==='GET'&&!action)return json(await getSiteAuditAccess(projectId,user.id));
+      if(request.method==='POST'){
+        await limit(`audit-access-write:${user.id}`,10);const input=await readJson(request,20480);
+        return json(await(action==='remove'?removeSiteAuditAccess(projectId,user.id,input):saveSiteAuditAccess(projectId,user.id,input)));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const auditScheduleRoute=path.match(new RegExp(`^/api/projects/(${id})/audits/schedule(?:/(pause))?$`,'i'));
+    if(auditScheduleRoute){
+      const [,projectId,action]=auditScheduleRoute;
+      if(url.search)throw new FoundationError(400,'Audit schedules do not accept query parameters.');
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`audit-schedule:${user.id}`,60);
+      if(request.method==='GET'&&!action)return json(await getSiteAuditSchedule(projectId,user.id));
+      if(request.method==='POST'){
+        await limit(`audit-schedule-write:${user.id}`,20);const input=await readJson(request,8192);
+        return json(await(action==='pause'?pauseSiteAuditSchedule(projectId,user.id,input):saveSiteAuditSchedule(projectId,user.id,input)));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
     const auditRoute=path.match(new RegExp(`^/api/projects/(${id})/audits(?:/(setup|${id})(?:/(pages|issues|cancel|delete)(?:/(${id})(?:/(links))?)?)?)?$`,'i'));
     if(auditRoute){
       const [,projectId,runOrSetup,action,pageId,links]=auditRoute;
@@ -660,6 +687,23 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if(request.method==='POST'){
         await limit(`openrouter-models-refresh:${projectId}`,3);return json(await refreshOpenRouterModels(projectId,user.id,await readJson(request,256)));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const siteAnalysisRoute=path.match(new RegExp(`^/api/projects/(${id})/site-analysis(?:/(runs)(?:/(${id})(?:/(cancel|recover|accept))?)?)?$`,'i'));
+    if(siteAnalysisRoute){
+      const [,projectId,action,runId,operation]=siteAnalysisRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`site-analysis:${user.id}`,60);
+      if(request.method==='GET'&&!runId&&(!action||action==='runs'))return json(await getSiteAnalyses(projectId,user.id,url.searchParams));
+      if(url.search)throw new FoundationError(400,'This website analysis operation does not accept query parameters.');
+      if(request.method==='GET'&&runId&&!operation)return json(await getSiteAnalysis(projectId,user.id,runId));
+      if(request.method==='POST'){
+        await limit(`site-analysis-write:${user.id}`,10);
+        const input=await readJson(request,operation==='accept'?131072:2048);
+        if(action==='runs'&&!runId)return json(await startSiteAnalysis(projectId,user.id,input),202);
+        if(runId&&operation==='cancel')return json(await cancelSiteAnalysis(projectId,user.id,runId,input));
+        if(runId&&operation==='accept')return json(await acceptSiteAnalysis(projectId,user.id,runId,input));
+        if(runId&&operation==='recover'){await limit(`site-analysis-recover:${projectId}`,3);return json(await recoverSiteAnalysis(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }

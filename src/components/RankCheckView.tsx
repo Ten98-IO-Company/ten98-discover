@@ -1,6 +1,6 @@
 import {Tooltip} from '@ten98/ui';
 import type * as React from 'react';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 export type RankPreparationDisplay={
  connectionName:string;methodLabel:string;targetLabel:string;selectionLabel:string;

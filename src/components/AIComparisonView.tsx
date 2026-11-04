@@ -1,4 +1,4 @@
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 export type ComparisonCohort = 'current-neutral' | 'all';
 export type ComparisonOutcome = 'all' | 'usable' | 'unavailable' | 'mentioned' | 'not_mentioned' | 'cited';
 export type AIComparisonViewProps = {

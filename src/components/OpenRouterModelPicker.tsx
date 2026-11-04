@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useId,useState} from 'react';
 import {ApiError} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterTextProfile,legacyOpenRouterModels,openRouterMetadataBytes,type OpenRouterCatalog} from '../lib/openrouter-models';

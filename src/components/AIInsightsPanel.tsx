@@ -11,7 +11,7 @@ import {AIComparisonPanel} from './AIComparisonPanel';
 import {CitationAnalysisPanel} from './CitationAnalysisPanel';
 import {CitationSpecializationsPanel} from './CitationSpecializationsPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
-import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
 type Props={navigation?:AIInsightsNavigation;onNavigate?:(navigation:AIInsightsNavigation)=>void;userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onBack:()=>void;backLabel:string;onOpenComparison?:(comparisonId:string,promptId:string)=>void};
 type Role=PromptInsightsReport['role'];

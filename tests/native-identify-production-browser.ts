@@ -1,3 +1,4 @@
+import {openView} from './helpers/app-navigation.ts';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
@@ -85,7 +86,7 @@ try{
     await dialog().getByRole('checkbox',{name:'Analytics',exact:true}).check();
     for(const name of ['Advertising','Ad user data','Ad personalization'])await dialog().getByRole('checkbox',{name,exact:true}).uncheck();
     const receipt=page.waitForResponse((r:any)=>r.url()===`${app.origin}/api/collect`&&r.request().method()==='POST'&&r.request().postDataJSON().name==='page_view');
-    await dialog().getByRole('button',{name:'Save choices',exact:true}).click();assert.equal((await (await receipt).json()).accepted,true);
+    await dialog().getByRole('button',{name:'Save choices',exact:true}).click();const accepted=await (await receipt).json();assert.equal(accepted.accepted,true);return accepted;
   }
   async function track(name:string,properties:unknown={}){
     const receipt=page.waitForResponse((r:any)=>r.url()===`${app.origin}/api/collect`&&r.request().method()==='POST'&&r.request().postDataJSON().name===name);
@@ -100,11 +101,11 @@ try{
   await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await setViewport(page,{width:1440,height:900});
   mark('fresh guarded fixture; pre-consent identify has no writes, retained identifier or outbound request; consent copy fits desktop/mobile');
 
-  await grant();const beforeProfile=await traffic();assert.equal(beforeProfile.events.length,1);assert.equal(beforeProfile.visitors.length,1);assert.equal(captured[0].value.dimensions.distinctId,undefined);assert.equal(captured[0].value.properties,undefined);
+  const firstPageView=await grant();const beforeProfile=await traffic();assert.equal(beforeProfile.events.length,1);assert.equal(beforeProfile.visitors.length,1);assert.equal(captured[0].value.dimensions.distinctId,undefined);assert.equal(captured[0].value.properties,undefined);
   const anonymousKey=beforeProfile.events[0].visitor_id;assert.match(anonymousKey,/^[a-f0-9]{64}$/);
   const typed={plan:'pro',zero:0,enabled:false,nil:null,date:'2024-02-29T23:59:59.123456789+04:00',array:[1,'1',false,null],nested:{id:'caller-metadata'},'a.b':2};
   const first=await identify({...typed,id:'sdk-account-sentinel'});assert.equal(first.status,'accepted');assert.equal(first.duplicate,false);
-  const original=captured.find(row=>row.value.type==='identify')!;assert.equal(original.value.url,`${siteOrigin}/account`);assert.equal(original.value.properties.id,undefined);assert.equal(original.value.dimensions.distinctId,'sdk-account-sentinel');
+  const original=captured.find(row=>row.value.type==='identify')!;assert.equal(original.value.url,`${siteOrigin}/account`);assert.equal(original.value.properties.id,undefined);assert.equal(original.value.dimensions.distinctId,'sdk-account-sentinel');assert.deepEqual(original.value.context,firstPageView.context);
   assert.deepEqual(await traffic(),beforeProfile,'Identify must not add traffic or touch visitor first/last metadata.');
   const firstRows=await profiles(),identifiedKey=firstRows[0].visitor_key;assert.notEqual(identifiedKey,anonymousKey);assert.equal(new Set(firstRows.map(row=>row.visitor_key)).size,1);
   assert.deepEqual(Object.fromEntries(firstRows.map(row=>[row.property_key,row.property])),{plan:{type:'string',value:'pro'},zero:{type:'number',value:0},enabled:{type:'boolean',value:false},nil:{type:'null',value:null},date:{type:'date',value:'2024-02-29T19:59:59.123456789Z'},array:{type:'array',value:[1,'1',false,null]},'nested.id':{type:'string',value:'caller-metadata'},'a\\.b':{type:'number',value:2}});
@@ -112,10 +113,11 @@ try{
   mark('real typed profile patch uses a rotating visitor key and leaves all traffic and visitor timestamps unchanged');
 
   await track('identify_probe',{eventOnly:'kept'});const afterEvent=await traffic(),event=afterEvent.events.find(row=>row.event_name==='identify_probe');
-  assert.equal(afterEvent.events.length,2);assert.equal(event.visitor_id,identifiedKey);assert.deepEqual(event.properties,{eventOnly:{type:'string',value:'kept'}});assert.equal(event.dimensions.distinctId,undefined);
+  assert.equal(afterEvent.events.length,2);assert.equal(event.visitor_id,anonymousKey);assert.equal(event.visit_id,beforeProfile.events[0].visit_id);assert.notEqual(event.visitor_id,identifiedKey);assert.equal(event.identity_link_evidence_version,null);assert.deepEqual(event.properties,{eventOnly:{type:'string',value:'kept'}});assert.equal(event.dimensions.distinctId,undefined);
   assert.equal(JSON.stringify(event).includes('sdk-account-sentinel'),false);assert.equal(JSON.stringify(event).includes('plan'),false);assert.deepEqual(await profiles(),firstRows);
   assert.equal(await page.evaluate(()=>['fbq','ttq','gtag','pintrk','snaptr','twq'].some(name=>(window as any)[name]!==undefined)),false);assert.equal(external.length,0);
-  mark('future native event joins the identified key without copying profile data or raw ID into events or vendor queues');
+  assert.equal((await pool.query('SELECT 1 FROM analytics_identity_link WHERE project_id=$1',[projectId])).rowCount,0);
+  mark('future native event continues the settled visit without linking its anonymous key or copying profile data or raw ID into events or vendor queues');
 
   assert.equal((await identify({plan:'later'})).status,'accepted');const afterPatch=await profiles(),trafficAfterPatch=await traffic(),receiptCount=await receipts();
   assert.equal(afterPatch.find(row=>row.property_key==='plan').property.value,'later');
@@ -148,8 +150,7 @@ try{
   await pool.query("UPDATE analytics_session_property SET updated_at=clock_timestamp()-interval '2 days' WHERE project_id=$1 AND property_key='plan'",[projectId]);
   const signed=await context.request.post(`${app.origin}/api/auth/sign-in/email`,{headers:{origin:app.origin},data:{email,password},maxRedirects:0});assert.equal(signed.status(),200);
   const dashboard=await context.newPage();dashboard.setDefaultTimeout(15000);await dashboard.goto(app.origin,{waitUntil:'networkidle'});
-  const settingsNav=dashboard.getByRole('navigation',{name:'Workspace settings',exact:true}),retentionLink=settingsNav.getByRole('link',{name:'Data retention',exact:true});
-  if(!await retentionLink.isVisible())await dashboard.getByText('Workspace settings',{exact:true}).click();await retentionLink.click();
+  await openView(dashboard,'retention');
   await dashboard.getByLabel('Raw analytics (days)',{exact:true}).fill('1');
   const previewUrl=`${app.origin}/api/workspaces/${workspace.id}/retention/preview`;
   const response=dashboard.waitForResponse((r:any)=>r.url()===previewUrl&&r.request().method()==='POST');await dashboard.getByRole('button',{name:'Preview cleanup',exact:true}).click();

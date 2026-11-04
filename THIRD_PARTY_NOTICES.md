@@ -1231,13 +1231,13 @@ SOFTWARE.
 
 ## Current ten98 shared packages
 
-The current manifest pins the qualified `@ten98/ui` 0.31.1 development candidate (`vendor/ten98-ui-0.31.1.tgz`, SHA-256 `576fedf64e5aecbf9d7509d436b25515c65e5066d4865dad44a2e457a3c90f1d`, canonical source commit `ac029168f1fe9af7e187fc4d8d059e17053c32b9`) and `@ten98/runtime` 0.20.0 (`vendor/ten98-runtime-0.20.0.tgz`, SHA-256 `d2f8bf2abda99f400dc0b58909d077ca2c5664bd622f061aea4b1c14bbe92659`). The frozen UI candidate retains the shared ReportToolbar and fixes wrapped SectionNav labels at narrow widths and enlarged text; it is not a published design-system release. Both packages are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+The current manifest pins the immutable local `@ten98/ui` 0.34.2 candidate (`vendor/ten98-ui-0.34.2.tgz`, SHA-256 `6c074ba4bb27a41f0a04e0a7d438dfd3af53abd56923cbfeb04dda51235a6ac6`, canonical source commit `f9a374fc892bf29a928f162d79c5797c302ffb1d`) and `@ten98/runtime` 0.22.0 candidate (`vendor/ten98-runtime-0.22.0.tgz`, SHA-256 `b2633aefad6b2ddd8518da9bc7f8ac2ad52b0b80aef551a7f4f3a2c29b4a7da0`, based on reviewed runtime commit `3b8a5a7113edf3488ea0dd12fdca818f398032a1`). Both packages are MIT, copyright 2026 Ten98, and include their license text. These local candidates are not published shared-package releases. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
 
 Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
 
 ### Inter typeface — SIL Open Font License 1.1
 
-`@ten98/ui` 0.31.1 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
+`@ten98/ui` 0.32.1 bundles the Inter variable font (`dist/fonts/inter-latin-wght-normal.woff2` and `dist/fonts/inter-latin-ext-wght-normal.woff2`), which the Discover build serves same-origin. The license below is reproduced unchanged from the package's `dist/fonts/OFL.txt`.
 
 ```text
 Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
@@ -1396,3 +1396,12 @@ The earlier dependency was the immutable development candidate `vendor/ten98-ui-
 ## Test-only browser tooling
 
 The feature-browser CI job installs Playwright 1.64.1 and its exact playwright-core 1.64.1 dependency from the official npm registry into the ephemeral runner tools directory. Playwright is licensed under Apache-2.0; source commit `cfe490d941f992655948eee8fd4fd94e1c4234bf`, repository and license: https://github.com/microsoft/playwright/tree/cfe490d941f992655948eee8fd4fd94e1c4234bf. The Playwright archive integrity is `sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==`. The paired official installer supplies Chromium and runner system dependencies. These tools exercise isolated synthetic fixtures; they are not application runtime dependencies or included in the production image. No Playwright implementation is copied into product source.
+
+## Ten98 UI 0.34.2
+
+The immutable local candidate `vendor/ten98-ui-0.34.2.tgz`, SHA-256 `6c074ba4bb27a41f0a04e0a7d438dfd3af53abd56923cbfeb04dda51235a6ac6`, comes from Ten98 design-system commit `f9a374fc892bf29a928f162d79c5797c302ffb1d`. It provides the shared SuggestionQueue, Sheet editing panel and AppShell header-boundary callback used by guided website analysis and project-context editing. The package remains MIT licensed under the preceding Ten98 copyright and notice. This adoption does not publish the package.
+
+
+## Shopify crawler-access mechanism
+
+Discover imports signature parsing, exact-origin header selection and Ed25519 verification from `@ten98/runtime` 0.22.0. The canonical package adapts the Shopify wire format and signature base from `every-app/open-seo@89e5a00717cdf049b7c2b4e29646edb3a7d4995b` (`src/shared/crawler-access.ts` and `src/server/features/audit/services/shopifySignature.ts`), MIT, copyright 2026 Ben Senescu. Its bundled `THIRD_PARTY_NOTICES.md` preserves the complete upstream notice and describes the stricter expiry, parsing and origin boundaries. Discover owns credential storage, native authorization, request recovery and crawl transport. No upstream implementation is copied into application source.

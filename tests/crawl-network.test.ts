@@ -7,10 +7,10 @@ import {gzipSync} from 'node:zlib';
 import http from 'node:http';
 import https from 'node:https';
 import {spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,urlToHttpOptions} from 'node:url';
 import {fetchCrawlDocument,type CrawlDocumentKind} from '../src/server/crawl-network.ts';
 
-type Fixture={body?:Buffer;headers?:string[];status?:number;complete?:boolean;peer?:string;v4?:string[];v6?:string[];dnsError?:boolean;stall?:'dns'|'headers'|'body';onRequest?:(options:any)=>void;onBody?:()=>void};
+type Fixture={body?:Buffer;headers?:string[];status?:number;complete?:boolean;peer?:string;v4?:string[];v6?:string[];dnsError?:boolean;stall?:'dns'|'headers'|'body';onRequest?:(options:any,url:URL)=>void;onBody?:()=>void};
 async function fixture<T>(spec:Fixture,run:(state:{requests:number;reads:number;response:Readable|null;requestDestroyed:boolean})=>Promise<T>):Promise<T> {
   const state={requests:0,reads:0,response:null as Readable|null,requestDestroyed:false};
   let rejectDns:((error:Error)=>void)|undefined;
@@ -23,7 +23,7 @@ async function fixture<T>(spec:Fixture,run:(state:{requests:number;reads:number;
     mock.method(Resolver.prototype,'cancel',()=>{rejectDns?.(new Error('Cancelled synthetic DNS'));}),
   ];
   const request=((url:URL,options:any,callback:(response:any)=>void)=>{
-    state.requests++;spec.onRequest?.(options);
+    state.requests++;spec.onRequest?.(options,url);
     const req=new EventEmitter() as any;
     req.destroy=()=>{state.requestDestroyed=true;};
     req.end=()=>queueMicrotask(()=>{
@@ -163,4 +163,35 @@ test('fragmented one-byte HTTP chunks stay within a bounded child heap',async()=
   const timer=setTimeout(()=>child.kill(),20000);
   try{const code=await new Promise<number|null>((resolve,reject)=>{child.once('close',resolve);child.once('error',reject);});assert.equal(code,0);assert.equal(stderrBytes,0);assert.match(stdout,/PASS contained fragmented/);}
   finally{clearTimeout(timer);}
+});
+
+test('native HTTP request target preserves exact query bytes including an empty delimiter',async()=>{
+ for(const scheme of ['https','http'])for(const path of ['/page?','/page?b=2&a=1&a=2+3&x=%20','/%3Fpath?x=%2f']){
+  let target:unknown;
+  await fixture({body:Buffer.from('<h1>Query fixture</h1>'),onRequest:(options,url)=>{target=options.path??urlToHttpOptions(url).path;}},async()=>{
+   const result=await fetchCrawlDocument(scheme+'://crawl.example.com'+path,'html');assert.equal(result.complete,true);assert.equal(target,path);
+  });
+ }
+});
+
+test('Shopify access reaches only its exact HTTPS origin through the native pinned request',async()=>{
+ const access={origin:'https://crawl.example.com',signatureInput:`sig1=("@authority" "signature-agent");keyid="synthetic";expires=${Math.floor(Date.now()/1000)+3600}`,signature:`sig1=:${Buffer.alloc(64).toString('base64')}:`};
+ const {parseShopifyCrawlerAccess}=await import('@ten98/runtime');const parsed=parseShopifyCrawlerAccess(access)!;
+ for(const url of ['https://crawl.example.com/path','https://policy.example.net/robots','http://crawl.example.com/robots']){
+  let headers:Record<string,string>={};await fixture({body:Buffer.from('ok'),onRequest(options){headers=options.headers;}},async()=>{await fetchCrawlDocument(url,'robots',undefined,async()=>parsed);});
+  if(url.startsWith(access.origin)){assert.equal(headers.Signature,access.signature);assert.equal(headers['Signature-Input'],access.signatureInput);assert.equal(headers['Signature-Agent'],'"https://shopify.com"');}
+  else for(const name of ['Signature','Signature-Input','Signature-Agent'])assert.equal(headers[name],undefined);
+ }
+});
+
+test('Shopify dispatch authorization runs after DNS and its refusal sends no request',async()=>{
+ let authorized=0;const refusal=new Error('Synthetic access revoked');
+ await fixture({dnsError:true},async state=>{await fetchCrawlDocument('https://crawl.example.com/','html',undefined,async()=>{authorized++;throw refusal;});assert.equal(authorized,0);assert.equal(state.requests,0);});
+ await fixture({},async state=>{await assert.rejects(fetchCrawlDocument('https://crawl.example.com/','html',undefined,async()=>{authorized++;throw refusal;}),error=>error===refusal);assert.equal(authorized,1);assert.equal(state.requests,0);});
+});
+
+test('Shopify expiry at native dispatch cannot silently become an unsigned same-origin request',async()=>{
+ const {parseShopifyCrawlerAccess}=await import('@ten98/runtime');
+ const expired=parseShopifyCrawlerAccess({origin:'https://crawl.example.com',signatureInput:'sig1=("@authority" "signature-agent");keyid="synthetic";expires=1',signature:`sig1=:${Buffer.alloc(64).toString('base64')}:`})!;
+ await fixture({},async state=>{invalid(await fetchCrawlDocument('https://crawl.example.com/','html',undefined,async()=>expired),'crawler_access_unavailable');assert.equal(state.requests,0);});
 });

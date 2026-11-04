@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState,type CSSProperties} from 'react';
 import { Disclosure, LoadMore, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
-import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime/browser';
 import {api,ApiError,errMsg} from '../lib/api';
 
 type Range={from:string;to:string;timeZone:string};

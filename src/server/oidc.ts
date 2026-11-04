@@ -5,7 +5,7 @@ import { request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import { oidcEndpoint, readResponseText } from '@ten98/runtime';
-import { addressKey, publicNetworkAddress } from './public-network.ts';
+import { addressKey, publicNetworkAddress } from '@ten98/runtime';
 import { clientRateLimit } from './client-rate-limit.ts';
 import { authorizationCodeRequest, createAuthorizationURL, verifyProviderIdToken } from 'better-auth/oauth2';
 import { z } from 'zod';

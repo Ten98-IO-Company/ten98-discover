@@ -4,7 +4,7 @@ import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
 import {buildPromptQuestions, promptDiscoveryIntents, type PromptDiscoveryIntent} from '../lib/prompt-discovery';
-import {workspaceRoles} from '@ten98/runtime';
+import {workspaceRoles} from '@ten98/runtime/browser';
 
 type Props = {projectId: string; onUse: (questions: string[], topic: string) => void; onBack: () => void; onAccessLoss: (status: number, message: string) => void};
 const text = (maximum: number) => z.string().max(maximum).refine(value => !value.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(value)) === value);

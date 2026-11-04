@@ -1,11 +1,11 @@
-import { readResponseText } from '@ten98/runtime';
+import { readResponseText } from '@ten98/runtime/browser';
 import { useEffect, useRef, useState } from 'react';
-import { AppliedFilters, Button, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine,Disclosure} from '@ten98/ui';
+import { AppliedFilters, Button, Input, Select, ReportToolbar, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine,Disclosure} from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
-import type {WorkspaceRole} from '@ten98/runtime';
+import type {WorkspaceRole} from '@ten98/runtime/browser';
 
 const BTN = { minHeight: 44 };
 
@@ -16,6 +16,7 @@ type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'g
 interface ImportDto {
   id: string;
   report: ReportKind;
+  connectionRevision: number;
   from: string;
   to: string;
   status: 'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'denied';
@@ -189,7 +190,7 @@ export interface GoogleReportOps {
   refresh(serial: number, c: AbortController): Promise<void>;
 }
 
-// Search › Google shows imported reports; Settings › Imports connects sources, chooses properties and queues imports.
+// Search › Google loads reports on demand; Settings › Imports manages sources and properties.
 // 'all' renders both together on one page.
 type GooglePart = 'all' | 'reports' | 'setup';
 export function GoogleReportsPanel({ projectId, userId, onUnauthorized, onOpenSetup, part = 'all', onManage }: { projectId: string; userId: string; onUnauthorized: () => void; onOpenSetup?: () => void; part?: GooglePart; onManage?: () => void }) {
@@ -329,7 +330,7 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup, part, onManage }
           </select>
         </div>}
         <button type="button" className="btn ghost" style={BTN} aria-disabled={pending} onClick={manualRefresh}>Refresh status</button>
-        {part === 'reports' && onManage && <Button variant="ghost" onClick={onManage}>Manage connections and imports</Button>}
+        {part === 'reports' && onManage && <Button variant="ghost" onClick={onManage}>Manage connections</Button>}
       </div>
       {notice && <p role="status" className="hint">{notice}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
@@ -345,6 +346,7 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup, part, onManage }
           ops={ops}
           onReconnect={conn => void connect(conn.provider, conn.name, conn.id)}
           part={part}
+          active={selection === c.id}
         />
         </div>
       ))}
@@ -378,9 +380,10 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup, part, onManage }
   );
 }
 
-function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, part }: {
+function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, part, active }: {
   projectId: string;
   part: GooglePart;
+  active: boolean;
   conn: Connection;
   owner: boolean;
   appOn: boolean;
@@ -397,8 +400,13 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
   const [propsData, setPropsData] = useState<{ list: Array<{ id: string; name: string }>; next: string | null } | null>(null);
   const [pick, setPick] = useState('');
   const [report, setReport] = useState<ReportKind>(conn.provider === 'gsc' ? 'gsc_daily' : 'ga4_traffic');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [to, setTo] = useState(() => googleLastCompletedDay(conn.timeZone) ?? '');
+  const [from, setFrom] = useState(() => {
+    const end = googleLastCompletedDay(conn.timeZone);
+    return end ? new Date(Date.parse(end) - 27 * 86400000).toISOString().slice(0, 10) : '';
+  });
+  const [uncertain, setUncertain] = useState(false);
+  const [watchImport, setWatchImport] = useState('');
   const maxImportDay=organicReport(report)?googleLastCompletedDay(conn.timeZone):new Date().toISOString().slice(0,10);
   const [snapshotChoice, setSnapshotChoice] = useState(() => (conn.imports.find(retained) ?? conn.imports[0])?.id ?? '');
   const resultHeading = useRef<HTMLHeadingElement>(null);
@@ -524,10 +532,19 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
     });
   };
 
-  const queueImport = () => {
+  const queueImport = (refresh = false) => {
+    if (watchImport && err) { void refreshReport(); return; }
     if (from === '' || to === '') { setErr('Choose a start and an end date.'); return; }
     if(from>to||Date.parse(to)-Date.parse(from)>=366*86400000){setErr('Choose a start on or before the end, covering no more than 366 days.');return;}
     if(organicReport(report)){const lastDay=googleLastCompletedDay(conn.timeZone);if(!lastDay){setErr('The property time zone is unavailable. Reconnect this source before importing.');return;}if(to>lastDay){setErr(`Choose completed days in ${conn.timeZone}; the latest end date is ${lastDay}.`);return;}}
+    const existing = !refresh && !attempt.current && conn.imports.find(imp => imp.connectionRevision === conn.revision && imp.report === report && imp.from === from && imp.to === to && (retained(imp) || imp.status === 'queued' || imp.status === 'running'));
+    if (existing) {
+      setErr(''); setNote('');
+      setSnapshotChoice(existing.id);
+      if (retained(existing)) void openSnap(existing);
+      else setWatchImport(existing.id);
+      return;
+    }
     void run(async (serial, c) => {
       let accepted = false;
       try {
@@ -536,7 +553,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
           a = { requestId: crypto.randomUUID(), report, from, to };
           attempt.current = a;
         }
-        await api<{ import: ImportDto }>(`${base}/imports`, {
+        const result = await api<{ import: ImportDto }>(`${base}/imports`, {
           method: 'POST',
           body: { requestId: a.requestId, report: a.report, from: a.from, to: a.to },
           signal: c.signal,
@@ -544,18 +561,23 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
         if (!ops.alive(serial, c)) return;
         accepted = true;
         attempt.current = null;
-        setNote('Import queued. Use Refresh status to follow progress.');
+        setUncertain(false);
+        setSnapshotChoice(result.import.id);
+        setWatchImport(result.import.id);
+        setNote('Loading report…');
         await ops.refresh(serial, c);
       } catch (e) {
         if (ops.terminal(serial, c, e)) return;
         if (!ops.alive(serial, c)) return;
-        if (accepted) { setErr('The import was queued, but the status refresh failed. Use Refresh status to check progress.'); return; }
+        if (accepted) { setErr('The report was requested, but its status could not be refreshed. Choose Retry report status.'); return; }
         if (!(e instanceof ApiError) || e.status === 0 || e.status >= 500) {
           // Network-uncertain: keep the identical requestId/body for an explicit retry; never resend automatically.
-          setErr('The result could not be confirmed. The import may have been queued — use Refresh status to check. Pressing Import again reuses the same request.');
+          setUncertain(true);
+          setErr('The result could not be confirmed. Use Refresh status to check, or Retry same request. The original report, dates and request are preserved.');
           return;
         }
         attempt.current = null;
+        setUncertain(false);
         if (e instanceof ApiError && e.status === 409) {
           try { await ops.refresh(serial, c); } catch { /* ignore */ }
           setErr('This connection changed. Current state was reloaded; review it before queueing again.');
@@ -566,18 +588,44 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
     });
   };
 
-  const openSnap = (imp: ImportDto) => run(async (serial, c) => {
-    try {
-      const path = `/api/projects/${projectId}/google/imports/${imp.id}?offset=0`;
-      const r = (organicReport(imp.report) || isGa4CommerceReport(imp.report)) ? await organicSnapshot(path, imp, conn, 0, c.signal) : await api<Snapshot>(path, { signal: c.signal });
-      if (!ops.alive(serial, c)) return;
-      focusResult.current = true;
-      setSnap({ id: imp.id, imp: r.import, source: r.source, dimensions: r.dimensions, metrics: r.metrics, rows: r.import.dataStatus === 'expired' ? [] : r.rows, warnings: r.quality.warnings, metadata: r.quality.metadata, next: r.import.dataStatus === 'expired' ? null : r.nextOffset });
-    } catch (e) {
-      if (ops.terminal(serial, c, e)) return;
-      if (ops.alive(serial, c)) setErr(errMsg(e));
+  const openSnap = (imp: ImportDto) => {
+    setWatchImport('');
+    return run(async (serial, c) => {
+      try {
+        const path = `/api/projects/${projectId}/google/imports/${imp.id}?offset=0`;
+        const r = (organicReport(imp.report) || isGa4CommerceReport(imp.report)) ? await organicSnapshot(path, imp, conn, 0, c.signal) : await api<Snapshot>(path, { signal: c.signal });
+        if (!ops.alive(serial, c)) return;
+        focusResult.current = true;
+        setSnap({ id: imp.id, imp: r.import, source: r.source, dimensions: r.dimensions, metrics: r.metrics, rows: r.import.dataStatus === 'expired' ? [] : r.rows, warnings: r.quality.warnings, metadata: r.quality.metadata, next: r.import.dataStatus === 'expired' ? null : r.nextOffset });
+      } catch (e) {
+        if (ops.terminal(serial, c, e)) return;
+        if (ops.alive(serial, c)) setErr(errMsg(e));
+      }
+    });
+  };
+
+  const refreshReport = () => run(async (serial, c) => {
+    try { await ops.refresh(serial, c); }
+    catch (e) {
+      if (!ops.terminal(serial, c, e) && ops.alive(serial, c)) {
+        setErr('The report status could not be refreshed. Choose Retry report status.');
+      }
     }
   });
+
+  // Read failures pause this watch; its explicit retry only reads status, never resends the request.
+  useEffect(() => {
+    if (!active || busy || !watchImport || err) return;
+    const receipt = conn.imports.find(imp => imp.id === watchImport);
+    if (!receipt) { setWatchImport(''); setNote('Use Refresh status to find the requested report.'); return; }
+    if (receipt.status === 'queued' || receipt.status === 'running') {
+      const timer = window.setTimeout(() => void refreshReport(), 2000);
+      return () => window.clearTimeout(timer);
+    }
+    setWatchImport(''); setNote('');
+    if (retained(receipt)) void openSnap(receipt);
+    else setErr(receipt.diagnostic ?? 'This report is unavailable. Review its status before requesting it again.');
+  }, [active, busy, watchImport, conn.imports, err]);
 
   const moreSnap = () => run(async (serial, c) => {
     const offset = snap ? snap.next : null;
@@ -605,14 +653,43 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
       {err !== '' && <p role="alert" className="alert">{err}</p>}
       {part !== 'reports' && unsuccessful > 0 && <p className="hint">{unsuccessful} unsuccessful {unsuccessful === 1 ? 'import' : 'imports'}. Open Import history for details.</p>}
       {conn.imports.filter(imp => ['queued', 'running'].includes(imp.status)).map(imp => (
-        <p key={imp.id} role="status" className="hint">{reportLabel(imp.report)} · {imp.from} to {imp.to}: {impStatus(imp.status)}. {imp.diagnostic ?? 'Use Refresh status to follow progress.'}</p>
+        <p key={imp.id} role="status" className="hint">{reportLabel(imp.report)} · {imp.from} to {imp.to}: {impStatus(imp.status)}. {imp.diagnostic ?? (watchImport === imp.id ? 'The report will open when ready.' : 'Select this report to follow its progress.')}</p>
       ))}
+      {part !== 'setup' && owner && appOn && conn.status === 'ready' && (
+        <section className="google-tools" aria-label="Load Google report">
+          <ReportToolbar label="Google report controls" controls={<>
+          <div className="field">
+            <label htmlFor={`report-${conn.id}`}>Report</label>
+            <Select width="auto" id={`report-${conn.id}`} disabled={busy || uncertain} value={report} onChange={e => { setReport(e.target.value as ReportKind); attempt.current = null; setWatchImport(''); setNote(''); }}>
+              {REPORT_OPTIONS[conn.provider].map(o => <option key={o.kind} value={o.kind}>{o.label}</option>)}
+            </Select>
+          </div>
+            <div className="field">
+              <label htmlFor={`from-${conn.id}`}>Start date</label>
+              <Input id={`from-${conn.id}`} type="date" disabled={busy || uncertain} max={maxImportDay??undefined} value={from} onChange={e => { setFrom(e.target.value); attempt.current = null; setWatchImport(''); setNote(''); }} />
+            </div>
+            <div className="field">
+              <label htmlFor={`to-${conn.id}`}>End date</label>
+              <Input id={`to-${conn.id}`} type="date" disabled={busy || uncertain} min={from || undefined} max={maxImportDay??undefined} value={to} onChange={e => { setTo(e.target.value); attempt.current = null; setWatchImport(''); setNote(''); }} />
+            </div>
+          <Button type="button" disabled={busy} onClick={() => queueImport()}>{uncertain ? 'Retry same request' : watchImport && err ? 'Retry report status' : 'View report'}</Button>
+          {conn.imports.some(imp => imp.report === report && retained(imp)) && <Button type="button" variant="secondary" disabled={busy || uncertain || !!watchImport} onClick={() => queueImport(true)}>Refresh report</Button>}
+          </>} summary={<p className="hint">Dates in {conn.timeZone ?? 'the property time zone'}.</p>}/>
+          <Disclosure summary="About this report" variant="plain">
+          {conn.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(report) ? ga4CommerceReports[report].description : report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not ad-platform conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
+          {organicReport(report) && <p className="hint">Organic Search only. Choose completed days in the property timezone; today is excluded. {report === 'ga4_organic_landing' ? 'Landing pages are grouped by hostname and landing path over the whole selected range, up to 10,000 rows. A partial import is explicitly incomplete.' : 'Three report requests capture the current range, an equal-length preceding range, and the selected daily or weekly trend. Nothing is shown until all three finish. Two compatibility checks verify the exact fields; Google quota use and quality remain separate for each stage.'}</p>}
+          {isGa4CommerceReport(report) && <p className="hint">These rows cover the selected range, rather than a daily series. The date limit includes today in UTC; recent property days may be incomplete. Each import uses the report’s fixed fields and filters.</p>}
+          <p className="hint">Dates are inclusive, up to 366 days. The default is the last 28 completed property days. A matching saved report opens immediately; otherwise it loads here.</p>
+          </Disclosure>
+        </section>
+      )}
+
       {part !== 'setup' && (conn.imports.length > 0 ? (
         <div className="stack google-snapshot-choice">
           <div className="row">
             <div className="field">
               <label htmlFor={'snapshot-' + conn.id}>Snapshot</label>
-              <select id={'snapshot-' + conn.id} value={snapshotChoice} disabled={busy} onChange={e => setSnapshotChoice(e.target.value)}>
+              <select id={'snapshot-' + conn.id} value={snapshotChoice} disabled={busy} onChange={e => { setWatchImport(''); setNote(''); setSnapshotChoice(e.target.value); }}>
                 {conn.imports.map(imp => <option key={imp.id} value={imp.id}>{reportLabel(imp.report)} · {imp.from} to {imp.to} · {impStatus(imp.status)}{imp.dataStatus === 'expired' ? ' · Expired' : ''}</option>)}
               </select>
             </div>
@@ -621,7 +698,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
           {conn.imports.filter(imp => imp.id === snapshotChoice).map(imp => <p key={imp.id} className="hint">Selected: {reportLabel(imp.report)} · {imp.from} to {imp.to} · {impStatus(imp.status)}{(imp.status === 'completed' || imp.status === 'partial') ? ' · ' + imp.rowCount + ' recorded rows' : ''}{imp.dataStatus === 'expired' ? ' · Report data expired' : ''}</p>)}
           {!snap && <p className="dim">Choose View snapshot to load this saved report.</p>}
         </div>
-      ) : <p className="dim">No imports yet{owner && conn.status === 'ready' ? (part === 'reports' ? '. Import a report in Settings › Imports.' : '; open Import a snapshot below to get started.') : '.'}</p>)}
+      ) : <p className="dim">No imports yet{owner && conn.status === 'ready' ? '; choose a report above to get started.' : '.'}</p>)}
       {part !== 'setup' && snap && (
         <div className="stack google-snapshot" role="region" aria-labelledby={'snapshot-heading-' + conn.id}>
           <h3 id={'snapshot-heading-' + conn.id} ref={resultHeading} tabIndex={-1}>Snapshot: {reportLabel(snap.imp.report)} · {snap.imp.from} to {snap.imp.to}</h3>
@@ -688,7 +765,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
           )}
         </div>
       )}
-      {part === 'reports' && conn.status === 'select_property' && <StatusLine>Choose a property in Settings › Imports to start importing.</StatusLine>}
+      {part === 'reports' && conn.status === 'select_property' && <StatusLine>Choose a property in Settings › Imports to load reports.</StatusLine>}
       {part !== 'reports' && conn.status === 'select_property' && (
         owner && appOn ? (
           <div className="stack">
@@ -721,34 +798,6 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, pa
         )
       )}
 
-      {part !== 'reports' && owner && appOn && conn.status === 'ready' && (
-        <details className="google-tools">
-          <summary>Import a snapshot</summary>
-        <div className="stack">
-          <div className="field">
-            <label htmlFor={`report-${conn.id}`}>Report</label>
-            <select id={`report-${conn.id}`} disabled={busy} value={report} onChange={e => { setReport(e.target.value as ReportKind); attempt.current = null; }}>
-              {REPORT_OPTIONS[conn.provider].map(o => <option key={o.kind} value={o.kind}>{o.label}</option>)}
-            </select>
-          </div>
-          {conn.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(report) ? ga4CommerceReports[report].description : report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not ad-platform conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
-          {organicReport(report) && <p className="hint">Organic Search only. Choose completed days in the property timezone; today is excluded. {report === 'ga4_organic_landing' ? 'Landing pages are grouped by hostname and landing path over the whole selected range, up to 10,000 rows. A partial import is explicitly incomplete.' : 'Three report requests capture the current range, an equal-length preceding range, and the selected daily or weekly trend. Nothing is shown until all three finish. Two compatibility checks verify the exact fields; Google quota use and quality remain separate for each stage.'}</p>}
-          {isGa4CommerceReport(report) && <p className="hint">These rows cover the selected range, rather than a daily series. The date limit includes today in UTC; recent property days may be incomplete. Each import uses the report’s fixed fields and filters.</p>}
-          <div className="row">
-            <div className="field">
-              <label htmlFor={`from-${conn.id}`}>Start date</label>
-              <input id={`from-${conn.id}`} type="date" disabled={busy} max={maxImportDay??undefined} value={from} onChange={e => { setFrom(e.target.value); attempt.current = null; }} />
-            </div>
-            <div className="field">
-              <label htmlFor={`to-${conn.id}`}>End date</label>
-              <input id={`to-${conn.id}`} type="date" disabled={busy} min={from || undefined} max={maxImportDay??undefined} value={to} onChange={e => { setTo(e.target.value); attempt.current = null; }} />
-            </div>
-          </div>
-          <p className="hint">Dates are inclusive, up to 366 days, and cannot be in the future. Each import is a separate snapshot.</p>
-          <button type="button" className="btn primary" style={BTN} disabled={busy} onClick={queueImport}>Import report snapshot</button>
-        </div>
-        </details>
-      )}
 
       {part !== 'reports' && conn.imports.length > 0 && (
         <details className="google-tools"><summary>Import history</summary>

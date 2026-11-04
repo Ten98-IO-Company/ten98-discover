@@ -210,3 +210,73 @@ esac
   assert.ok(stopped >= 0 && stopped < migrated && migrated < started && started < diagnosed, commands);
   assert.equal(readFileSync(join(directory, '.env'), 'utf8'), 'existing private configuration');
 });
+
+test('host helper retains geography and custom Compose overlays across deployments', { skip: process.platform === 'win32' }, () => {
+  const directory = join(tmp(), 'deployment with spaces');
+  mkdirSync(join(directory, 'scripts'), { recursive: true });
+  mkdirSync(join(directory, 'bin'));
+  copyFileSync(new URL('../scripts/deploy.sh', import.meta.url), join(directory, 'scripts/deploy.sh'));
+  writeFileSync(join(directory, '.env'), 'saved private configuration');
+  writeFileSync(join(directory, 'bin/docker'), '#!/bin/sh\nexec node "$CHECK_DOCKER" "$@"\n', { mode: 0o700 });
+  const driver = join(directory, 'docker-fixture.mjs');
+  writeFileSync(driver, `import {appendFileSync} from 'node:fs';
+const args=process.argv.slice(2),env=process.env;
+appendFileSync(env.CHECK_LOG,JSON.stringify({args,files:env.COMPOSE_FILE??null,separator:env.COMPOSE_PATH_SEPARATOR??null,profiles:env.COMPOSE_PROFILES??null,network:env.ANALYTICS_NETWORK_MODE,proxies:env.ANALYTICS_TRUSTED_PROXIES})+'\\n');
+const command=args.join(' ');
+if(args[0]==='version')console.log('29.0.0 linux');
+else if(command==='compose up --help')console.log('--wait-timeout');
+else if(command.includes('/app/scripts/docker-setup.mjs inspect'))console.log((env.CHECK_DEPLOY_MODE??'proxy')+' https://app.example.com 33333 safe-test');
+else if(args[0]==='ps'&&env.CHECK_SAVED_FILES)console.log(env.CHECK_CONFLICT?'web-one\\nweb-two':'web-one');
+else if(args[0]==='inspect')console.log(env.CHECK_SAVED_FILES==='unknown'?'':env.CHECK_SAVED_FILES+(args.at(-1)==='web-two'?',different.yaml':''));
+else if(command.endsWith('ps --status running -q web')||command.endsWith('ps --status running -q caddy'))console.log('already-running');
+else if(!['info','build','tag','run','compose','ps'].includes(args[0]))process.exit(99);
+`);
+  const log = join(directory, 'commands.jsonl');
+  type Call = { args: string[]; files: string | null; separator: string | null; profiles: string | null; network: string; proxies: string };
+  function deploy(extra: NodeJS.ProcessEnv = {}) {
+    writeFileSync(log, '');
+    const env = { ...process.env, PATH: `${join(directory, 'bin')}:${process.env.PATH}`, CHECK_DOCKER: driver, CHECK_LOG: log, DOCKER_HOST: 'unix:///var/run/docker.sock', COMPOSE_FILE: '', COMPOSE_PATH_SEPARATOR: '', COMPOSE_PROFILES: '', CHECK_SAVED_FILES: '', CHECK_CONFLICT: '', ANALYTICS_NETWORK_MODE: 'proxy', ANALYTICS_TRUSTED_PROXIES: '192.0.2.0/24', ...extra };
+    const result = spawnSync('sh', ['scripts/deploy.sh'], { cwd: directory, env, encoding: 'utf8', timeout: 120000 });
+    const all = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Call);
+    return { result, all, calls: all.filter(call => call.args[0] === 'compose' && call.args.includes('--project-name')) };
+  }
+  for (const mode of ['proxy', 'caddy']) {
+    const fresh = deploy({ CHECK_DEPLOY_MODE: mode });
+    assert.equal(fresh.result.status, 0, fresh.result.stderr);
+    assert.ok(fresh.calls.length > 0);
+    for (const call of fresh.calls) {
+      assert.equal(call.files || '', '');
+      assert.ok(call.args.includes('compose.yaml'));
+      assert.equal(call.args.includes('compose.caddy.yaml'), mode === 'caddy');
+      assert.equal(call.args.includes('compose.geo.yaml'), false);
+    }
+    const files = [join(directory, 'compose.yaml'), ...(mode === 'caddy' ? [join(directory, 'compose.caddy.yaml')] : []), join(directory, 'compose.geo.yaml'), join(directory, 'custom overlay.yaml')].join(',');
+    for (let run = 0; run < 2; run++) {
+      const retained = deploy({ CHECK_DEPLOY_MODE: mode, CHECK_SAVED_FILES: files });
+      assert.equal(retained.result.status, 0, retained.result.stderr);
+      for (const call of retained.calls) {
+        assert.equal(call.files, files);
+        assert.equal(call.separator, ',');
+        assert.equal(call.args.includes('-f'), false);
+        assert.equal(call.network, 'proxy');
+        assert.equal(call.proxies, '192.0.2.0/24');
+      }
+    }
+  }
+  const explicit = deploy({ CHECK_SAVED_FILES: 'old.yaml,compose.geo.yaml', COMPOSE_FILE: 'compose.yaml;custom folder/no-geography.yaml', COMPOSE_PATH_SEPARATOR: ';', COMPOSE_PROFILES: 'rendered' });
+  assert.equal(explicit.result.status, 0, explicit.result.stderr);
+  for (const call of explicit.calls) {
+    assert.equal(call.files, 'compose.yaml;custom folder/no-geography.yaml');
+    assert.equal(call.separator, ';');
+    assert.equal(call.profiles, 'rendered');
+    assert.equal(call.args.includes('-f'), false);
+  }
+  assert.equal(explicit.all.some(call => call.args[0] === 'inspect'), false);
+  for (const extra of [{ CHECK_SAVED_FILES: 'unknown' }, { CHECK_SAVED_FILES: 'compose.yaml,compose.geo.yaml', CHECK_CONFLICT: 'yes' }]) {
+    const unsafe = deploy(extra);
+    assert.equal(unsafe.result.status, 1);
+    assert.match(unsafe.result.stderr, /Set COMPOSE_FILE explicitly/);
+    assert.equal(unsafe.calls.length, 0, 'Unknown or inconsistent configuration must stop before migration or service changes');
+  }
+  assert.equal(readFileSync(join(directory, '.env'), 'utf8'), 'saved private configuration');
+});

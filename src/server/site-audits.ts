@@ -15,12 +15,14 @@ import {csvCell} from './explorer-input.ts';
 import {contentCoverageLimits,contentPageStates} from '../lib/ai-content-coverage.ts';
 import type {ContentPage,ContentPageState} from './ai-content-coverage.ts';
 import type {WorkspaceRole} from '@ten98/runtime';
+import {siteAuditAccessBinding,type SiteAuditAccessBinding} from '../lib/site-audit-access.ts';
+import {listSiteAuditAccessMetadata,openSiteAuditAccess} from './site-audit-access.ts';
 
 export const siteAuditQueue='site-audit';
 export const siteAuditLimits=Object.freeze({defaultPages:50,maxPages:1000,maxMinutes:30,requestsPerSecond:1,bodyCapacityBytes:524288000,frontier:10000,edges:100000,sitemapDocuments:20,sitemapDepth:3});
 export type AuditRole=WorkspaceRole;
 export type AuditStatus='queued'|'running'|'cancelling'|'completed'|'partial'|'failed'|'cancelled';
-export type AuditConfig={retainBodyText?:boolean;mode:'static';startPath:string;startUrl:string;maxPages:number;requestLimit:number;bodyCapacityBytes:number;frontierLimit:number;edgeLimit:number;sitemapDocuments:number;sitemapDepth:number;minIntervalMs:number;maxAttempts:2;userAgent:'TenMonitorBot/1.0';robotsProductToken:'TenMonitorBot'};
+export type AuditConfig={crawlerAccess?:SiteAuditAccessBinding&{expiresAt:string};includeQueryUrls?:boolean;retainBodyText?:boolean;mode:'static';startPath:string;startUrl:string;maxPages:number;requestLimit:number;bodyCapacityBytes:number;frontierLimit:number;edgeLimit:number;sitemapDocuments:number;sitemapDepth:number;minIntervalMs:number;maxAttempts:2;userAgent:'TenMonitorBot/1.0';robotsProductToken:'TenMonitorBot'};
 export type AuditCoverage={reasons:string[];discoveryComplete:boolean;linksComplete:boolean;scopeExclusions:number;rawEvidenceRecorded:boolean;queryExclusions?:number;externalExclusions?:number;frontierOmissions?:number;edgeOmissions?:number;sitemapUnavailable?:number;unavailablePages?:number;unfetchedPages?:number};
 export type AuditSummary={pagesObserved:number;pagesAnalyzed:number;htmlPagesDiscovered:number;issuesDetected:number;issuesRetained:number;findingsComplete:boolean;retainedBySeverity:{critical:number;warning:number;info:number};graph:Omit<import('./crawl-graph.ts').CrawlGraphResult,'findings'>};
 export type AuditRunRow={
@@ -36,7 +38,7 @@ export type AuditRunRow={
 export type AuditProject={id:string;workspaceId:string;origin:string};
 export type AuditLock={client:PoolClient;project:AuditProject;run:AuditRunRow|null;role:AuditRole|null};
 type ActorTarget={projectId:string;runId?:string;actor:{userId:string;permission:'read'|'manage'};apiToken?:string};
-type InternalTarget={runId:string;internal:true;claim?:true};
+type InternalTarget={internal:true;claim?:true}&({runId:string;projectId?:never}|{projectId:string;runId?:never});
 const managers=['owner','admin'];
 const active=['queued','running','cancelling'];
 function parse<T extends z.ZodType>(schema:T,value:unknown):z.output<T>{const result=schema.safeParse(value);if(!result.success)throw new FoundationError(400,'Check the audit fields and try again.');return result.data;}
@@ -64,7 +66,7 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
   if(read)await client.query(`SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='${token===undefined?30:5}s'`);
   // ponytail: one global claim gate matches the initial one-active-run installation limit.
   if(internal&&target.claim)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('ten98.site-audit.claim.v1',0))");
-  const projectId=internal?(await client.query('SELECT project_id FROM site_audit_run WHERE id=$1',[runId])).rows[0]?.project_id:actorProject;
+  const projectId=internal?(target.projectId!==undefined?parse(z.uuid(),target.projectId):(await client.query('SELECT project_id FROM site_audit_run WHERE id=$1',[runId])).rows[0]?.project_id):actorProject;
   const hint=projectId?(await client.query('SELECT workspace_id FROM project WHERE id=$1',[projectId])).rows[0]:null;
   if(!hint){if(internal){await client.query('COMMIT');return null;}throw missing();}
   const lock=read?'SHARE':'UPDATE';workspaceId=hint.workspace_id;
@@ -104,7 +106,7 @@ function publicHttpsOrigin(value:string):string|null{
 
 export function auditRunDto(run:AuditRunRow,role:AuditRole|null){
  if(run.deleted_at)throw gone();if(!run.config||!run.origin)throw new Error('Audit configuration unavailable.');
- return {id:run.id,projectId:run.project_id,domainId:run.domain_id,origin:run.origin,config:{...run.config,retainBodyText:run.config.retainBodyText===true},status:run.status,phase:run.phase,
+ return {id:run.id,projectId:run.project_id,domainId:run.domain_id,origin:run.origin,config:{...run.config,retainBodyText:run.config.retainBodyText===true,includeQueryUrls:run.config.includeQueryUrls===true},status:run.status,phase:run.phase,
   createdAt:run.created_at.toISOString(),startedAt:iso(run.started_at),completedAt:iso(run.completed_at),deadlineAt:run.deadline_at.toISOString(),
   stopReason:run.stop_reason,coverage:run.coverage,summary:run.summary,progress:{requests:run.request_count,htmlPagesStarted:run.html_pages_started,
    sitemapDocumentsStarted:run.sitemap_documents_started,frontier:run.frontier_count,edges:run.edge_count,bodyCapacityChargedBytes:safeCount(run.budget_charged_bytes),
@@ -112,50 +114,54 @@ export function auditRunDto(run:AuditRunRow,role:AuditRole|null){
   dataStatus:run.data_expired_at?'expired' as const:'available' as const,rawEvidenceStatus:run.raw_expired_at?'expired' as const:run.coverage.rawEvidenceRecorded?'available' as const:'not_recorded' as const,
   rawExpiredAt:iso(run.raw_expired_at),dataExpiredAt:iso(run.data_expired_at),canCancel:managed(role)&&active.includes(run.status),canDelete:managed(role)&&!active.includes(run.status)};
 }
-export async function getSiteAuditSetup(projectId:string,userId:string){
- return withAuditLock({projectId,actor:{userId,permission:'read'}},async({client,project,role})=>{
+export async function listSiteAuditOrigins(client:PoolClient,project:AuditProject){
   const origins:{domainId:string|null;origin:string;authority:'canonical_project'|'verified_serving'}[]=[];
   const canonical=publicHttpsOrigin(project.origin);if(canonical)origins.push({domainId:null,origin:canonical,authority:'canonical_project'});
   const domains=await client.query("SELECT id,hostname FROM project_domain WHERE project_id=$1 AND role='serving' AND verified_at IS NOT NULL AND revoked_at IS NULL ORDER BY hostname,id",[project.id]);
   for(const row of domains.rows){const origin=publicHttpsOrigin(`https://${row.hostname}`);if(origin&&origin!==canonical)origins.push({domainId:row.id,origin,authority:'verified_serving'});}
+ return origins;
+}
+export async function getSiteAuditSetup(projectId:string,userId:string){
+ return withAuditLock({projectId,actor:{userId,permission:'read'}},async({client,project,role})=>{
+  const origins=await listSiteAuditOrigins(client,project);
   const worker=(await client.query("SELECT last_seen_at AS at,last_seen_at>clock_timestamp()-interval '30 seconds' AS recent FROM worker_heartbeat WHERE id='foundation-worker'")).rows[0];
-  return {role:role!,canStart:managed(role)&&origins.length>0,mode:'static' as const,origins,limits:siteAuditLimits,
+  return {role:role!,canStart:managed(role)&&origins.length>0,mode:'static' as const,origins,crawlerAccess:await listSiteAuditAccessMetadata(client,project.id),limits:siteAuditLimits,
    worker:{status:worker?.recent?'ready' as const:'unavailable' as const,lastHeartbeatAt:worker?.at?.toISOString()??null}};
  });
 }
-const startInput=z.object({retainBodyText:z.boolean().default(false),requestId:z.uuid(),domainId:z.uuid().nullable(),startPath:z.string().min(1).max(2048),maxPages:z.number().int().min(1).max(1000).default(50),mode:z.literal('static')}).strict();
+const startInput=z.object({crawlerAccess:siteAuditAccessBinding.nullish(),includeQueryUrls:z.boolean().default(false),retainBodyText:z.boolean().default(false),requestId:z.uuid(),domainId:z.uuid().nullable(),startPath:z.string().min(1).max(2048),maxPages:z.number().int().min(1).max(1000).default(50),mode:z.literal('static')}).strict();
 export function parseSiteAuditStart(raw:unknown){
  const input=parse(startInput,raw);
- if(!input.startPath.startsWith('/')||input.startPath.startsWith('//')||input.startPath.includes('#'))throw new FoundationError(400,'Use a query-free rooted start path.');
- const candidate=resolveAuditCandidate(input.startPath,'https://example.com/','https://example.com');
- if(candidate.status!=='accepted')throw new FoundationError(400,'Use a valid query-free start path.');
- return {...input,startPath:new URL(candidate.url).pathname};
+ if(!input.startPath.startsWith('/')||input.startPath.startsWith('//')||input.startPath.includes('#'))throw new FoundationError(400,'Use a rooted start path without fragments.');
+ const candidate=resolveAuditCandidate(input.startPath,'https://example.com/','https://example.com',input.includeQueryUrls);
+ if(candidate.status!=='accepted')throw new FoundationError(400,'Use a valid start path allowed by the query URL setting.');
+ const url=new URL(candidate.url);
+ return {...input,startPath:url.href.slice(url.origin.length)};
 }
-function intentHash(input:ReturnType<typeof parseSiteAuditStart>){return createHash('sha256').update(JSON.stringify({version:1,mode:input.mode,domainId:input.domainId,startPath:input.startPath,maxPages:input.maxPages,...(input.retainBodyText?{retainBodyText:true}:{})})).digest('hex');}
+function intentHash(input:ReturnType<typeof parseSiteAuditStart>){return createHash('sha256').update(JSON.stringify({version:1,mode:input.mode,domainId:input.domainId,startPath:input.startPath,maxPages:input.maxPages,...(input.crawlerAccess?{crawlerAccess:input.crawlerAccess}:{}),...(input.retainBodyText?{retainBodyText:true}:{}),...(input.includeQueryUrls?{includeQueryUrls:true}:{})})).digest('hex');}
 async function priorStart(client:PoolClient,projectId:string,userId:string,input:ReturnType<typeof parseSiteAuditStart>,role:AuditRole|null){
  const prior=(await client.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE project_id=$1 AND user_id=$2 AND request_id=$3 FOR UPDATE',[projectId,userId,input.requestId])).rows[0];
  if(!prior)return null;if(prior.request_hash!==intentHash(input))throw new FoundationError(409,'This request ID was already used for a different audit. Use a new request ID.');
  Object.assign(prior,(await markSiteAuditReadExpiry(client,projectId,[prior.id]))[0]);
  return {created:false,role:role!,run:auditRunDto(prior,role)};
 }
-async function selectedOrigin(client:PoolClient,project:AuditProject,domainId:string|null){
+export async function selectSiteAuditOrigin(client:PoolClient,project:AuditProject,domainId:string|null){
  if(domainId===null){const origin=publicHttpsOrigin(project.origin);if(!origin)throw new FoundationError(400,'Select a public HTTPS origin for this audit.');return {origin,hostname:null,verified:null,revision:null};}
  const row=(await client.query<{hostname:string;verified:string;revision:string}>("SELECT hostname,verified_at::text AS verified,redirect_revision::text AS revision FROM project_domain WHERE id=$1 AND project_id=$2 AND role='serving' AND verified_at IS NOT NULL AND revoked_at IS NULL",[domainId,project.id])).rows[0];
  if(!row)throw new FoundationError(404,'Serving domain not found or unavailable.');const origin=publicHttpsOrigin(`https://${row.hostname}`);
  if(!origin||origin===project.origin)throw new FoundationError(400,'Select the canonical project origin for this hostname.');return {...row,origin};
 }
-export async function startSiteAudit(projectId:string,userId:string,raw:unknown){
- const input=parseSiteAuditStart(raw),target={projectId,actor:{userId,permission:'manage' as const}};
- // Replays and denied roles do not initialize the queue. The insertion rechecks everything after startup.
- const prior=await withAuditLock(target,({client,role})=>priorStart(client,projectId,userId,input,role));if(prior)return prior;
- const boss=await getBoss();
- return withAuditLock(target,async({client,project,role})=>{
-  const replay=await priorStart(client,project.id,userId,input,role);if(replay)return replay;
-  const selected=await selectedOrigin(client,project,input.domainId);
-  const candidate=resolveAuditCandidate(input.startPath,`${selected.origin}/`,selected.origin);
-  if(candidate.status!=='accepted')throw new FoundationError(400,'Use a valid query-free start path on the selected origin.');
+/** Caller holds W/P mutation locks and has checked the current manager. */
+export async function queueSiteAuditInTransaction(locked:AuditLock,userId:string,raw:unknown,boss:Awaited<ReturnType<typeof getBoss>>){
+ const {client,project,role}=locked,input=parseSiteAuditStart(raw);
+ if(!managed(role))throw new FoundationError(403,'Only a workspace owner or admin can manage audits.');
+ const replay=await priorStart(client,project.id,userId,input,role);if(replay)return replay;
+  const selected=await selectSiteAuditOrigin(client,project,input.domainId);
+  const access=await openSiteAuditAccess(client,project,input.domainId,input.crawlerAccess,(await client.query<{at:Date}>('SELECT clock_timestamp() AS at')).rows[0].at);
+  const candidate=resolveAuditCandidate(input.startPath,`${selected.origin}/`,selected.origin,input.includeQueryUrls);
+  if(candidate.status!=='accepted')throw new FoundationError(400,'Use a valid start path on the selected origin allowed by the query URL setting.');
   if((await client.query("SELECT 1 FROM site_audit_run WHERE workspace_id=$1 AND status IN('queued','running','cancelling')",[project.workspaceId])).rowCount)throw new FoundationError(409,'This workspace already has an active audit. Wait or cancel it first.');
-  const config:AuditConfig={retainBodyText:input.retainBodyText,mode:'static',startPath:input.startPath,startUrl:candidate.url,maxPages:input.maxPages,requestLimit:3*input.maxPages+100,bodyCapacityBytes:siteAuditLimits.bodyCapacityBytes,
+  const config:AuditConfig={...(access?{crawlerAccess:{...input.crawlerAccess!,expiresAt:access.expiresAt}}:{}),includeQueryUrls:input.includeQueryUrls,retainBodyText:input.retainBodyText,mode:'static',startPath:input.startPath,startUrl:candidate.url,maxPages:input.maxPages,requestLimit:3*input.maxPages+100,bodyCapacityBytes:siteAuditLimits.bodyCapacityBytes,
    frontierLimit:siteAuditLimits.frontier,edgeLimit:siteAuditLimits.edges,sitemapDocuments:20,sitemapDepth:3,minIntervalMs:1000,maxAttempts:2,userAgent:'TenMonitorBot/1.0',robotsProductToken:'TenMonitorBot'};
   const runId=randomUUID(),jobId=randomUUID();
   const result=await client.query<AuditRunRow>(`WITH stamp AS (SELECT clock_timestamp() AS at)
@@ -167,6 +173,15 @@ export async function startSiteAudit(projectId:string,userId:string,raw:unknown)
   const sent=await boss.send(siteAuditQueue,{runId},{id:jobId,retryLimit:0,expireInSeconds:2100,db:{executeSql:(text,values)=>client.query(text,values)}});
   if(sent!==jobId)throw new FoundationError(503,'The audit could not be queued. Retry the same request.');
   return {created:true,role:role!,run:auditRunDto(result.rows[0],role)};
+}
+export async function startSiteAudit(projectId:string,userId:string,raw:unknown){
+ const input=parseSiteAuditStart(raw),target={projectId,actor:{userId,permission:'manage' as const}};
+ // Replays and denied roles do not initialize the queue. The insertion rechecks everything after startup.
+ const prior=await withAuditLock(target,({client,role})=>priorStart(client,projectId,userId,input,role));if(prior)return prior;
+ const boss=await getBoss();
+ return withAuditLock(target,async({client,project,role})=>{
+  const replay=await priorStart(client,project.id,userId,input,role);if(replay)return replay;
+  return queueSiteAuditInTransaction({client,project,role,run:null},userId,input,boss);
  });
 }
 const pageSchema=z.object({v:z.literal(1),scope:z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),id:z.uuid()}).strict();
@@ -287,6 +302,14 @@ export function parseSiteAuditPagesExport(raw:unknown){
  for(const key of ['coverage','resourceKind','search','searchIn','sort','order'] as const)if(input[key]!==null)params.set(key,input[key]);
  const query=parseAuditListQuery(params,'pages');
  return {coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order,expectedSelectionRevision:input.expectedSelectionRevision};
+}
+/** Guided setup reads its own terminal audit through the same retained-body contract. */
+export async function readSiteAnalysisPages(locked:AuditLock){
+ const run=requireRun(locked.run);
+ const fields:PageSelectionQuery={coverage:null,resourceKind:'html',search:'',searchIn:'url',sort:'url',order:'asc'};
+ const selection=await selectAuditPages(locked.client,run,fields,pageSelectionScope(locked.project.id,run.id,fields));
+ if(selection.pageReadError)throw pageReadFailure(selection.pageReadError);
+ return readAuditCoveragePages(locked,{...fields,expectedSelectionRevision:selection.selectionRevision});
 }
 /** Internal retained-body leaf. Caller holds the existing authorized W/P/run gate. */
 export async function readAuditCoveragePages(locked:AuditLock,query:ReturnType<typeof parseSiteAuditPagesExport>,materialize=true){
@@ -461,11 +484,16 @@ export async function listSiteAuditLinks(projectId:string,userId:string,runId:st
  });
 }
 const emptyInput=z.object({}).strict();
+/** Caller holds W/P/audit mutation locks and current manager authority. */
+export async function cancelSiteAuditInTransaction(client:PoolClient,run:AuditRunRow){
+  if(run.status==='queued')run=(await client.query<AuditRunRow>(`UPDATE site_audit_run SET status='cancelled',stop_reason='user_cancelled',completed_at=GREATEST(clock_timestamp(),created_at),cancel_requested_at=clock_timestamp(),generation=generation+1,phase=NULL WHERE id=$1 RETURNING *`,[run.id])).rows[0];
+  else if(run.status==='running')run=(await client.query<AuditRunRow>(`UPDATE site_audit_run SET status='cancelling',stop_reason='user_cancelled',cancel_requested_at=clock_timestamp(),generation=generation+1 WHERE id=$1 RETURNING *`,[run.id])).rows[0];
+ return run;
+}
 export async function cancelSiteAudit(projectId:string,userId:string,runId:string,raw:unknown){
  parse(emptyInput,raw);return withAuditLock(actorTarget(projectId,userId,runId,true),async({client,run:saved,role})=>{
   let run=requireRun(saved);
-  if(run.status==='queued')run=(await client.query<AuditRunRow>(`UPDATE site_audit_run SET status='cancelled',stop_reason='user_cancelled',completed_at=GREATEST(clock_timestamp(),created_at),cancel_requested_at=clock_timestamp(),generation=generation+1,phase=NULL WHERE id=$1 RETURNING *`,[run.id])).rows[0];
-  else if(run.status==='running')run=(await client.query<AuditRunRow>(`UPDATE site_audit_run SET status='cancelling',stop_reason='user_cancelled',cancel_requested_at=clock_timestamp(),generation=generation+1 WHERE id=$1 RETURNING *`,[run.id])).rows[0];
+  run=await cancelSiteAuditInTransaction(client,run);
   return {role:role!,run:auditRunDto(run,role)};
  });
 }

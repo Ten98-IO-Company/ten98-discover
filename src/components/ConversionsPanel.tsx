@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {FunnelBreakdown, SelectableList, useConfirmDialog,Disclosure} from '@ten98/ui';
-import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime/browser';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
 import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/funnel-input';

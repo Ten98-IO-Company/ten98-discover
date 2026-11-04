@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useId,useRef,useState} from 'react';
 import {EvidenceSummary,Disclosure,SegmentedControl} from '@ten98/ui';
 import {ApiError,errMsg} from '../lib/api';

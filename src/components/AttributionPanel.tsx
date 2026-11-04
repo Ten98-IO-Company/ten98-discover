@@ -1,4 +1,4 @@
-import {readResponseText} from '@ten98/runtime';
+import {readResponseText} from '@ten98/runtime/browser';
 import {AppliedFilters,EvidenceSummary,Disclosure} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';

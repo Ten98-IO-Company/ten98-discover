@@ -127,6 +127,7 @@ function App() {
   const recoveryRef = useRef<PasswordRecovery | null>(null), recoveryGeneration = useRef(0)
   const [recovery, setRecovery] = useState<{ value: PasswordRecovery; generation: number } | null>(null)
   const [pageError, setPageError] = useState('')
+  const [shellHeaderBottom,setShellHeaderBottom]=useState(0)
   const [status, setStatus] = useState<Status | null>(null)
   const [me, setMe] = useState<Me | null>(null)
   const [signInEmail, setSignInEmail] = useState('')
@@ -712,7 +713,7 @@ function App() {
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
   }}
   return (
-    <AccountPresentationContext.Provider value={presentation}><NavRoutesContext.Provider value={navRoutes}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
+    <AccountPresentationContext.Provider value={presentation}><NavRoutesContext.Provider value={navRoutes}><AppShell onHeaderBottomChange={view==='context'?setShellHeaderBottom:undefined} sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
       sidebar={<>
         <Link to='/' search={target('project')} aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
@@ -792,7 +793,7 @@ function App() {
         {view === 'heatmaps' && project && me && <HeatmapsPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} query={search.heatmapInvalid?'unsupported=1':search.heatmapQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('heatmaps'),...(query?{heatmapQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
         {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
         {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'context' && project && me && settingsFrame(<ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />)}
+        {view === 'context' && project && me && settingsFrame(<ContextPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} headerBottom={shellHeaderBottom} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />)}
         {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onAISearch={(promptId,versionId,capture)=>{const intent=readAISearchIntent()!;go({...target('ai-search'),aiSearchQuery:aiSearchIntentQuery({...intent,section:capture?'captures':'analysis',create:capture,filters:{...intent.filters,promptId,versionId}})});}} />}
         {view === 'ai-search' && project && me && <AISearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('ai-search'),...value})} onUnauthorized={unauthorized} onPrompts={()=>go(target('prompts'))} onProviders={()=>go(target('providers'))}/>}
         {view === 'ai-insights' && project && me && <AIInsightsSection navigation={aiInsightsNavigation(search)} onNavigate={value=>go({...target('ai-insights'),...value})} key={`${me.user.id}:${workspaceId}:${project.id}:${workspace?.role}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target('prompts'))} />}

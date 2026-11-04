@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 import { parseIdentifyInput } from '../src/server/identify-input.ts';
+import { analyticsIdentity } from '../src/server/native-analytics.ts';
 import {replayLimits,readReplayChunk,reassembleReplay,type ReplayPart} from '../src/lib/session-replay.ts';
 
 const SRC = readFileSync(new URL('../public/tracker.js', import.meta.url), 'utf8');
@@ -360,12 +361,12 @@ test('SPA page_views after pushState, replaceState and popstate carry the previo
   const late = makeEnv({ settings: { captureReferrer: true }, collectionMode: 'cookieless', deferCoordinator: true }); late.run(); await late.drain();
   late.history.pushState({}, '', '/boot'); await late.drain(); late.loadCoordinator(); await late.drain();
   assert.deepEqual(late.payloads.map(p => [p.url, p.dimensions.referrer]), [['https://site.example/boot', 'https://referrer.example']]);
-  // A landing view aborted before it is sent (consent, then a changed identity in the same tick) does not count as recorded.
-  const aborted = makeEnv({ settings: { captureReferrer: true } }); aborted.run(); await aborted.drain();
-  aborted.sandbox.ten98.consent(aborted.local(ANALYTICS), aborted.local({ siteKey: SITE, environment: 'live', acknowledgeReload: true }));
-  void aborted.sandbox.ten98.identify('user-1', aborted.local({}), aborted.local({ siteKey: SITE, environment: 'live' })); await aborted.drain();
-  aborted.history.pushState({}, '', '/n'); await aborted.drain();
-  assert.deepEqual(aborted.payloads.filter(p => p.name === 'page_view').map(p => [p.url, p.dimensions.referrer]), [['https://site.example/n', 'https://referrer.example']]);
+  // A same-tick anonymous identify preserves the original landing view; the new generation retains its existing referrer policy.
+  const handoff = makeEnv({ settings: { captureReferrer: true } }); handoff.run(); await handoff.drain();
+  handoff.sandbox.ten98.consent(handoff.local(ANALYTICS), handoff.local({ siteKey: SITE, environment: 'live', acknowledgeReload: true }));
+  void handoff.sandbox.ten98.identify('user-1', handoff.local({}), handoff.local({ siteKey: SITE, environment: 'live' })); await handoff.drain();
+  handoff.history.pushState({}, '', '/n'); await handoff.drain();
+  assert.deepEqual(handoff.payloads.filter(p => p.name === 'page_view').map(p => [p.url, p.dimensions.referrer]), [['https://site.example/dashboard', 'https://referrer.example'], ['https://site.example/n', 'https://referrer.example']]);
   // Each visitor key has its own landing view: after identify starts a new key mid-document, that key's first view and the events
   // after it keep the external referrer, so attribution can credit it; the next in-app view of the new key is a self-referral again.
   const keyed = makeEnv({ settings: { captureReferrer: true } }); await keyed.start();
@@ -625,6 +626,112 @@ test('identify keeps the anonymous visit context for the events after it; a new 
   assert.deepEqual([e.payloads.at(-1)!.name, e.payloads.at(-1)!.dimensions.distinctId, e.payloads.at(-1)!.context], ['signup', 'buyer', 'signed-synthetic-context']);
   await identify(e, {}, 'other-buyer'); assert.equal(e.identifyPayloads.at(-1)!.context, undefined);
   e.sandbox.ten98.track('switched'); await e.drain(); assert.equal(e.payloads.at(-1)!.context, undefined);
+});
+
+for (const phase of ['before dispatch', 'response headers', 'response body'] as const) {
+  test('D385: identify preserves the first anonymous page view and visit during ' + phase, async () => {
+    const e = makeEnv(), server = {projectId: SITE, ip: '192.0.2.10', userAgent: 'Synthetic identity-race browser',
+      secret: 'synthetic-identity-race-secret-only', epoch: EPOCH, now: new Date('2026-10-13T09:00:00Z')};
+    const anonymous = analyticsIdentity(server)!;
+    const observations: Array<{name: string; visitor: string; visit: string}> = [];
+    let pageSignal: AbortSignal | undefined, release: (() => void) | undefined, bodyCancelled = false;
+    // Real collector identity derivation behind the existing in-memory transport; no database or external request.
+    e.flags.collectionResponse = (payload, options) => {
+      const identity = analyticsIdentity({...server, distinctId: payload.dimensions?.distinctId as string | undefined,
+        context: payload.context, continueAnonymousVisit: true})!;
+      const response = {accepted: true, duplicate: false, context: identity.context};
+      if ('type' in payload) return reply(response);
+      observations.push({name: payload.name, visitor: identity.visitor, visit: identity.visit});
+      if (payload.name !== 'page_view' || phase === 'before dispatch') return reply(response);
+      pageSignal = options.signal;
+      if (phase === 'response headers') return new Promise(resolve => { release = () => resolve(reply(response)); });
+      return new Response(new ReadableStream({
+        start(controller) { release = () => { if (!bodyCancelled) { controller.enqueue(new TextEncoder().encode(JSON.stringify(response))); controller.close(); } }; },
+        cancel() { bodyCancelled = true; },
+      }), {status: 202});
+    };
+    e.run(); await e.drain();
+    if (phase === 'before dispatch') {
+      assert.equal(e.sandbox.ten98.consent(e.local(ANALYTICS), scope(e, {acknowledgeReload: true})).ok, true);
+      assert.equal(e.payloads.length, 0, 'The first view is queued but its fetch microtask has not dispatched.');
+    } else {
+      await e.grant();
+      assert.equal(e.payloads.length, 1); assert.equal(e.payloads[0].name, 'page_view');
+      assert.ok(pageSignal instanceof AbortSignal); assert.equal(pageSignal.aborted, false); assert.ok(release);
+    }
+    const pending = identify(e, {plan: 'pro'}, 'buyer-race');
+    const overlapping = identify(e, {second: true}, 'buyer-race');
+    e.sandbox.ten98.track('purchase');
+    await e.drain();
+    if (release) { assert.equal(e.identifyPayloads.length, 0); assert.equal(observations.some(row => row.name === 'purchase'), false); }
+    release?.();
+    assert.equal((await pending).status, 'accepted'); assert.equal((await overlapping).status, 'accepted'); await e.drain();
+    const purchase = observations.find(row => row.name === 'purchase');
+    assert.ok(purchase); assert.equal(e.identifyPayloads.length, 2);
+    assert.equal(e.identifyPayloads[1].context, anonymous.context);
+    assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'buyer-race');
+    assert.deepEqual({
+      pageViews: observations.filter(row => row.name === 'page_view').length,
+      pageViewAborted: pageSignal?.aborted ?? false,
+      pageBodyCancelled: bodyCancelled,
+      identifyKeptContext: e.identifyPayloads[0].context === anonymous.context,
+      purchaseKeptContext: e.payloads.at(-1)!.context === anonymous.context,
+      purchaseKeptVisitor: purchase.visitor === anonymous.visitor,
+      purchaseKeptVisit: purchase.visit === anonymous.visit,
+    }, {
+      pageViews: 1, pageViewAborted: false, pageBodyCancelled: false,
+      identifyKeptContext: true, purchaseKeptContext: true, purchaseKeptVisitor: true, purchaseKeptVisit: true,
+    }, 'A same-device anonymous-to-explicit transition must not drop its first view or split the current visit.');
+  });
+}
+
+for (const phase of ['headers', 'body'] as const) for (const action of ['reset', 'withdraw', 'epoch', 'switch', 'timeout'] as const) {
+  test('D385: pending anonymous ' + phase + ' handoff settles and rejects stale context after ' + action, async () => {
+    const e = makeEnv(); let release!: () => void, pageSignal!: AbortSignal, cancelled = false;
+    e.flags.collectionResponse = (payload, options) => {
+      if ('type' in payload || payload.name !== 'page_view') return reply({accepted: true, duplicate: false});
+      pageSignal = options.signal;
+      const stale = {accepted: true, duplicate: false, context: 'stale-first-page'};
+      if (phase === 'headers') return new Promise(resolve => { release = () => resolve(reply(stale)); });
+      return new Response(new ReadableStream({
+        start(controller) { release = () => { if (!cancelled) { controller.enqueue(new TextEncoder().encode(JSON.stringify(stale))); controller.close(); } }; },
+        cancel() { cancelled = true; },
+      }), {status: 202});
+    };
+    await e.start();
+    const pending = identify(e, {plan: 'discard'}, 'A');
+    e.sandbox.ten98.track('discard_waiting'); await e.drain();
+    assert.equal(e.identifyPayloads.length, 0); assert.equal(pageSignal.aborted, false);
+    let outcome: any; void pending.then((value: unknown) => { outcome = value; });
+    if (action === 'reset') assert.equal(e.sandbox.ten98.resetIdentity(scope(e)).ok, true);
+    if (action === 'withdraw') await e.grant(DENIED);
+    if (action === 'epoch') { e.flags.config = {consentEpoch: SECOND_SITE}; await e.runTimers(30000); }
+    if (action === 'switch') assert.equal((await identify(e, {}, 'B')).status, 'accepted');
+    if (action === 'timeout') await e.runTimers(5000);
+    await e.drain();
+    assert.ok(outcome, 'Cancellation must settle identify even while the transport ignores abort.');
+    assert.equal(outcome.status, 'not_sent'); assert.equal(outcome.reason, 'cancelled');
+    assert.equal(pageSignal.aborted, true); if (phase === 'body') assert.equal(cancelled, true);
+    assert.equal(e.payloads.some(row => row.name === 'discard_waiting'), false);
+    release(); await e.drain();
+    assert.equal(e.identifyPayloads.some(row => row.dimensions?.distinctId === 'A'), false);
+    e.flags.collectionResponse = null; await e.grant(); e.sandbox.ten98.track('after_cancel'); await e.drain();
+    const after = e.payloads.at(-1)!;
+    assert.notEqual(after.context, 'stale-first-page');
+    assert.equal(after.dimensions.distinctId, action === 'switch' ? 'B' : action === 'timeout' ? 'A' : undefined);
+  });
+}
+
+test('D385: a failed first page response releases waiting identify without retrying the page', async () => {
+  const e = makeEnv(); let rejectPage!: (reason: Error) => void;
+  e.flags.collectionResponse = payload => !('type' in payload) && payload.name === 'page_view'
+    ? new Promise((_resolve, reject) => { rejectPage = reject; }) : reply({accepted: true, duplicate: false});
+  await e.start(); const pending = identify(e, {}, 'A'); e.sandbox.ten98.track('after_failure'); await e.drain();
+  assert.equal(e.identifyPayloads.length, 0); rejectPage(new Error('Synthetic unavailable collector'));
+  assert.equal((await pending).status, 'accepted'); await e.drain();
+  assert.equal(e.payloads.filter(row => row.name === 'page_view').length, 1);
+  assert.equal(e.identifyPayloads[0].context, undefined); assert.equal(e.payloads.at(-1)!.context, undefined);
+  assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'A');
 });
 
 test('identify and reset resolve one site without cross-site identity or consent changes', async () => {

@@ -15,6 +15,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {launchChromium,setViewport} from './helpers/playwright.mjs';
+import {openView} from './helpers/app-navigation.ts';
 
 // Root supplies one built app and a fresh owned fixture. This runner never starts
 // a service, migrates, mocks an API result, or contacts another origin.
@@ -75,8 +76,8 @@ try{
   const aKey=profileRows.find(row=>row.property_key==='plan'&&row.property.value==='pro')!.visitor_key;
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM event WHERE project_id=$1 AND visitor_id=$2 AND event_name='report_probe'",[project,aKey])).rows[0].n,2);
   assert.equal(JSON.stringify(profileRows).includes('person-a'),false);
-  const now=new Date(),reportAt=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-2,12)),qualificationAt=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-3,12));
-  assert.equal(qualificationAt.toISOString().slice(0,7),now.toISOString().slice(0,7),'Run this older-date fixture after the third UTC day to keep the collected monthly identity period unchanged.');
+  const now=new Date();assert.ok(now.getUTCDate()>=3,'Two distinct historical dates must stay in the actual collector identity month.');const reportAt=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-1,12)),qualificationAt=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-2,12));
+  assert.equal(qualificationAt.toISOString().slice(0,7),now.toISOString().slice(0,7),'The historical fixture dates must keep the collected monthly identity period unchanged.');
   const reportDay=reportAt.toISOString().slice(0,10),qualificationDay=qualificationAt.toISOString().slice(0,10);
   // Only synthetic fixture timestamps are aged. Events/profile values themselves
   // came through the running collector; all report output remains actual SQL.
@@ -91,11 +92,10 @@ try{
   const base='/api/projects/'+project,explore=base+'/explore',segmentBase=base+'/segments',cohortBase=base+'/cohorts';
   page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',(error:Error)=>errors.push(error.message));
   page.on('request',(request:any)=>{if(new URL(request.url()).pathname===explore)requests.push(request.url());});
-  const button=(name:string)=>page.getByRole('button',{name,exact:true}),advanced=()=>page.locator('details.advanced-controls').first(),saved=()=>page.getByRole('region',{name:'Saved filters',exact:true}),cohorts=()=>page.getByRole('region',{name:'Cohorts',exact:true}),editor=()=>page.getByRole('form',{name:'Cohort qualification'});
+  const advanced=()=>page.locator('details.advanced-controls').first(),saved=()=>page.getByRole('region',{name:'Saved filters',exact:true}),cohorts=()=>page.getByRole('region',{name:'Cohorts',exact:true}),editor=()=>page.getByRole('form',{name:'Cohort qualification'});
   const settled=()=>page.waitForFunction(()=>![...document.querySelectorAll('[role=status]')].some(n=>/^(Loading cohorts|Saving cohort|Saving filters|Loading explore data|Loading annotations|Loading saved filters)/.test(n.textContent??'')));
   const reveal=async(host:any)=>{if(!await host.evaluate((node:HTMLDetailsElement)=>node.open))await host.locator(':scope > summary').click();};
   const open=async(label:string,host=page)=>{await editExplore(page);const summary=host.locator('summary').filter({hasText:label});if(!await summary.locator('..').evaluate((node:HTMLDetailsElement)=>node.open))await summary.click();};
-  const nav=async(label:string)=>{await closeExplore(page);const menu=button('Menu');if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await (await closeExplore(page)).getByRole('link',{name:label,exact:true}).click();};
   const csv=async()=>{const download=page.waitForEvent('download');await (await closeExplore(page)).getByRole('button',{name:'Download CSV',exact:true}).click();return readFile(await(await download).path(),'utf8');};
   const report=async(action='Apply filters')=>{const response=page.waitForResponse((r:any)=>new URL(r.url()).pathname===explore&&r.request().method()==='GET');await (action==='Apply filters'?await editExplore(page):await closeExplore(page)).getByRole('button',{name:action,exact:true}).click();const actual=await response;assert.equal(actual.status(),200);const result=await actual.json();await settled();await (await closeExplore(page)).getByRole('button',{name:'Download CSV',exact:true}).waitFor();assert.equal(await csv(),result.csv);return result;};
   const mutate=async(path:string,click:()=>Promise<void>)=>{const response=page.waitForResponse((r:any)=>new URL(r.url()).pathname.startsWith(path)&&r.request().method()==='POST');await click();const actual=await response;assert.equal(actual.status(),200);const result=await actual.json();await settled();return result;};
@@ -103,7 +103,7 @@ try{
   const clear=async()=>{await reveal(advanced());for(const kind of ['session property','property'])while(await (await editExplore(page)).locator('details.advanced-controls').first().getByRole('button',{name:'Remove '+kind+' condition 1',exact:true}).count())await (await editExplore(page)).locator('details.advanced-controls').first().getByRole('button',{name:'Remove '+kind+' condition 1',exact:true}).click();};
   const loadSaved=async(id:string)=>{await (await editExplore(page)).getByRole('region',{name:'Saved filters',exact:true}).getByLabel('Saved filters',{exact:true}).selectOption(id);await settled();await (await editExplore(page)).getByRole('region',{name:'Saved filters',exact:true}).getByRole('button',{name:'Load',exact:true}).click();await settled();};
   const shot=async(name:string)=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:join(evidence,name),fullPage:true,animations:'disabled'});screenshots.push(name);};
-  stage='real combined filters and explicit rerun';await page.goto(origin);await nav('Session production sample');await nav('Explore');await (await closeExplore(page)).getByRole('button',{name:'Download CSV',exact:true}).waitFor();await settled();
+  stage='real combined filters and explicit rerun';await page.goto(origin);await page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).selectOption({label:'Session production sample'});await openView(page,'explore');await (await closeExplore(page)).getByRole('button',{name:'Download CSV',exact:true}).waitFor();await settled();
   await (await editExplore(page)).getByLabel('From',{exact:true}).fill(reportDay);await (await editExplore(page)).getByLabel('To',{exact:true}).fill(reportDay);await (await editExplore(page)).getByLabel('Time zone',{exact:true}).fill('America/New_York');
   await (await editExplore(page)).getByLabel('Group by',{exact:true}).selectOption('property');await (await editExplore(page)).getByLabel('Property key',{exact:true}).fill('amount');
   await open('More filters');await (await editExplore(page)).getByLabel('Enable Event name',{exact:true}).check();await (await editExplore(page)).getByLabel('Event name equals',{exact:true}).fill('report_probe');

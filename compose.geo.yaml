@@ -1,5 +1,8 @@
 # Optional, explicitly installed DB-IP City Lite. No download occurs at startup.
-# Include this file on EVERY subsequent Compose upgrade/restart; see https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment#geography-database.
+# After installation, enable with COMPOSE_FILE=compose.yaml:compose.geo.yaml sh scripts/deploy.sh.
+# Include compose.caddy.yaml in that list for Caddy; later helper runs retain the recorded file list.
+# An explicit COMPOSE_FILE changes/disables overlays. Direct Compose commands must still include this file.
+# See https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment#geography-database.
 services:
   web:
     memswap_limit: 1G
