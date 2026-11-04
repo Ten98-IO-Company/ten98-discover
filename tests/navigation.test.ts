@@ -540,3 +540,15 @@ test('Heatmap navigation preserves a bounded independent page/layout range and i
  const scoped=parseNavigation({...base,heatmapQuery:'mode=pages'});assert.equal(resolveNavigation(scoped,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','heatmaps').heatmapInvalid,'1');
  assert.deepEqual(parseNavigation({...base,view:'project',heatmapQuery:'mode=pages'}),{workspace,project,view:'project'});
 });
+
+
+test('conversion read intent preserves exact revision and scope while excluding mutations and cursors',async()=>{
+ const {readConversionIntent,conversionIntentQuery,resolveNavigation}=await import('../src/lib/navigation.ts');
+ const base={workspace,project,view:'conversions'} as const,scope='from=2026-10-01&to=2026-10-07&timeZone=UTC&campaignName=%D9%85%D8%B1%D8%AD%D8%A8%D8%A7';
+ for(const kind of ['goal','funnel'] as const)for(const step of [undefined,kind==='goal'?1:3]){
+  const intent={kind,id:project,revision:7,scope,...step?{step}:{}},conversionQuery=conversionIntentQuery(intent),target={...base,conversionQuery};
+  assert.deepEqual(readConversionIntent(conversionQuery),intent);assert.deepEqual(parseNavigation(target),target);assert.notEqual(navigationKey(base),navigationKey(target));assert.equal(resolveNavigation(target,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','conversions').conversionInvalid,'1');
+  for(const patch of [{workspace:undefined},{project:undefined},{conversionQuery:[conversionQuery]},{requestId:'private'},{conversionQuery:conversionQuery+'&cursor=private'},{conversionQuery:conversionQuery+'&revision=8'}])assert.equal(parseNavigation({...target,...patch}).conversionInvalid,'1');
+ }
+ for(const value of ['kind=other','kind=goal&id='+project,'kind=goal&scope=from%3D2026-10-01','kind=funnel&draft=private','kind=goal&id='+project+'&revision=1&scope='+encodeURIComponent(scope)+'&step=2'])assert.equal(readConversionIntent(value),null);
+});

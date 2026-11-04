@@ -135,6 +135,7 @@ try{
   assert.ok(observations.every(Boolean));assert.equal(new Set(observations.map(e=>e.visitor)).size,1);assert.deepEqual(observations.map(e=>e.eventName),['A','B','C']);
   for(let i=1;i<observations.length;i++)assert.ok(Date.parse(observations[i].receivedAt)>Date.parse(observations[i-1].receivedAt));
   for(const observation of observations)assert.ok(!JSON.stringify(witness).includes(observation.visitor),'Visitor hashes must remain private.');
+  const funnelActivityUrl=page.url();await page.reload();await panel.getByRole('heading',{name:'Matching activity for step 3',exact:true}).waitFor();assert.equal(page.url(),funnelActivityUrl);assert.deepEqual(await panel.locator('.conversion-witness li > p:first-child').allTextContents(),['/A','/B','/C']);
   await panel.getByRole('button',{name:'← Back to results',exact:true}).click();await focused(panel.getByRole('button',{name:'View matching activity',exact:true}).nth(2));
   await layout('funnel-results');
 
@@ -197,6 +198,7 @@ try{
   const goal=(await json(apiPath(fixture.goals,'goals'))).items[0];
   await panel.getByRole('button',{name:'View matching activity',exact:true}).click();await focused(panel.getByRole('heading',{name:'Matching activity for this goal',exact:true}));
   assert.equal(await panel.locator('.conversion-witness').count(),1);assert.match(await panel.locator('.conversion-witness').textContent(),/page_view/);
+  const goalActivityUrl=page.url();await page.reload();await panel.getByRole('heading',{name:'Matching activity for this goal',exact:true}).waitFor();assert.equal(page.url(),goalActivityUrl);assert.match(await panel.locator('.conversion-witness').textContent(),/page_view/);
   await panel.getByRole('button',{name:'← Back to results',exact:true}).click();await focused(panel.getByRole('button',{name:'View matching activity',exact:true}));await layout('goal-results');
   await panel.getByRole('button',{name:'Edit definition',exact:true}).click();await focused(panel.getByRole('heading',{name:'Edit goal',exact:true}));
   await panel.getByLabel('Action',{exact:true}).selectOption('event');await panel.getByRole('combobox',{name:'Event name',exact:true}).fill('purchase');await panel.getByLabel('Name',{exact:true}).fill('Purchase event');
