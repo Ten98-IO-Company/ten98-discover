@@ -204,8 +204,8 @@ function App() {
       setMenuOpen(false); setToolSearch('')
       const next = parseNavigation(event.toLocation.search)
       const previous = intent.current.search
-      // The audit panel restores its drilldown trigger after the requested view commits.
-      if (!(next.view==='audits' && previous.view==='audits' && next.workspace===previous.workspace && next.project===previous.project)) requestAnimationFrame(() => document.querySelector<HTMLElement>('main')?.focus({ preventScroll: true }))
+      // Audit and conversion panels restore their own focus within the same project and view.
+      if (!(next.view===previous.view && (next.view==='audits'||next.view==='conversions') && next.workspace===previous.workspace && next.project===previous.project)) requestAnimationFrame(() => document.querySelector<HTMLElement>('main')?.focus({ preventScroll: true }))
       if (navigationKey(next) !== navigationKey(intent.current.search)) setAppError('')
       rememberIntent(next)
     })
