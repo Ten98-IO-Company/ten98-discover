@@ -83,7 +83,8 @@ declare namespace Ten98Tracker {
  type ReplayPlayerMessage = {type:'error';message:string}|{type:'ready';duration:number}|{type:'ended'}|{type:'tick';time:number;playing:boolean};
  type HeatmapPlayback = {geometry:Geometry}&({mode:'click';points:{x:number;y:number;count:number}[]}|{mode:'scroll';bands:{depth:number;captures:number}[];captures:number});
  type LayoutNode = {type:number;id:number;attributes?:Record<string,unknown>;childNodes?:LayoutNode[];isShadow?:boolean;isShadowHost?:boolean};
- type LayoutEvidence = {version:1;boxes:number[][]};
+ type TextRedaction = {id:number;rects:number[][]};
+ type LayoutEvidence = {version:1;boxes:number[][]}|{version:2;boxes:number[][];texts:TextRedaction[]};
  type HeatmapExtent = {release:()=>void;check:()=>boolean};
  type HeatmapOrigin = {x:number;y:number};
  type ReplayStyleOwner = Pick<CSSStyleSheet,'cssRules'|'deleteRule'>;
