@@ -35,7 +35,7 @@ export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUna
   const [role,setRole]=useState<Role|null>(null),[storedRows,setRows]=useState<Item[]>([]),[storedCursor,setCursor]=useState<string|null>(null),[storedTimeline,setTimeline]=useState<Timeline|null>(null);
   const [scope,setScope]=useState<'range'|'all'>('range'),[day,setDay]=useState(''),[search,setSearch]=useState(''),[appliedSearch,setAppliedSearch]=useState('');
   const [open,setOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[storedLoaded,setLoaded]=useState(false),[pending,setPending]=useState<Attempt|null>(null),[readError,setReadError]=useState<{owner:string|undefined;message:string}|null>(null);
-  const alive=useRef(false),opRef=useRef<AbortController|null>(null),epoch=useRef(0),roleRef=useRef<Role|null>(null),pendingRef=useRef<Attempt|null>(null),deleted=useRef(new Set<string>()),rangeRef=useRef(rangeKey),callbacks=useRef({onUnauthorized,onAccessLost}),manager=useRef<HTMLDetailsElement>(null);
+  const alive=useRef(false),opRef=useRef<AbortController|null>(null),epoch=useRef(0),roleRef=useRef<Role|null>(null),pendingRef=useRef<Attempt|null>(null),deleted=useRef(new Set<string>()),rangeRef=useRef(rangeKey),callbacks=useRef({onUnauthorized,onAccessLost}),manager=useRef<HTMLDivElement>(null);
   const ownerRef=useRef(readOwner),acceptedOwner=useRef(readOwner),enabledRef=useRef(readEnabled),readOp=useRef<AbortController|null>(null),previousScope=useRef({rangeKey,readOwner,readEnabled});ownerRef.current=readOwner;enabledRef.current=readEnabled;
   const currentSnapshot=readEnabled&&(readOwner===undefined||acceptedOwner.current===readOwner),rows=currentSnapshot?storedRows:[],cursor=currentSnapshot?storedCursor:null,timeline=currentSnapshot?storedTimeline:null,loaded=currentSnapshot&&storedLoaded;
   callbacks.current={onUnauthorized,onAccessLost};rangeRef.current=rangeKey;
@@ -123,14 +123,14 @@ export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUna
     return <button key={date} className="btn annotation-day" type="button" disabled={busy||!timeline} aria-label={`${date}: ${timeline?count:'unavailable'} ${count===1?'annotation':'annotations'}`} aria-controls={`${uid}-manager`} onClick={()=>{setOpen(true);setSearch('');void load({scope:'range',day:date,search:''});manager.current?.querySelector('summary')?.focus();}}>{timeline?count:'—'} {count===1?'note':'notes'}</button>;
   }
   const panel=<section className="stack annotations" aria-label="Annotations" style={{minWidth:0,overflowWrap:'anywhere','--control-md':'var(--control-touch)'} as CSSProperties}>
-    <div className="row between"><h3>Annotations</h3><button type="button" className="btn" disabled={busy||!range} onClick={()=>void load()}>Reload annotations</button></div>
-    <p className="hint">Project notes add context. They do not change traffic, filters or CSV exports.</p>
-    {range?<p className="hint">{range.from} to {range.to} ({zone}){timeline?` · ${timeline.totalCount} ${timeline.totalCount===1?'annotation':'annotations'}`:''}</p>:<p className="hint">Load report results to see annotations for the applied dates.</p>}
     {busy&&<p role="status">{pending?'Saving annotation…':'Loading annotations…'}</p>}
     {notice&&<p className="notice" role="status">{notice}</p>}{error&&<p className="alert" role="alert">{error}</p>}{readError&&readError.owner===readOwner&&<p className="alert" role="alert">{readError.message}</p>}
     {pending&&<div className="row"><p className="hint">Only the original request can be retried until its outcome is confirmed.</p><button type="button" className="btn" disabled={busy||!writable(role)} onClick={()=>void save(pending)}>Retry same request</button></div>}
-    {timeline?.totalCount===0&&<p className="hint">No annotations in this range.</p>}
-    <details id={`${uid}-manager`} ref={manager} open={open} onToggle={e=>setOpen(e.currentTarget.open)}><summary style={summary}>View or manage notes</summary><div className="stack">
+    <div id={`${uid}-manager`} ref={manager}><Disclosure summary={timeline?`Notes (${timeline.totalCount})`:'Notes'} open={open} onOpenChange={setOpen} variant="plain"><div className="stack">
+      <div className="row between"><h3>Annotations</h3><button type="button" className="btn" disabled={busy||!range} onClick={()=>void load()}>Reload annotations</button></div>
+      <p className="hint">Project notes add context. They do not change traffic, filters or CSV exports.</p>
+      {range?<p className="hint">{range.from} to {range.to} ({zone}){timeline?` · ${timeline.totalCount} ${timeline.totalCount===1?'annotation':'annotations'}`:''}</p>:<p className="hint">Load report results to see annotations for the applied dates.</p>}
+      {timeline?.totalCount===0&&<p className="hint">No annotations in this range.</p>}
       <div className="row"><button className="btn" type="button" aria-pressed={scope==='range'&&!day} disabled={busy||!range} onClick={()=>void load({scope:'range',day:''})}>Current range</button><button className="btn" type="button" aria-pressed={scope==='all'} disabled={busy||!range} onClick={()=>void load({scope:'all',day:''})}>All notes</button>{writable(role)&&<button className="btn" type="button" disabled={locked||!range} onClick={()=>edit(null)}>Add annotation</button>}</div>
       {day&&scope==='range'&&<p className="hint">Notes on {day} ({zone}).</p>}{scope==='all'&&<p className="hint">All project notes, including future dates. Dates shown in {zone}.</p>}
       <form className="row" onSubmit={e=>{e.preventDefault();const text=search.trim();if(!clean(text,200)){setError('Search must be 200 characters or fewer.');return;}void load({search:text});}}><div style={{flex:'1 1 220px',minWidth:0}}><label htmlFor={`${uid}-search`}>Search notes</label><input id={`${uid}-search`} maxLength={200} value={search} disabled={busy||!role} style={field} onChange={e=>setSearch(e.target.value)}/></div><button type="submit" className="btn" disabled={busy||!role}>Search notes</button></form>
@@ -147,8 +147,8 @@ export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUna
         <div><label htmlFor={`${uid}-note`}>Note</label><textarea id={`${uid}-note`} autoFocus maxLength={500} rows={4} value={editor.note} style={field} onChange={e=>setEditor({...editor,note:e.target.value})}/><p className="hint">{editor.note.length}/500 characters</p></div>
         <div className="row"><button className="btn" type="submit">{editor.item?'Save annotation':'Add annotation'}</button><button className="btn" type="button" onClick={()=>setEditor(null)}>Cancel note</button></div>
       </fieldset></form>}
-    </div></details>
+    </div></Disclosure></div>
     {confirmDialog}
   </section>;
-  return {panel,dayButton};
+  return {panel,dayButton,markedDays:timeline?.days.map(mark=>mark.date)??[]};
 }
