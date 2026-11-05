@@ -147,6 +147,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   // The navigation-review fixture claims the fresh installation itself through the first sign-up.
   native('tests/shell-flow-browser.mjs', ['TEN98_SHELL_FLOW_BROWSER'], ['--unclaimed'], {port: 3094}),
   native('tests/prompt-navigation-shell-browser.ts', ['TEN98_PROMPT_NAVIGATION_SHELL_BROWSER'], ['--unclaimed', '--no-worker', '--database=ten98_prompt_shell']),
+  native('tests/rank-history-native-browser.ts', ['TEN98_RANK_HISTORY_NATIVE_BROWSER'], ['--unclaimed', '--no-worker', '--database=ten98_rank_history_native']),
   native('tests/rank-loading-browser.mjs', ['TEN98_RANK_LOADING_BROWSER'], ['--unclaimed'], {port: 3094,
     note: 'asserts origin http://localhost:3094 while the runner serves BASE_URL http://127.0.0.1:3094; stale Analytics/Rank tracking locators (#320)'}),
 
