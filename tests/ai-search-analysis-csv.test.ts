@@ -17,3 +17,8 @@ test('complete strict report exports safe CSV, unavailable versus zero, associat
 test('8 MiB UTF-8 output ceiling refuses a whole valid report rather than truncating',()=>{
  const value=report(),query=value.topQueries[0],rows=Array.from({length:2000},(_,i)=>({...query,key:String(i)+'鞋'.repeat(1300)}));value.topQueries=rows;value.totals.uniqueQueries=2000;value.totals.queryInstances=2000;value.totals.averageFanout={numerator:2000,denominator:1,value:2000};value.words.denominator=2000;value.byPromptVersion[0].totals=structuredClone(value.totals);value.byPromptVersion[0].variations=rows;value.byPromptVersion[0].returned=2000;value.byModel[0].totals=structuredClone(value.totals);assert.ok(aiQueryReportSchema.safeParse(value).success);assert.throws(()=>aiSearchAnalysisCsv(value),/complete analysis CSV exceeds 8 MiB/);
 });
+test('CSV retains the applied requested market and each capture identity without inventing unavailable provenance',()=>{
+ const value=report(),market={locationCode:2840,countryCode:'US',languageCode:'en'};value.filters.market=market;value.marketOptions=[market];for(const capture of value.captures)capture.requestedMarket=market;
+ const csv=aiSearchAnalysisCsv(value);assert.ok(csv.includes('filters,market.locationCode,number,2840'));assert.ok(csv.includes('filters,market.countryCode,string,US'));assert.ok(csv.includes('filters,market.languageCode,string,en'));assert.ok(csv.includes('Requested location code,Requested country code,Requested language code'));assert.ok(csv.includes(',2840,US,en\r\n'));
+ value.captures[0].requestedMarket=null;assert.throws(()=>aiSearchAnalysisCsv(value));
+});
