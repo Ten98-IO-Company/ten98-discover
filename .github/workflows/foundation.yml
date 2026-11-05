@@ -424,6 +424,14 @@ jobs:
           timeout 120s node tests/annotations-browser.mjs
           timeout 120s node tests/explorer-scope-browser.mjs
           timeout 120s node tests/analytics-comparison-browser.mjs
+      - name: Verify conversions and saved navigation
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+        run: |
+          TEN98_CONVERSION_NAV_ONLY=0 timeout 120s node tests/conversions-library-browser.mjs
+          TEN98_CONVERSION_NAV_ONLY=1 timeout 120s node tests/conversions-library-browser.mjs
       - name: Verify retained keyword results
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
