@@ -390,6 +390,17 @@ jobs:
         run: |
           timeout 120s node tests/heatmap-control-layout-browser.ts
           timeout 120s node tests/replay-heatmaps-classic-browser.mjs
+      - name: Verify replay detail and saved-recording flows
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_SESSION_REPLAY_BROWSER: '1'
+          TEN98_REPLAY_HEATMAPS_BROWSER: '1'
+        run: |
+          timeout 120s node tests/session-replay-browser.mjs
+          TEN98_REPLAY_DETAIL_UX=1 timeout 120s node tests/session-replay-browser.mjs
+          timeout 120s node tests/replay-heatmaps-browser.mjs
       - name: Verify retained keyword results
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
