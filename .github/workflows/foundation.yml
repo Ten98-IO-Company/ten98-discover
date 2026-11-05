@@ -346,7 +346,7 @@ jobs:
 
   feature-browsers:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PLAYWRIGHT_CHANNEL: chromium
     steps:
@@ -402,6 +402,28 @@ jobs:
           TEN98_REPLAY_DETAIL_UX=1 timeout 120s node tests/session-replay-browser.mjs
           # This 90-context suite exceeds two minutes on hosted Linux runners.
           timeout 180s node tests/replay-heatmaps-browser.mjs
+      - name: Verify AI report empty states and recovery
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_AI_INSIGHTS_VIEW_BROWSER: '1'
+          TEN98_AI_INSIGHTS_BROWSER: '1'
+        run: |
+          timeout 120s node tests/ai-insights-view-browser.mjs
+          timeout 120s node tests/ai-insights-browser.mjs
+      - name: Verify notes and Explore recovery
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_ANNOTATIONS_BROWSER: '1'
+          TEN98_EXPLORER_SCOPE_BROWSER: '1'
+          TEN98_COMPARISON_BROWSER: '1'
+        run: |
+          timeout 120s node tests/annotations-browser.mjs
+          timeout 120s node tests/explorer-scope-browser.mjs
+          timeout 120s node tests/analytics-comparison-browser.mjs
       - name: Verify retained keyword results
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash

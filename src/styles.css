@@ -31,7 +31,6 @@
 .annotation-day{ min-inline-size: 0; max-inline-size: 100%; min-block-size: var(--control-touch); white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .annotations, .annotations .stack{ display: grid; gap: var(--space-3); min-width: 0; }
 .annotations p, .annotations h3, .annotations h4{ margin: 0; }
-.annotations > details{ border-block-start: 1px solid var(--line); }
 .cohort-controls{ min-width: 0; overflow-wrap: anywhere; }
 .cohort-controls input:not([type='checkbox']), .cohort-controls select{ width: 100%; min-width: 0; }
 .cohort-field{ flex: 1 1 220px; min-width: 0; }
