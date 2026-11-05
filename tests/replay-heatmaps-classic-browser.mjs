@@ -118,7 +118,8 @@ try{
   const messages=await player.evaluate(()=>window.messages);record.messages=messages;save();
   if(scene.expect==='error'){assert.deepEqual(messages[0],{type:'error',message:'This recording could not be played safely.'},'A gutter reserved behind hidden scrollbars narrows the frame block and must fail closed');await player.waitForFunction(()=>!document.querySelector('.replayer-wrapper'));const facts=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>({wrapper:document.querySelectorAll('.replayer-wrapper').length,svg:document.querySelectorAll('svg').length}));record.alignment=facts;assert.deepEqual(facts,{wrapper:0,svg:0},'A refused sample leaves no frame or plane behind');
    if(scene.reflow){
-    await player.evaluate(value=>window.mount(value),{events:[meta,snapshot]});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));
+    const ordinarySnapshot=structuredClone(snapshot);delete ordinarySnapshot.data.ten98PlaybackLayout;
+    await player.evaluate(value=>window.mount(value),{events:[meta,ordinarySnapshot]});await player.waitForFunction(()=>window.messages.some(m=>m.type==='ready'));
     const replayTop=await player.frames().find(frame=>frame.url().startsWith('data:')).evaluate(()=>{const f=document.querySelector('iframe'),r=f.contentDocument.getElementById('target').getBoundingClientRect();return r.top+f.contentWindow.scrollY;});
     record.maskedReflowDelta=replayTop-(native.target.top+native.scrollY);assert.ok(Math.abs(record.maskedReflowDelta)>1,'Real privacy masking must change the target location despite unchanged outer extent');
    }
