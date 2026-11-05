@@ -17753,6 +17753,33 @@ function replayCaptureLayout(event,strict){
   }catch(_){delete event.data.ten98Layout;}
 }
 
+/** @param {Ten98Tracker.ReplayEnvelope} event */
+function replayLayoutEvent(event){return event.type===2||event.type===3&&[0,2,4,5,8,10,13,15].includes(Number(event.data.source));}
+// Numeric style fingerprints detect stale typography without retaining CSS strings or measuring every pointer move.
+/** @param {Element} node @param {Window} view @returns {number[]} */
+function replayTextStyle(node,view){
+  var style=view.getComputedStyle(node),value=['font-family','font-size','font-weight','font-style','font-stretch','font-variation-settings','font-feature-settings','font-kerning','font-variant','font-optical-sizing','letter-spacing','line-height','word-spacing','text-transform','text-indent','text-align','text-wrap','overflow-wrap','word-break','direction','writing-mode','tab-size','width','box-sizing'].map(function(k){return style.getPropertyValue(k);}).join('\n'),a=2166136261,b=5381;
+  for(var i=0;i<value.length;i++){a=Math.imul(a^value.charCodeAt(i),16777619);b=Math.imul(b,33)^value.charCodeAt(i);}return[a>>>0,b>>>0];
+}
+/** @param {Ten98Tracker.RecorderEvent} event @param {string} block @param {number} generation @param {number} sequence */
+function replayCapturePlayback(event,block,generation,sequence){
+  if(event.type===4)return;
+  try{
+    if(typeof core.record.mirror.getId!=='function')return;
+    var elements=Array.from(document.querySelectorAll('*'));if(elements.length>20000)throw Error('Layout scan limit.');
+    var nodes=elements.filter(function(n){return!n.closest(block)&&core.record.mirror.getId(n)>0;}).map(function(n){return{type:2,id:core.record.mirror.getId(n)};});
+    if(nodes.length>1000)throw Error('Layout node limit.');
+    var offset={left:window.scrollX,top:window.scrollY},probe={type:2,timestamp:event.timestamp,data:/** @type {Ten98Tracker.RrwebData} */ ({node:{type:0,childNodes:nodes},initialOffset:offset})};
+    replayCaptureLayout(probe,true);var layout=/** @type {Ten98Tracker.LayoutEvidence|undefined} */ (probe.data.ten98Layout);
+    /** @type {Ten98Tracker.PlaybackLayout} */
+    var checkpoint={version:1,generation:generation,sequence:sequence,viewport:[document.documentElement.clientWidth,document.documentElement.clientHeight],scroll:[offset.left,offset.top],styles:layout&&layout.version===2?layout.texts.map(function(t){return[t.id].concat(replayTextStyle(/** @type {Element} */ (core.record.mirror.getNode(t.id)),window));}):[],evidence:layout&&layout.version===2?layout:null};
+    if(new TextEncoder().encode(JSON.stringify(checkpoint)).length>131072)throw Error('Playback evidence limit.');
+    event.data.ten98PlaybackLayout=checkpoint;
+    var pending=/** @type {unknown[]} */ ([event]),count=0;while(pending.length){var value=pending.pop();if(++count>20000)throw Error('Playback structure limit.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
+    if(new TextEncoder().encode(JSON.stringify(event)).length>4194304)throw Error('Playback byte limit.');
+  }catch(_){delete event.data.ten98PlaybackLayout;}
+}
+
 /** @param {Ten98Tracker.RrwebEvent} original @param {boolean} strict @returns {Ten98Tracker.RecorderEvent|null} */
 function replaySafeEvent(original, strict) {
   if (!original || !Number.isInteger(original.type) || original.type < 0 || original.type > 4) return null;
@@ -17799,7 +17826,7 @@ if (mode === 'record') {
   var activeRecorder = null;
   hub.startReplayRecorder = function (settings, emit) {
     if (activeRecorder) return null;
-    var owner = {}, alive = true, starting = true;
+    var owner = {}, alive = true, starting = true, layoutGeneration=0,layoutSequence=0;
     /** @type {(()=>void)|null|undefined} */
     var stop = null, strict = settings.maskLevel === 'strict';
     activeRecorder = owner;
@@ -17808,7 +17835,7 @@ if (mode === 'record') {
     try {
       // Reject an invalid selector before observing even one node.
       document.querySelector(block);
-      stop = core.record({emit:function (event) { if (!alive) return; try { var safe = replaySafeEvent(event,strict); if (safe) emit(safe); } catch (_) { close(); emit(null); } },
+      stop = core.record({emit:function (event) { if (!alive) return; try { var safe = replaySafeEvent(event,strict); if (safe){if(safe.type===2){layoutGeneration++;layoutSequence=0;}if(strict&&replayLayoutEvent(safe))replayCapturePlayback(safe,block,layoutGeneration,++layoutSequence);emit(safe);} } catch (_) { close(); emit(null); } },
         blockClass:'rr-block',blockSelector:block,maskAllInputs:true,maskInputFn:function () { return '***'; },
         maskTextSelector:strict ? '*' : '.rr-mask',maskTextFn:replayMask,slimDOMOptions:'all',
         inlineStylesheet:true,recordCanvas:false,recordCrossOriginIframes:false,collectFonts:false,inlineImages:false,
@@ -17829,6 +17856,75 @@ if (mode === 'record') {
   /** @type {ReturnType<typeof setInterval>|null} */
   var ticker = null;
   var duration = 0, playing = false, pausedOffset = 0, initialized = false;
+  /** @type {CSSStyleSheet|null} */
+  var playbackSheet=null;
+  /** @type {Document|null} */
+  var playbackDocument=null;
+  /** @type {Ten98Tracker.PlaybackLayout|null} */
+  var playbackCheckpoint=null;
+  /** @type {number[]|null} */
+  var playbackScroll=null;
+  var playbackGeneration=0,playbackSequence=0;
+  /** @type {(()=>boolean)|null} */
+  var playbackCheck=null;
+  /** @type {MutationObserver|null} */
+  var playbackObserver=null;
+  function clearPlayback(){if(playbackObserver)playbackObserver.disconnect();playbackObserver=null;if(playbackDocument&&playbackSheet)playbackDocument.adoptedStyleSheets=playbackDocument.adoptedStyleSheets.filter(function(s){return s!==playbackSheet;});playbackSheet=null;playbackDocument=null;playbackCheck=null;}
+  function resetPlayback(){clearPlayback();playbackCheckpoint=null;playbackScroll=null;playbackGeneration=0;playbackSequence=0;}
+  function applyPlayback(){
+    if(heatmap||!player)return;clearPlayback();
+    try{
+      var c=playbackCheckpoint,doc=player.iframe.contentDocument,view=player.iframe.contentWindow;if(!c||!doc||!view)return;
+      var e=c.evidence,mirror=player.getMirror();if(!e||e.version!==2||Object.keys(e).sort().join(',')!=='boxes,texts,version'||!Array.isArray(e.boxes)||e.boxes.length>1000||!Array.isArray(e.texts)||!e.texts.length||e.texts.length>256)throw Error('Invalid playback evidence.');
+      /** @type {Map<number,number[]>} */
+      var boxes=new Map();for(var b of e.boxes){if(!Array.isArray(b)||![1,5].includes(b.length)||!b.every(Number.isFinite)||!Number.isSafeInteger(b[0])||b[0]<1||boxes.has(b[0])||b.slice(1).some(function(n){return Math.abs(n)>10000000;}))throw Error('Invalid playback box.');boxes.set(b[0],b.slice(1));}
+      if(!Array.isArray(c.styles)||c.styles.length!==e.texts.length)throw Error('Missing playback styles.');
+      var ids=new Set(),total=0,rules=[];
+      /** @type {Array<{leaf:Element;style:number[];size:number[]}>} */
+      var styles=[];
+      for(var t of e.texts){
+        if(!t||Object.keys(t).sort().join(',')!=='id,rects'||!Number.isSafeInteger(t.id)||ids.has(t.id)||!Array.isArray(t.rects)||!t.rects.length||t.rects.length>64)throw Error('Invalid playback text.');ids.add(t.id);total+=t.rects.length;if(total>512)throw Error('Playback rectangle limit.');
+        const box=boxes.get(t.id);var node=mirror.getNode(t.id);if(!box||box.length!==4||box[2]<=0||box[3]<=0||!node||node.nodeType!==1||!replayTextBlock(/** @type {Element} */ (node),view))throw Error('Unsupported playback text.');
+        var leaf=/** @type {Element} */ (node);if(Math.abs(leaf.getBoundingClientRect().width-box[2])>1||t.rects.some(function(r){return!Array.isArray(r)||r.length!==4||!r.every(Number.isFinite)||r.some(function(n){return n<0;})||r[2]<=0||r[3]<=0||r[0]+r[2]>box[2]+1||r[1]+r[3]>box[3]+1;}))throw Error('Playback text changed.');
+        var fingerprint=c.styles[styles.length],style=replayTextStyle(leaf,view);if(!Array.isArray(fingerprint)||fingerprint.length!==3||fingerprint[0]!==t.id||!fingerprint.slice(1).every(function(n,i){return Number.isInteger(n)&&n>=0&&n<=4294967295&&n===style[i];}))throw Error('Playback style changed.');styles.push({leaf:leaf,style:style,size:replayLayoutRect(leaf).slice(2)});
+        var path=[],ancestor=/** @type {Element|null} */ (leaf);while(ancestor){if(path.length===64)throw Error('Selector depth.');var parentElement=ancestor.parentElement;path.unshift(ancestor.tagName.toLowerCase()+':nth-child('+(parentElement?Array.prototype.indexOf.call(parentElement.children,ancestor)+1:1)+')');ancestor=parentElement;}
+        var selector=path.join('>');rules.push(selector+'{height:'+box[3]+'px!important;position:relative!important;font-size:0!important;line-height:0!important;color:transparent!important;}'+selector+'::before{content:""!important;position:absolute!important;pointer-events:none!important;left:0!important;top:0!important;width:100%!important;height:100%!important;background-image:'+t.rects.map(function(){return'linear-gradient(#6b728040,#6b728040)';}).join(',')+'!important;background-repeat:no-repeat!important;background-position:'+t.rects.map(function(r){return r[0]+'px '+r[1]+'px';}).join(',')+'!important;background-size:'+t.rects.map(function(r){return r[2]+'px '+r[3]+'px';}).join(',')+'!important;}');
+      }
+      // A seek applies hover before Flush. Reject hover-dependent masked sizes even without a prior installed correction.
+      var hovered=Array.from(doc.querySelectorAll('.\\:hover')).map(function(node){return{node:node,value:node.getAttribute('class')||''};}),hoverScroll=[view.scrollX,view.scrollY];
+      for(var hoveredNode of hovered)hoveredNode.node.classList.remove(':hover');
+      try{if(hovered.length&&styles.some(function(entry){var size=replayLayoutRect(entry.leaf).slice(2);return size.length!==entry.size.length||size.some(function(n,i){return Math.abs(n-entry.size[i])>1;});}))throw Error('Hover changed playback size.');}
+      finally{for(var hoveredNode of hovered)hoveredNode.node.setAttribute('class',hoveredNode.value);view.scrollTo(hoverScroll[0],hoverScroll[1]);}
+      var sheet=new (/** @type {Window & typeof globalThis} */ (view)).CSSStyleSheet();sheet.replaceSync(rules.join('\n'));playbackDocument=doc;playbackSheet=sheet;doc.adoptedStyleSheets=[...doc.adoptedStyleSheets,sheet];
+      const checkView=view,checkDoc=doc,checkpoint=c;
+      playbackCheck=function(){return checkDoc.documentElement.clientWidth===checkpoint.viewport[0]&&checkDoc.documentElement.clientHeight===checkpoint.viewport[1]&&Array.from(boxes).every(function(pair){var node=mirror.getNode(pair[0]);if(!node||node.nodeType!==1)return false;var el=/** @type {Element} */ (node);if(!replayLayoutSupported(el,checkDoc,checkView))return false;var actual=replayLayoutRect(el),expected=pair[1],fixed=false;for(var a=/** @type {Element|null} */ (el);a;a=a.parentElement)if(checkView.getComputedStyle(a).position==='fixed'){fixed=true;break;}if(actual.length&&!fixed){actual[0]+=checkView.scrollX-checkpoint.scroll[0];actual[1]+=checkView.scrollY-checkpoint.scroll[1];}return actual.length===expected.length&&actual.every(function(n,i){return Math.abs(n-expected[i])<=1;});});};
+      if(playbackScroll)view.scrollTo(playbackScroll[0],playbackScroll[1]);if(!playbackCheck())throw Error('Playback layout mismatch.');
+      // rrweb changes :hover classes after applying pointer positions, including timed positions.
+      // Coalesce each DOM batch and ignore remove/add pairs with no net class change.
+      playbackObserver=new MutationObserver(function(records){
+        var changed=new Map();for(var record of records)if(!changed.has(record.target))changed.set(record.target,record.oldValue);
+        if(!Array.from(changed).some(function(pair){return /** @type {Element} */ (pair[0]).getAttribute('class')!==pair[1];}))return;
+        var x=checkView.scrollX,y=checkView.scrollY,valid=false;
+        try{sheet.disabled=true;valid=styles.every(function(entry){var size=replayLayoutRect(entry.leaf).slice(2);return size.length===entry.size.length&&size.every(function(n,i){return Math.abs(n-entry.size[i])<=1;})&&replayTextBlock(entry.leaf,checkView)&&replayTextStyle(entry.leaf,checkView).every(function(n,i){return n===entry.style[i];});});}
+        finally{sheet.disabled=false;checkView.scrollTo(x,y);}
+        if(!valid||!playbackCheck||!playbackCheck()){clearPlayback();playbackCheckpoint=null;}
+      });
+      playbackObserver.observe(doc,{subtree:true,attributes:true,attributeFilter:['class'],attributeOldValue:true});
+    }catch(_){clearPlayback();playbackCheckpoint=null;}
+  }
+  /** @param {Ten98Tracker.ReplayEnvelope} event @param {boolean} isSync */
+  function playbackEvent(event,isSync){
+    if(heatmap)return;
+    if(replayLayoutEvent(event)){
+      clearPlayback();playbackCheckpoint=null;
+      var c=/** @type {Ten98Tracker.PlaybackLayout|undefined} */ (event.data.ten98PlaybackLayout);
+      if(c&&Object.keys(c).sort().join(',')==='evidence,generation,scroll,sequence,styles,version,viewport'&&c.version===1&&Number.isSafeInteger(c.generation)&&c.generation>0&&Number.isSafeInteger(c.sequence)&&c.sequence>0&&Array.isArray(c.viewport)&&c.viewport.length===2&&c.viewport.every(function(n){return Number.isInteger(n)&&n>0&&n<=20000;})&&Array.isArray(c.scroll)&&c.scroll.length===2&&c.scroll.every(function(n){return Number.isFinite(n)&&Math.abs(n)<=10000000;})&&new TextEncoder().encode(JSON.stringify(c)).length<=131072){
+        if(event.type===2){playbackGeneration=c.generation;playbackSequence=0;}
+        if(c.generation===playbackGeneration&&c.sequence>playbackSequence){playbackCheckpoint=c;playbackSequence=c.sequence;playbackScroll=c.scroll;}
+      }else if(event.type===2){playbackGeneration=0;playbackSequence=0;}
+      if(!isSync)applyPlayback();
+    }else if(event.type===3&&event.data.source===3&&player){var doc=player.iframe.contentDocument,node=player.getMirror().getNode(Number(event.data.id));if(doc&&(node===doc||node===doc.scrollingElement)&&Number.isFinite(event.data.x)&&Number.isFinite(event.data.y))playbackScroll=[Number(event.data.x),Number(event.data.y)];}
+  }
   /** @type {unknown} */
   var heatmap = null;
   /** @type {ResizeObserver|null} */
@@ -17842,6 +17938,8 @@ if (mode === 'record') {
   /** @type {(()=>boolean)|null} */
   var heatmapTextCheck=null;
   /** @type {(()=>boolean)|null} */
+  var heatmapControlCheck=null;
+  /** @type {(()=>boolean)|null} */
   var heatmapLayoutCheck=null;
   /** @type {MutationObserver|null} */
   var heatmapLayoutObserver=null;
@@ -17851,12 +17949,12 @@ if (mode === 'record') {
   var heatmapExtent = null;
   /** @param {Ten98Tracker.ReplayPlayerMessage} value */
   function send(value) { if (port) port.postMessage(value); }
-  function destroy() { playing = false; heatmapTextCheck=null;heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
+  function destroy() { resetPlayback();playing = false; heatmapTextCheck=null;heatmapControlCheck=null;heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
   function fail() { destroy(); send({type:'error',message:'This recording could not be played safely.'}); }
   function position() { return player ? playing ? Math.max(0,Math.min(duration,player.getCurrentTime())) : pausedOffset : 0; }
   // rrweb 2.1.7 pauses before equal-timestamp events; recorded timestamps are integer ms.
   /** @param {number} offset */
-  function pauseAt(offset) { pausedOffset = offset; /** @type {Ten98Tracker.ReplayPlayer} */ (player).pause(Math.floor(offset) + 1); }
+  function pauseAt(offset) { clearPlayback();pausedOffset = offset; /** @type {Ten98Tracker.ReplayPlayer} */ (player).pause(Math.floor(offset) + 1); }
   function scale() { if (!player) return; var width = Number(player.iframe.width); if (!Number.isFinite(width) || width <= 0) return; player.wrapper.style.transformOrigin = 'top left'; player.wrapper.style.transform = 'scale(' + Math.min(1,innerWidth / width,heatmap?innerHeight / Number(player.iframe.height):1) + ')'; }
   addEventListener('resize',scale);
   /** @param {Document} doc @param {Window} view @param {Ten98Tracker.Geometry} g */
@@ -17942,6 +18040,36 @@ if (mode === 'record') {
       return heatmapTextCheck();
     }catch(_){return false;}
   }
+  // Static samples retain control bounds, not control text rectangles. Restore only a provable single-line box.
+  /** @param {Element} element @param {Window} view */
+  function heatmapControlStyle(element,view){
+    if(element.tagName!=='BUTTON'||element.childNodes.length!==1||element.firstChild?.nodeType!==3)return null;
+    var s=view.getComputedStyle(element),keys=/** @type {const} */ (['paddingLeft','paddingRight','paddingTop','paddingBottom','borderLeftWidth','borderRightWidth','borderTopWidth','borderBottomWidth']),edges=keys.map(function(k){return parseFloat(s[k]);}),line=parseFloat(s.lineHeight);
+    if(!['block','inline-block'].includes(s.display)||s.position!=='static'||!['normal','nowrap'].includes(s.whiteSpace)||s.writingMode!=='horizontal-tb'||!['border-box','content-box'].includes(s.boxSizing)||!Number.isFinite(line)||line<=0||edges.some(function(n){return!Number.isFinite(n)||n<0||n>10000000;})||['::before','::after'].some(function(p){return!['none','normal'].includes(view.getComputedStyle(element,p).content);}))return null;
+    for(var ancestor=/** @type {Element|null} */ (element);ancestor;ancestor=ancestor.parentElement)if(Number(view.getComputedStyle(ancestor).zoom)!==1)return null;
+    return{line:line,horizontal:edges[0]+edges[1]+edges[4]+edges[5],vertical:edges[2]+edges[3]+edges[6]+edges[7],left:edges[0]+edges[4],top:edges[2]+edges[6],sizing:s.boxSizing,fingerprint:[s.display,s.position,s.whiteSpace,s.direction,s.font,s.lineHeight,s.letterSpacing,s.wordSpacing,s.boxSizing].concat(keys.map(function(k){return s[k];})).join('\n')};
+  }
+  /** @param {Document} doc @param {Window} view */
+  function restoreHeatmapControls(doc,view){
+    try{
+      var data=/** @type {Record<string,unknown>} */ (heatmapSnapshot),e=/** @type {Ten98Tracker.LayoutEvidence} */ (data.ten98Layout);
+      if(!e||![1,2].includes(e.version)||!Array.isArray(e.boxes)||e.boxes.length>1000)return false;
+      /** @type {Map<number,number[]>} */
+      var boxes=new Map();for(var b of e.boxes){if(!Array.isArray(b)||![1,5].includes(b.length)||!b.every(Number.isFinite)||!Number.isSafeInteger(b[0])||b[0]<1||boxes.has(b[0])||b.slice(1).some(function(n){return Math.abs(n)>10000000;}))return false;boxes.set(b[0],b.slice(1));}
+      var mirror=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror();
+      /** @type {Array<{element:HTMLElement;box:number[];style:NonNullable<ReturnType<typeof heatmapControlStyle>>}>} */
+      var restored=[];
+      for(var n of replayLayoutNodes(data.node)){
+        var node=mirror.getNode(n.id),box=boxes.get(n.id);if(!node||node.nodeType!==1||/** @type {Element} */ (node).tagName!=='BUTTON'||!box||box.length!==4)continue;
+        var element=/** @type {HTMLElement} */ (node),r=element.getBoundingClientRect();if(Math.abs(r.width-box[2])<=1&&Math.abs(r.height-box[3])<=1)continue;
+        var style=heatmapControlStyle(element,view);if(!style||!replayLayoutSupported(element,doc,view)||box[2]<=style.horizontal||Math.abs(box[3]-style.vertical-style.line)>1)return false;
+        var width=box[2]-(style.sizing==='content-box'?style.horizontal:0),height=box[3]-(style.sizing==='content-box'?style.vertical:0);if(width<=0||height<=0)return false;
+        element.style.setProperty('width',String(width)+'px','important');element.style.setProperty('height',String(height)+'px','important');restored.push({element:element,box:box,style:style});
+      }
+      heatmapControlCheck=function(){return restored.every(function(entry){var style=heatmapControlStyle(entry.element,view),box=entry.element.getBoundingClientRect(),range=doc.createRange();range.selectNodeContents(entry.element);var rects=Array.from(range.getClientRects());if(!style||style.fingerprint!==entry.style.fingerprint||Math.abs(box.width-entry.box[2])>1||Math.abs(box.height-entry.box[3])>1||rects.length!==1)return false;var text=rects[0];return text.width>0&&text.height>0&&text.left>=box.left+style.left-1&&text.top>=box.top+style.top-1&&text.right<=box.left+box.width-(style.horizontal-style.left)+1&&text.bottom<=box.top+box.height-(style.vertical-style.top)+1;});};
+      return heatmapControlCheck();
+    }catch(_){return false;}
+  }
   /** @param {Document} doc @param {Window} view @param {Ten98Tracker.HeatmapOrigin} origin */
   function verifyHeatmapLayout(doc,view,origin){
     try{
@@ -17952,7 +18080,7 @@ if (mode === 'record') {
       view.scrollTo(offset.left,offset.top);if(Math.abs(view.scrollX-offset.left)>1||Math.abs(view.scrollY-offset.top)>1)return false;
       var mirror=/** @type {Ten98Tracker.ReplayPlayer} */ (player).getMirror();
       var entries=nodes.map(function(n){var node=mirror.getNode(n.id),expected=boxes.get(n.id);if(!node||node.nodeType!==1||!expected)throw Error('Missing layout node.');var element=/** @type {Element} */ (node);if(!replayLayoutSupported(element,doc,view))throw Error('Unsupported layout.');var actual=replayLayoutRect(element);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;}if(actual.length!==expected.length||actual.some(function(v,i){return Math.abs(v-expected[i])>1;}))throw Error('Snapshot layout changed.');var fixed=false;for(var ancestor=element;ancestor;ancestor=/** @type {Element} */ (ancestor.parentElement)){if(view.getComputedStyle(ancestor).position==='fixed'){fixed=true;break;}}return{node:element,box:actual,fixed:fixed};});
-      heatmapLayoutCheck=function(){return(!heatmapTextCheck||heatmapTextCheck())&&entries.every(function(entry){var actual=replayLayoutRect(entry.node);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;if(!entry.fixed){actual[0]+=view.scrollX-offset.left;actual[1]+=view.scrollY-offset.top;}}return actual.length===entry.box.length&&actual.every(function(v,i){return Math.abs(v-entry.box[i])<=1;});});};
+      heatmapLayoutCheck=function(){return(!heatmapTextCheck||heatmapTextCheck())&&(!heatmapControlCheck||heatmapControlCheck())&&entries.every(function(entry){var actual=replayLayoutRect(entry.node);if(actual.length){actual[0]-=origin.x;actual[1]-=origin.y;if(!entry.fixed){actual[0]+=view.scrollX-offset.left;actual[1]+=view.scrollY-offset.top;}}return actual.length===entry.box.length&&actual.every(function(v,i){return Math.abs(v-entry.box[i])<=1;});});};
       heatmapLayoutObserver=new MutationObserver(function(records){if(!player)return;for(var record of records)if(record.type!=='attributes'||record.target!==doc.documentElement||record.attributeName!=='class'||record.oldValue!==doc.documentElement.getAttribute('class')){fail();return;}});
       heatmapLayoutObserver.observe(doc.documentElement,{subtree:true,attributes:true,attributeOldValue:true,childList:true,characterData:true});
       return true;
@@ -17962,7 +18090,7 @@ if (mode === 'record') {
   function prepareHeatmap(){
     if(!player||!heatmap)return;
     var g=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap).geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement,origin=null;
-    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&!heatmapTextRestored){if(!restoreHeatmapText(doc,view)){fail();return;}heatmapTextRestored=true;}
+    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&!heatmapTextRestored){if(!restoreHeatmapText(doc,view)||!restoreHeatmapControls(doc,view)){fail();return;}heatmapTextRestored=true;}
     if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!(origin=preserveHeatmapExtent(doc,view,g)))){fail();return;}
     if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
       if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;
@@ -18027,7 +18155,8 @@ if (mode === 'record') {
       document.body.style.margin = '0'; document.body.style.overflow = 'hidden';
       // The same array is narrowed only after every original envelope/tree/time check.
       var replayEvents=/** @type {Ten98Tracker.ReplayEnvelope[]} */ (events);
-      player = new core.Replayer(replayEvents,{root:document.body,speed:1,showWarning:false,showDebug:false,skipInactive:!heatmap,mouseTail:false,triggerFocus:false,UNSAFE_replayCanvas:false});
+      player = new core.Replayer(replayEvents,{root:document.body,speed:1,showWarning:false,showDebug:false,skipInactive:!heatmap,mouseTail:false,triggerFocus:false,UNSAFE_replayCanvas:false,plugins:heatmap?[]:[{handler:playbackEvent}]});
+      player.on('flush',applyPlayback);player.on('play-back',resetPlayback);
       player.disableInteract(); duration = Math.max(0,player.getMetaData().totalTime); player.on('resize',scale); pauseAt(heatmap?duration:0);if(heatmap)player.enableInteract();scale();
       // Recorded links/forms must never navigate even inside the isolated frame.
       player.iframe.addEventListener('load',function () { try { var doc = /** @type {Ten98Tracker.ReplayPlayer} */ (player).iframe.contentDocument; ['click','submit'].forEach(function (type) { /** @type {Document} */ (doc).addEventListener(type,function (e) { e.preventDefault(); e.stopImmediatePropagation(); },true); }); } catch (_) {} });
@@ -18043,7 +18172,7 @@ if (mode === 'record') {
           // Closed playback options mirror src/lib/session-replay.ts replayPlaybackOption; any other shape or value is ignored.
           if (command.type === 'speed' && Object.keys(command).sort().join(',') === 'type,value' && [1,2,4,8].includes(/** @type {number} */ (command.value))) player.setConfig({speed:/** @type {number} */ (command.value)});
           else if (command.type === 'skip-inactive' && Object.keys(command).sort().join(',') === 'type,value' && typeof command.value === 'boolean') player.setConfig({skipInactive:command.value});
-          else if (['play','pause'].includes(/** @type {string} */ (command.type)) && Number.isFinite(/** @type {number} */ (command.offset)) && /** @type {number} */ (command.offset) >= 0 && /** @type {number} */ (command.offset) <= duration) { playing = command.type === 'play'; if (playing) player.play(/** @type {number} */ (command.offset)); else pauseAt(/** @type {number} */ (command.offset)); send({type:'tick',time:position(),playing:playing}); }
+          else if (['play','pause'].includes(/** @type {string} */ (command.type)) && Number.isFinite(/** @type {number} */ (command.offset)) && /** @type {number} */ (command.offset) >= 0 && /** @type {number} */ (command.offset) <= duration) { clearPlayback();playing = command.type === 'play'; if (playing) player.play(/** @type {number} */ (command.offset)); else pauseAt(/** @type {number} */ (command.offset)); send({type:'tick',time:position(),playing:playing}); }
         } catch (_) { fail(); }
       };
       port.start();if(heatmap){heatmapFrame=requestAnimationFrame(prepareHeatmap);}else{ticker=setInterval(function(){try{send({type:'tick',time:position(),playing:playing});}catch(_){fail();}},250);send({type:'ready',duration:duration});}

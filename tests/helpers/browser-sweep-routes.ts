@@ -104,6 +104,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   component('tests/realtime-browser.mjs', ['TEN98_REALTIME_BROWSER']),
   component('tests/replay-heatmaps-browser.mjs', ['TEN98_REPLAY_HEATMAPS_BROWSER']),
   component('tests/replay-heatmaps-classic-browser.mjs', ['TEN98_REPLAY_HEATMAPS_CLASSIC']),
+  component('tests/heatmap-control-layout-browser.ts', ['TEN98_HEATMAP_CONTROL_LAYOUT']),
   component('tests/report-navigation-browser.mjs', ['TEN98_REPORT_NAVIGATION_BROWSER'], 'optional TEN98_REPORT_NAV_*_SQL snapshots not supplied'),
   component('tests/research-flow-browser.mjs'),
   component('tests/revenue-empty-browser.mjs', ['TEN98_REVENUE_EMPTY_BROWSER']),
