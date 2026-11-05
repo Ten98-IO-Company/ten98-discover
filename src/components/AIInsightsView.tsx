@@ -77,7 +77,7 @@ function DailyTrend({report, metric, disabled}: {report: NonNullable<AIInsightsV
     anchor.href = url; anchor.download = `ai-insights-trend-${first}-${last}.svg`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <div className="ai-daily-trend">
-    {points.some(point => point.value !== null) ? <><TimeSeriesChart label={`${metricLabels[metric]} for ${name}`} context={`${report.scopeLabel} · ${report.dailyRows[0].date} to ${report.dailyRows.at(-1)!.date}`} summary={`By requested day in the applied timezone. Hatched columns mark unavailable days; gaps are not filled or carried forward. Exact counts are in Daily observations, which includes every day.`} kind="line" series={[{id: metric, label: metricLabels[metric], points: points.map((point, index) => ({x: index, xLabel: point.row.date, y: point.value, state: point.value === null ? 'unavailable' : 'observed', note: `${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`, title: `${point.row.date}: ${percentText(point.value)} · ${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`}))}]} yDomain={[0, 100]} formatY={percentText} xHeader="Requested day" fit={points.length >= 30 && points.length <= 90 ? 'compress' : undefined}/><button type="button" className="btn ghost" style={controlStyle} disabled={disabled} onClick={download}>Download SVG</button></> : <p className="dim">{!report.coverageCounts.attempted ? 'No executions in the applied range.' : !report.coverageCounts.eligible ? 'No eligible retained answers. See Answer coverage below.' : 'Eligible answers are available, but no tracked entity was mentioned on these days.'}</p>}
+    {points.some(point => point.value !== null) ? <><TimeSeriesChart label={`${metricLabels[metric]} for ${name}`} context={`${report.scopeLabel} · ${report.dailyRows[0].date} to ${report.dailyRows.at(-1)!.date}`} summary={`By requested day in the applied timezone. Hatched columns mark unavailable days; gaps are not filled or carried forward. Exact counts are in Daily observations, which includes every day.`} kind="line" series={[{id: metric, label: metricLabels[metric], points: points.map((point, index) => ({x: index, xLabel: point.row.date, y: point.value, state: point.value === null ? 'unavailable' : 'observed', note: `${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`, title: `${point.row.date}: ${percentText(point.value)} · ${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`}))}]} yDomain={[0, 100]} formatY={percentText} xHeader="Requested day" fit={points.length >= 30 && points.length <= 90 ? 'compress' : undefined}/><button type="button" className="btn ghost" style={controlStyle} disabled={disabled} onClick={download}>Download SVG</button></> : <p className="dim">Eligible answers are available, but no tracked entity was mentioned on these days.</p>}
   </div>;
 }
 
@@ -241,7 +241,18 @@ export function AIInsightsView(props: AIInsightsViewProps) {
       )}
       {known && dirty && <p className="hint">Unapplied filter changes. The report below still uses the applied filters.</p>}
 
-      {known && report !== null && brand && <section className="ai-insights-overview stack" aria-labelledby={prefix + 'overview'}>
+      {known && report !== null && report.coverageCounts.eligible === 0 && (
+        <Card title={report.coverageCounts.attempted === 0 ? 'No answer attempts match these filters' : 'No eligible retained answers'}>
+          <p>{report.coverageCounts.eligible} eligible of {report.coverageCounts.attempted} attempted answers.</p>
+          <p>{report.coverageCounts.attempted === 0
+            ? 'Change the date range or filters to look for retained answers, or return to the project to review prompts.'
+            : 'Review Answer coverage and Execution evidence below for pending, unavailable or expired answers. You can also change the date range or filters.'}</p>
+          <Button type="button" variant="secondary" style={controlStyle} disabled={draftOff}
+            onClick={() => { if (!draftOff) focusRegion(prefix + 'from'); }}>Adjust filters</Button>
+        </Card>
+      )}
+
+      {known && report !== null && report.coverageCounts.eligible > 0 && brand && <section className="ai-insights-overview stack" aria-labelledby={prefix + 'overview'}>
         <div className="row between"><h3 id={prefix + 'overview'}><bdi>{brand.name}</bdi> <span className="pill">You</span></h3><button type="button" className="btn" style={controlStyle} disabled={reportOff || !brand.canDrill} onClick={() => { if (!reportOff && brand.canDrill) onDrilldown('mentioned', 'brand'); }}>View brand mentions</button></div>
         <div className="ai-overview-cards">{(['visibility','shareOfVoice','citations'] as const).map(metric => <section className="card" key={metric} aria-label={metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? 'Brand share of tracked mentions' : 'Answers citing brand domains'}><h4>{metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? metricLabels[metric] : 'Answers citing brand domains'}</h4><p className="ai-overview-value">{percentText(percentage(brand.counts,metric))}</p><p className="hint"><bdi dir="ltr">{brand[metric]}</bdi></p><p className="hint">{metric === 'shareOfVoice' ? 'Share of entity-answer matches across the full current tracked set.' : metric === 'citations' ? `Eligible answers with provider citation hits · ${report.brandCitationDomainCount} configured brand citation domains.` : 'Eligible answers mentioning your current brand name or aliases.'}</p></section>)}</div>
         <p className="hint">{report.coverageCounts.eligible} eligible of {report.coverageCounts.attempted} attempted answers. Mentions and provider citation hits are separate; website-content coverage is not measured here.{report.metrics.length === 1 ? ' Only your brand is configured, so share is not a competitor comparison.' : ''}</p>
@@ -273,7 +284,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
 
       {known && report !== null && (
         <div className="card stack">
-          <section className="stack">
+          {report.coverageCounts.eligible > 0 && <section className="stack">
             <h3 id={prefix + 'metrics'}>Entity metrics</h3>
             <p className="hint" id={prefix + 'metrics-scroll'}>Scroll horizontally to see every column.</p>
             <div id={prefix + 'metrics-data'} className="table-wrap" role="region" aria-label="Entity metrics" aria-describedby={prefix + 'metrics-scroll'} tabIndex={0} style={wrapStyle}>
@@ -316,16 +327,16 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                 </tbody>
               </table>
             </div>
-          </section>
+          </section>}
 
-          <section className="stack">
+          {report.coverageCounts.attempted > 0 && <section className="stack">
             <h3 id={prefix + 'coverage'}>Answer coverage</h3>
             <div className="row" style={{ flexWrap: 'wrap', gap: 16 }}>
               {report.coverage.map((c) => (
                 <div key={c.label}><strong>{c.label}:</strong> {c.value}</div>
               ))}
             </div>
-          </section>
+          </section>}
 
           <Disclosure summary="Selection details" variant="plain">
             <div className="stack" style={{ marginTop: 8 }}>
@@ -339,7 +350,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
             </div>
           </Disclosure>
 
-          <section className="stack">
+          {report.coverageCounts.attempted > 0 && <><section className="stack">
             <h3 id={prefix + 'daily'}>Daily observations</h3>
             <p className="hint" id={prefix + 'daily-scroll'}>Scroll horizontally to see every column.</p>
             <div id={prefix + 'daily-data'} className="table-wrap" role="region" aria-label="Daily observations" aria-describedby={prefix + 'daily-scroll'} tabIndex={0} style={wrapStyle}>
@@ -426,7 +437,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
               <button type="button" className="btn btn-secondary" style={controlStyle} disabled={nextOff}
                 onClick={() => { if (nextOff) return; onNext(); }}>Next executions</button>
             </div>
-          </section>
+          </section></>}
         </div>
       )}
     </div>
