@@ -15,7 +15,7 @@ const {readReplayChunk,reassembleReplay,replayLimits}=await import(pathToFileURL
 mkdirSync(out,{recursive:true});const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const assets=['public/tracker.js','public/destinations.js','public/replay.js','public/vendor/rrweb-LICENSE.txt','src/lib/session-replay.ts','tests/session-replay-vendor-browser.mjs'];
 const pins=()=>Object.fromEntries(assets.map(file=>[file,hash(resolve(root,file))])),before=pins();
-assert.equal(before['public/replay.js'],'151c5787f77dff335f944d6b0f9e988979d2885e93f11c24b4a9c928daa4ffd4');
+assert.equal(before['public/replay.js'],'02a5f61789e288364f3b9b83a3049971d2906875bc477d75d19039cd34ca679b');
 const site='55000000-0000-4000-8000-000000000001',secondSite='55000000-0000-4000-8000-000000000002',epoch='55000000-0000-4000-8000-000000000003';
 const recording='55000000-0000-4000-8000-000000000004',nonce='ten98-replay-real-vendor-smoke',path='/replay-vendor/record',playerPath='/replay-vendor/player';
 const token='c3ludGhldGljLXJlcGxheS1jYXBhYmlsaXR5.'+'a'.repeat(64);
