@@ -15,20 +15,26 @@ mkdirSync(out,{recursive:true});
 const hash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
 const sources=Object.fromEntries(['public/replay.js','public/tracker.js','public/destinations.js','src/lib/session-replay.ts','src/lib/replay-heatmaps.ts','tests/heatmap-control-layout-browser.ts'].map(p=>[p,hash(readFileSync(resolve(root,p)))]));
 const shipped=readFileSync(resolve(root,'public/replay.js'),'utf8');
-type Scene={name:string;direction:'ltr'|'rtl';sizing:'border-box'|'content-box';unsupported?:'multiline'|'icon'|'pseudo'};
+type Scene={name:string;direction:'ltr'|'rtl';sizing:'border-box'|'content-box';unsupported?:'multiline'|'icon'|'pseudo'|'shadow';shadow?:'blocked'|'nested'|'unblocked'|'moved'};
 const scenes:Scene[]=[...(['ltr','rtl'] as const).flatMap(direction=>(['border-box','content-box'] as const).map(sizing=>({name:direction+'-'+sizing,direction,sizing}))),...(['multiline','icon','pseudo'] as const).map(unsupported=>({name:unsupported,direction:'ltr' as const,sizing:'border-box' as const,unsupported}))];
+const shadowScenes:Scene[]=(['blocked','nested','unblocked','moved'] as const).map(shadow=>({name:'shadow-'+shadow,direction:'ltr',sizing:'border-box',shadow,...shadow==='unblocked'||shadow==='moved'?{unsupported:'shadow' as const}:{}}));
 let scene=scenes[0]!;
 function asset(){return shipped;}
 const site='5a000000-0000-4000-8000-000000000001',epoch='5a000000-0000-4000-8000-000000000002',nonce='diagnostic-local-only';
 const settings={enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:300000,blockSelector:''};
 let origin='';
-function recordHtml(){return `<!doctype html><html lang="en" dir="${scene.direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Controlled heatmap text test</title>
+function baseRecordHtml(){return `<!doctype html><html lang="en" dir="${scene.direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Controlled heatmap text test</title>
 <style nonce="${nonce}">*{box-sizing:border-box}body{margin:20px;font:20px/22px Arial,sans-serif;background:white;color:#182b36}h1{font:24px/30px Arial,sans-serif;margin:0 0 16px}#sample{width:220px;margin:0;font:20px/22px Arial,sans-serif;overflow-wrap:anywhere}button{box-sizing:${scene.sizing};font:16px/22px Arial,sans-serif;min-height:44px;margin:12px 12px 0 0;padding:10px;border:1px solid #536875;border-radius:4px}#target{box-sizing:border-box;display:block;width:64px;height:64px;margin:0;padding:0;background:#9ed6cc}#status{height:44px;margin:12px 0 0;font:16px/22px Arial,sans-serif}button:focus-visible{outline:3px solid #3345b6;outline-offset:2px}${scene.sizing==='content-box'?'button{min-height:0}':''}${scene.unsupported==='multiline'?'#withdraw{width:90px;overflow-wrap:anywhere}':scene.unsupported==='pseudo'?'#withdraw::before{content:"WWWWWW"}':''}</style>
 <script defer src="${origin}/tracker.js" data-site-key="${site}" data-environment="live" referrerpolicy="no-referrer"></script></head><body>
 <h1>Controlled heatmap text test</h1><p id="sample">${'W'.repeat(100)}</p><button id="target" type="button">Target</button>
 <button id="allow" type="button">Allow analytics and replay</button><button id="withdraw" type="button">${scene.unsupported==='multiline'?'W'.repeat(45):scene.unsupported==='icon'?'<span>WWWWWW</span>Withdraw analytics and replay':'Withdraw analytics and replay'}</button>
 <p id="status" aria-live="polite">Synthetic page; collection requires the Allow button.</p>
 <script nonce="${nonce}">const site={siteKey:${JSON.stringify(site)},environment:'live',collectorOrigin:${JSON.stringify(origin)}};const status=document.getElementById('status');document.getElementById('allow').onclick=()=>{window.ten98.consent({analytics:true,replay:true,advertising:false,adUserData:false,adPersonalization:false},{...site,acknowledgeReload:true});status.textContent='Synthetic capture allowed. No custom events or revenue.';};document.getElementById('withdraw').onclick=()=>{window.ten98.consent({analytics:false,replay:false,advertising:false,adUserData:false,adPersonalization:false},{...site,acknowledgeReload:true});status.textContent='Analytics and replay withdrawn.';};</script></body></html>`;}
+function recordHtml(){
+ const html=baseRecordHtml();if(!scene.shadow)return html;
+ const host='<div class="qa-blocked-shadow" id="private-shadow-host"></div>',setup=`const host=document.getElementById('private-shadow-host');const shadow=host.attachShadow({mode:'open'});const child=document.createElement('div');child.textContent='PRIVATE_SHADOW_MARKER';shadow.appendChild(child);${scene.shadow==='nested'?"child.attachShadow({mode:'open'}).textContent='NESTED_PRIVATE_SHADOW_MARKER';":''}${scene.shadow==='moved'?"host.style.marginTop='40px';":''}`;
+ return html.replace('</style>','.qa-blocked-shadow{display:block;width:40px;height:40px}</style>').replace('<p id="sample">',host+'<p id="sample">').replace('<script nonce="'+nonce+'">const site=','<script nonce="'+nonce+'">'+setup+'const site=');
+}
 function playerHtml(){const inner=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'none'; frame-src about:; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><div id="replay-root"></div><script nonce="${nonce}" data-ten98-replay="player" referrerpolicy="no-referrer" src="${origin}/replay.js"></script>`;
  return `<!doctype html><html><body style="margin:0"><div id="host"></div><script>window.messages=[];window.mount=(payload)=>{window.messages=[];const f=document.createElement('iframe');f.style='width:1280px;height:720px;border:0';f.sandbox='allow-scripts allow-same-origin';f.src='data:text/html;charset=utf-8,'+encodeURIComponent(${JSON.stringify(inner).replaceAll('<','\\u003c')});f.onload=()=>{const channel=new MessageChannel();channel.port1.onmessage=e=>window.messages.push(e.data);channel.port1.start();f.contentWindow.postMessage({type:'ten98-replay-init',protocol:1,...payload},'*',[channel.port2]);};document.getElementById('host').replaceChildren(f);};</script></body></html>`;}
 const receipt:{runs:unknown[];network:{requests:number;external:string[]};errors:string[];sources:typeof sources;cleanup:string[];elapsedMs?:number}={runs:[],network:{requests:0,external:[]},errors:[],sources,cleanup:[]};
@@ -37,8 +43,9 @@ const server=createServer((req,res)=>{const url=new URL(req.url??'/',origin);res
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert.ok(address&&typeof address!=='string');origin='http://127.0.0.1:'+address.port;
 const browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 try{
- for(scene of process.argv.includes('--baseline')?scenes.slice(0,1):process.argv.includes('--focused')?[scenes[0]!,scenes[1]!,scenes[3]!]:scenes){
+ for(scene of process.argv.includes('--blocked-shadow')?shadowScenes:process.argv.includes('--baseline')?scenes.slice(0,1):process.argv.includes('--focused')?[scenes[0]!,scenes[1]!,scenes[3]!]:[...scenes,...shadowScenes]){
   const mode=scene.name;
+  settings.blockSelector=scene.shadow&&scene.shadow!=='unblocked'?'.qa-blocked-shadow':'';
   const context=await browser.newContext({viewport:{width:1280,height:720},locale:'en-US'});context.setDefaultTimeout(8000);
   const parts:ReplayPart[]=[],backgrounds:ReturnType<typeof heatmapBackgroundUpload.parse>[]=[],batches:ReturnType<typeof heatmapBatch.parse>[]=[];let chunks=0;
   const api:string[]=[],captureId=randomUUID(),recordingId=randomUUID();
@@ -63,6 +70,12 @@ try{
    const until=Date.now()+8000;while(!backgrounds.length||!batches.some(b=>b.observations.some(p=>p.kind==='click'&&Math.abs(p.x-center.x)<=1&&Math.abs(p.y-center.y)<=1))){assert.ok(Date.now()<until,'Capture ACK timeout');await new Promise(r=>setTimeout(r,25));}
    const capture=reassembleReplay(parts);assert.deepEqual(capture.missingFragments,[]);for(const text of ['W'.repeat(100),'Allow analytics and replay','Withdraw analytics and replay'])assert.ok(!JSON.stringify(capture.events).includes(text),'Strict masking must survive ingress reassembly');const background=backgrounds[0]!;const eventHash=(e:typeof capture.events[number])=>hash(JSON.stringify({type:e.type,timestamp:e.timestamp,data:e.data}));
    const meta=capture.events.find(e=>eventHash(e)===background.meta.eventSha256),snapshot=capture.events.find(e=>eventHash(e)===background.snapshot.eventSha256);assert.ok(meta&&snapshot);
+   if(scene.shadow&&scene.shadow!=='unblocked'){
+    assert.doesNotMatch(JSON.stringify(capture.events),/PRIVATE_SHADOW_MARKER/);
+    const pending:unknown[]=[snapshot.data.node];let blocked:Record<string,unknown>|undefined;
+    while(pending.length){const value=pending.pop();if(!value||typeof value!=='object'||Array.isArray(value))continue;const node=value as Record<string,unknown>,attributes=node.attributes as Record<string,unknown>|undefined;if(attributes?.class==='qa-blocked-shadow'){blocked=node;break;}if(Array.isArray(node.childNodes))pending.push(...node.childNodes);}
+    assert.ok(blocked);assert.equal(blocked.isShadowHost,true);assert.deepEqual(blocked.childNodes,[]);assert.deepEqual(blocked.attributes,{class:'qa-blocked-shadow',rr_width:'40px',rr_height:'40px'});
+   }
    const point=batches.flatMap(b=>b.observations).find(p=>p.kind==='click'&&Math.abs(p.x-center.x)<=1&&Math.abs(p.y-center.y)<=1)!;
    assert.ok(point.kind==='click');
    await page.close();const player=await context.newPage();player.on('pageerror',(e:Error)=>receipt.errors.push(e.message));await player.goto(origin+'/player');
