@@ -70,7 +70,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiInsightsNavigation, aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiInsightsNavigation, aiSearchIntentQuery, readAISearchIntent, readReportIntent, reportTargetKey, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AIInsightsNavigation, AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: RouteEntry })
@@ -170,6 +170,7 @@ function App() {
   const wsGen = useRef(0)
   const projGen = useRef(0)
   const eventsRead = useRef(0)
+  const reportReadEpoch = useRef(0)
 
   function rememberIntent(next: NavigationSearch) {
     if (navigationKey(next) !== navigationKey(intent.current.search)) intent.current = { search: next, generation: intent.current.generation + 1 }
@@ -204,6 +205,8 @@ function App() {
       setMenuOpen(false); setToolSearch('')
       const next = parseNavigation(event.toLocation.search)
       const previous = intent.current.search
+      // Saved-preview toggles preserve drafts; real target transitions invalidate even batched A -> B -> A reads.
+      if (!(next.view==='reports'&&previous.view==='reports'&&next.workspace===previous.workspace&&next.project===previous.project&&next.reportInvalid===previous.reportInvalid&&reportTargetKey(readReportIntent(next.reportQuery))===reportTargetKey(readReportIntent(previous.reportQuery)))) reportReadEpoch.current++
       // Audit and conversion panels restore their own focus within the same project and view.
       if (!(next.view===previous.view && (next.view==='audits'||next.view==='conversions') && next.workspace===previous.workspace && next.project===previous.project)) requestAnimationFrame(() => document.querySelector<HTMLElement>('main')?.focus({ preventScroll: true }))
       if (navigationKey(next) !== navigationKey(intent.current.search)) setAppError('')
@@ -801,7 +804,7 @@ function App() {
         {view === 'domain-seo' && project && me && <DomainResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
-        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} query={search.reportInvalid?'unsupported=1':search.reportQuery} readOwner={reportReadEpoch.current+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,replace)=>go({...target('reports'),reportQuery:query},replace)} onUnauthorized={unauthorized} />}
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='reports' onManage={() => go(target('imports'))} />}
         {view === 'imports' && project && me && settingsFrame(<GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='setup' />)}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {readReportIntent,reportIntentQuery} from '../src/lib/navigation.ts';
 import test from 'node:test'
 import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, views, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView, explorerNavigation } from '../src/lib/navigation.ts'
 import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geography.ts'
@@ -12,6 +13,17 @@ test('requested capture market round-trips without becoming an API model locale'
 });
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
+test('saved report route preserves exact selection/revision/preview and rejects ambiguous intent',async()=>{
+ const base={workspace,project,view:'reports'} as const;
+ for(const intent of [{kind:'report' as const,id:project,revision:1,preview:true},{kind:'template' as const,id:project,revision:2},{kind:'template' as const}]){
+  const reportQuery=reportIntentQuery(intent),target={...base,reportQuery},wire=defaultStringifySearch(target);
+  assert.deepEqual(readReportIntent(reportQuery),intent);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));
+  const {resolveNavigation}=await import('../src/lib/navigation.ts');assert.equal(resolveNavigation(target,workspace,workspace,'reports').reportInvalid,'1');
+  for(const patch of [{reportQuery:[reportQuery]},{project:[project]},{workspace:undefined},{token:'private'},{reportInvalid:'1'}])assert.equal(parseNavigation({...target,...patch}).reportInvalid,'1');
+ }
+ assert.equal(parseNavigation({...base,view:['reports','reports']}).reportInvalid,'1');
+ for(const query of ['','kind=other','kind=report&id='+project,'kind=report&revision=1','kind=template&id='+project+'&revision=1&preview=1','kind=report&id='+project+'&revision=0','kind=report&id='+project+'&revision=1&revision=2','kind=report&kind=report','kind=report&html=private','kind=report&preview=1'])assert.equal(readReportIntent(query),null,query);
+});
 
 test('saved prompt navigation retains read-only history and exact receipt identity', async()=>{
  const base={workspace,project,view:'prompts'} as const,receipt={...base,promptView:'run',promptRun:project,promptId:workspace};
