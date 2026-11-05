@@ -92,6 +92,10 @@ test('text-redaction evidence in the served adapter rejects a nonnumeric node id
  assert.notEqual(result.status,0);assert.match(result.output,/TS2322/);assert.match(result.output,/number/);
  assert.equal(existsSync(result.temporaryDirectory),false);
 });
+test('dynamic playback provenance in the served adapter rejects a string generation',async()=>{
+ const source=readFileSync(join(root,adapterSpecs.replay.file),'utf8'),marker='generation:generation,sequence:sequence';assert.equal(source.split(marker).length,2);
+ const result=await checkTrackerAdapters({replay:Buffer.from(source.replace(marker,"generation:'invalid',sequence:sequence"))});assert.notEqual(result.status,0);assert.match(result.output,/TS2322/);assert.equal(existsSync(result.temporaryDirectory),false);
+});
 test('the native compiler deadline bounds a real temporary compile and cleans its owned input',()=>{
  const folder=mkdtempSync(join(tmpdir(),'ten98-compiler-deadline-'));
  try{

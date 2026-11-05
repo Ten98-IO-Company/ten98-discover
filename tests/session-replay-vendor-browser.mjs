@@ -15,7 +15,7 @@ const {readReplayChunk,reassembleReplay,replayLimits}=await import(pathToFileURL
 mkdirSync(out,{recursive:true});const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const assets=['public/tracker.js','public/destinations.js','public/replay.js','public/vendor/rrweb-LICENSE.txt','src/lib/session-replay.ts','tests/session-replay-vendor-browser.mjs'];
 const pins=()=>Object.fromEntries(assets.map(file=>[file,hash(resolve(root,file))])),before=pins();
-assert.equal(before['public/replay.js'],'b5ea655560230d7ac20e3273537f40fcbcc5c3100fb23a2b1b1ca51214110663');
+assert.equal(before['public/replay.js'],'151c5787f77dff335f944d6b0f9e988979d2885e93f11c24b4a9c928daa4ffd4');
 const site='55000000-0000-4000-8000-000000000001',secondSite='55000000-0000-4000-8000-000000000002',epoch='55000000-0000-4000-8000-000000000003';
 const recording='55000000-0000-4000-8000-000000000004',nonce='ten98-replay-real-vendor-smoke',path='/replay-vendor/record',playerPath='/replay-vendor/player';
 const token='c3ludGhldGljLXJlcGxheS1jYXBhYmlsaXR5.'+'a'.repeat(64);
@@ -273,4 +273,72 @@ async function checkReplayAdapter(page, source, pass) {
   return {groups:4,qualification:'Synthetic adapter seam and native CSSOM only; actual rrweb recorder/player proof is separate.'};
 }
 
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))await runSessionReplayVendorBrowser();
+export async function runReplayTextGeometryBrowser(hoverRule='font-size:30px'){
+ const {createServer}=await import('node:http'),root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=resolve(root,'private/session-replay-vendor/text-'+randomBytes(6).toString('hex'));
+ const {readReplayChunk}=await import(pathToFileURL(resolve(root,'src/lib/session-replay.ts')).href);
+ mkdirSync(out,{recursive:true});const evidence={phase:'starting',hoverRule,requests:0,contexts:0,external:[],samples:[],checks:[],cleanup:[]},started=Date.now();
+ const save=()=>writeFileSync(resolve(out,'evidence.json'),JSON.stringify(evidence,null,2));let server,browser,context;
+ try{
+  server=createServer((req,res)=>{if(req.url==='/replay.js'){res.setHeader('content-type','text/javascript');res.end(readFileSync(resolve(root,'public/replay.js')));return;}
+   if(req.url==='/record'){res.end('<!doctype html><html><head><style>html,body{margin:0}#plane{height:3000px}#flow{margin:0;width:220px;font:20px/22px Arial;overflow-wrap:anywhere}#target{width:64px;height:64px;margin:20px}#flow:hover{'+hoverRule+'}</style></head><body><div id="plane"><p id="flow">'+'W'.repeat(100)+'</p><div id="target"></div></div><script>window.__ten98FoundationHub={};window.events=[];</script><script data-ten98-replay="record" src="/replay.js"></script></body></html>');return;}
+   if(req.url==='/upload'){let raw='';req.on('data',b=>raw+=b);req.on('end',()=>{assert.ok(!raw.includes('W'.repeat(20)));assert.ok(!raw.includes('PRIVATE_INLINE'));res.end('{}');});return;}res.end('<!doctype html><html><body></body></html>');});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
+  browser=await launchChromium();context=await browser.newContext({viewport:{width:1265,height:720}});evidence.contexts++;context.setDefaultTimeout(8000);
+  await context.route('**/*',route=>{evidence.requests++;assert.ok(evidence.requests<=150);if(new URL(route.request().url()).origin!==origin){evidence.external.push(route.request().url());return route.abort();}return route.continue();});
+  const page=await context.newPage();await page.goto(origin+'/record');await page.evaluate(()=>{window.stop=window.__ten98FoundationHub.startReplayRecorder({maskLevel:'strict',blockSelector:''},e=>window.events.push(e));});
+  const settle=async()=>{await page.waitForTimeout(80);};
+  async function sample(name,supported=true){await settle();const v=await page.evaluate(()=>{const r=document.querySelector('#target').getBoundingClientRect();return{events:window.events.length,time:window.events.at(-1).timestamp,top:r.top+scrollY,left:r.left+scrollX,scroll:scrollY,width:innerWidth,height:innerHeight};});evidence.samples.push({name,supported,...v});save();}
+  await sample('initial');await page.mouse.move(400,100);await page.waitForTimeout(600);await sample('stable-pointer');await page.mouse.move(100,100);await page.waitForTimeout(600);await sample('hover',false);await page.mouse.move(400,100);await page.waitForTimeout(600);await page.evaluate(()=>document.querySelector('#flow').firstChild.textContent='W'.repeat(50));await sample('text');
+  await page.evaluate(()=>{const p=document.createElement('p');p.id='added';p.style.cssText='margin:0;width:220px;font:20px/22px Arial;overflow-wrap:anywhere';p.textContent='W'.repeat(30);document.querySelector('#target').before(p);});await sample('insert');
+  await page.evaluate(()=>document.querySelector('#added').remove());await sample('remove');await page.setViewportSize({width:620,height:720});await page.waitForTimeout(300);await sample('resize');
+  await page.evaluate(()=>{const e=document.createElement('em');e.textContent='PRIVATE_INLINE';document.querySelector('#flow').append(e);});await sample('mixed',false);
+  await page.evaluate(()=>document.querySelector('#flow').textContent='W'.repeat(80));await sample('recover');
+  await page.evaluate(()=>scrollTo(0,500));await page.waitForTimeout(250);await sample('scroll');
+  const events=await page.evaluate(async()=>{window.stop();await fetch('/upload',{method:'POST',body:JSON.stringify(window.events)});return window.events;});
+  const raw=Buffer.from(JSON.stringify(events));assert.ok(raw.length<262144);assert.deepEqual(readReplayChunk(raw.toString('base64url')).parts,events);assert.ok(events.some(e=>e.data.ten98PlaybackLayout));
+  await page.goto(origin+'/player');
+  async function mount(input){await page.evaluate(({input,origin})=>{window.messages=[];const f=document.createElement('iframe');f.sandbox='allow-scripts allow-same-origin';f.src='data:text/html,'+encodeURIComponent('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-test\'; style-src \'unsafe-inline\'; frame-src about:; img-src data: blob:; font-src \'none\'; connect-src \'none\'"><script nonce="test" data-ten98-replay="player" src="'+origin+'/replay.js"></script>');f.onload=()=>{const c=new MessageChannel();window.port=c.port1;c.port1.onmessage=e=>window.messages.push(e.data);c.port1.start();f.contentWindow.postMessage({type:'ten98-replay-init',protocol:1,events:input},'*',[c.port2]);};document.body.replaceChildren(f);},{input,origin});await page.waitForFunction(()=>window.messages.some(m=>m.type==='ready'||m.type==='error'));assert.equal(await page.evaluate(()=>window.messages[0].type),'ready');return page.frames().find(f=>f.url().startsWith('data:'));}
+  let outer=await mount(events);const first=events[0].timestamp;
+  for(const s of [...evidence.samples,evidence.samples[0],evidence.samples[3],evidence.samples[1],evidence.samples[4],evidence.samples.find(s=>s.name==='hover'),evidence.samples.find(s=>s.name==='recover')]){
+   await page.evaluate(offset=>{window.messages=[];window.port.postMessage({type:'pause',offset});},s.time-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+   const actual=await outer.evaluate(()=>{const f=document.querySelector('iframe'),d=f.contentDocument,w=f.contentWindow,r=d.querySelector('#target').getBoundingClientRect(),p=d.querySelector('#flow');return{top:r.top+w.scrollY,left:r.left+w.scrollX,scroll:w.scrollY,width:w.innerWidth,font:w.getComputedStyle(p).fontSize,text:p.textContent};});
+   evidence.checks.push({name:s.name,expected:s,actual});save();assert.ok(!actual.text.includes('W'));if(s.supported){assert.ok(Math.abs(actual.top-s.top)<=1,s.name+': '+JSON.stringify(actual));assert.ok(Math.abs(actual.left-s.left)<=1);assert.equal(actual.width,s.width);assert.equal(actual.scroll,s.scroll);}else assert.notEqual(actual.font,'0px',s.name+' must clear correction');
+  }
+  await page.evaluate(()=>{window.messages=[];window.port.postMessage({type:'skip-inactive',value:false});window.port.postMessage({type:'play',offset:0});});
+  await page.waitForFunction(offset=>window.messages.some(m=>m.type==='tick'&&m.playing&&m.time>=offset),evidence.samples.find(s=>s.name==='stable-pointer').time-first);
+  await outer.waitForFunction(()=>{const d=document.querySelector('iframe').contentDocument;return d.querySelector('#plane').classList.contains(':hover')&&!d.querySelector('#flow').classList.contains(':hover');});
+  assert.equal(await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentWindow.getComputedStyle(f.contentDocument.querySelector('#flow')).fontSize;}),'0px','Stable timed pointer keeps correction');
+  await outer.waitForFunction(()=>{const f=document.querySelector('iframe'),p=f.contentDocument.querySelector('#flow');return p.classList.contains(':hover')&&f.contentWindow.getComputedStyle(p).fontSize!=='0px';});evidence.timedHoverCleared=true;
+  await page.waitForFunction(()=>window.messages.some(m=>m.type==='ended'));
+  // rrweb deliberately uses native smooth scrolling during timed play; Finish precedes the browser animation settling.
+  await outer.waitForFunction(()=>document.querySelector('iframe').contentWindow.scrollY===500);
+  const played=await outer.evaluate(()=>{const f=document.querySelector('iframe');return{top:f.contentDocument.querySelector('#target').getBoundingClientRect().top+f.contentWindow.scrollY,scroll:f.contentWindow.scrollY};});assert.equal(played.top,evidence.samples.at(-1).top);assert.equal(played.scroll,500);evidence.timedPlayback=played;
+  const missing=structuredClone(events),changed=missing.find(e=>e.type===3&&e.data.source===0);delete changed.data.ten98PlaybackLayout;outer=await mount(missing);await page.evaluate(offset=>{window.messages=[];window.port.postMessage({type:'pause',offset});},evidence.samples.find(s=>s.name==='text').time-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+  assert.notEqual(await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentWindow.getComputedStyle(f.contentDocument.querySelector('#flow')).fontSize;}),'0px');evidence.missingCleared=true;
+  const equal=structuredClone(events),changes=equal.filter(e=>e.type===3&&e.data.source===0);changes[0].timestamp=changes[1].timestamp;outer=await mount(equal);await page.evaluate(offset=>{window.messages=[];window.port.postMessage({type:'pause',offset});},changes[1].timestamp-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+  const equalTop=await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentDocument.querySelector('#target').getBoundingClientRect().top+f.contentWindow.scrollY;});assert.equal(equalTop,evidence.samples.find(s=>s.name==='insert').top);evidence.equalTimestampOrder=true;
+  const legacy=structuredClone(events);for(const e of legacy)delete e.data.ten98PlaybackLayout;outer=await mount(legacy);await page.evaluate(offset=>window.port.postMessage({type:'pause',offset}),evidence.samples[0].time-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+  const legacyTop=await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentDocument.querySelector('#target').getBoundingClientRect().top+f.contentWindow.scrollY;});assert.equal(legacyTop-evidence.samples[0].top,-132);evidence.legacyDelta=-132;
+  evidence.invalidCheckpoints=[];
+  const mutations=events.filter(e=>e.type===3&&e.data.source===0),firstCheckpoint=events.find(e=>e.type===2).data.ten98PlaybackLayout;
+  const invalidCases=[
+   ['generation',c=>c.generation++],['sequence',c=>c.sequence=firstCheckpoint.sequence],
+   ['duplicate-box',c=>c.evidence.boxes.push(c.evidence.boxes[0])],['foreign-box',c=>c.evidence.boxes[0][0]=999999],
+   ['duplicate-text',c=>{c.evidence.texts.push(c.evidence.texts[0]);c.styles.push(c.styles[0]);}],
+   ['foreign-text',c=>c.evidence.texts[0].id=999999],['missing-styles',c=>delete c.styles],
+   ['style-mismatch',c=>c.styles[0][1]^=1],['rect-limit',c=>c.evidence.texts[0].rects=Array.from({length:65},()=>[0,0,1,1])],
+   ['text-limit',c=>{c.evidence.texts=Array(257).fill(c.evidence.texts[0]);c.styles=Array(257).fill(c.styles[0]);}],
+   ['box-limit',c=>c.evidence.boxes=Array.from({length:1001},(_,i)=>[i+1])],
+   ['viewport',c=>c.viewport[0]--],['negative-rect',c=>c.evidence.texts[0].rects[0][0]=-1],
+  ];
+  for(const [name,corrupt] of invalidCases){
+   const input=structuredClone(events),mutation=input.find(e=>e.type===3&&e.data.source===0);corrupt(mutation.data.ten98PlaybackLayout);outer=await mount(input);
+   await page.evaluate(offset=>{window.messages=[];window.port.postMessage({type:'pause',offset});},mutations[0].timestamp-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+   assert.notEqual(await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentWindow.getComputedStyle(f.contentDocument.querySelector('#flow')).fontSize;}),'0px',name+' must reject stale correction');
+   await page.evaluate(offset=>{window.messages=[];window.port.postMessage({type:'pause',offset});},mutations[1].timestamp-first);await page.waitForFunction(()=>window.messages.some(m=>m.type==='tick'));
+   assert.equal(await outer.evaluate(()=>{const f=document.querySelector('iframe');return f.contentDocument.querySelector('#target').getBoundingClientRect().top+f.contentWindow.scrollY;}),evidence.samples.find(s=>s.name==='insert').top,name+' must recover on fresh checkpoint');evidence.invalidCheckpoints.push(name);
+  }
+  assert.deepEqual(evidence.external,[]);evidence.phase='passed';
+ }catch(e){evidence.phase='failed';evidence.failure={message:e.message,stack:e.stack};throw e;}finally{await context?.close();await browser?.close();if(server)await new Promise(r=>server.close(r));evidence.elapsedMs=Date.now()-started;save();console.log(JSON.stringify({phase:evidence.phase,evidence:resolve(out,'evidence.json'),requests:evidence.requests,contexts:evidence.contexts}));}
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){if(process.env.TEN98_REPLAY_TEXT_GEOMETRY==='1'){if(process.env.TEN98_REPLAY_TEXT_HOVER!=='height')await runReplayTextGeometryBrowser();await runReplayTextGeometryBrowser('height:400px');}else await runSessionReplayVendorBrowser();}
