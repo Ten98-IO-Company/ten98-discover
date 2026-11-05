@@ -371,6 +371,25 @@ jobs:
           if(lock.packages['node_modules/playwright'].integrity!=='sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==')throw new Error('Unexpected Playwright archive identity');
           NODE
           "$RUNNER_TEMP/discover-browser-tools/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify masked replay geometry
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_REPLAY_VENDOR_SMOKE: '1'
+        run: |
+          timeout 120s node tests/session-replay-vendor-browser.mjs
+          TEN98_REPLAY_TEXT_GEOMETRY=1 timeout 120s node tests/session-replay-vendor-browser.mjs
+      - name: Verify historical heatmap alignment
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_HEATMAP_CONTROL_LAYOUT: '1'
+          TEN98_REPLAY_HEATMAPS_CLASSIC: '1'
+        run: |
+          timeout 120s node tests/heatmap-control-layout-browser.ts
+          timeout 120s node tests/replay-heatmaps-classic-browser.mjs
       - name: Verify retained keyword results
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
