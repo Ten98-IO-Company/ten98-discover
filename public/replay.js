@@ -17695,10 +17695,18 @@ function replayAttributes(attributes, strict) {
 function replayLayoutNodes(snapshot){
   var pending=[/** @type {Ten98Tracker.LayoutNode} */ (snapshot)],result=[],ids=new Set();
   while(pending.length){var node=/** @type {Ten98Tracker.LayoutNode} */ (pending.pop());
-    if(!node||typeof node!=='object'||node.isShadow||node.isShadowHost)throw Error('Unsupported layout tree.');
+    if(!node||typeof node!=='object'||node.isShadow)throw Error('Unsupported layout tree.');
     if(node.type===2){
       if(!Number.isSafeInteger(node.id)||node.id<1||ids.has(node.id))throw Error('Invalid layout ID.');ids.add(node.id);
-      if(node.attributes&&('rr_width' in node.attributes||'rr_height' in node.attributes))continue;
+      const attributes=node.attributes;
+      if(attributes&&('rr_width' in attributes||'rr_height' in attributes)){
+        // rrweb retains the host flag when blocking its contents; only its canonical measured placeholder is excluded.
+        if(node.isShadowHost&&(node.isShadowHost!==true||!Array.isArray(node.childNodes)||node.childNodes.length!==0||!['rr_width','rr_height'].every(function(key){var value=attributes[key];if(typeof value!=='string'||!value.endsWith('px'))return false;var size=Number(value.slice(0,-2));return Number.isFinite(size)&&size>=0&&size<=10000000&&value===String(size)+'px';})))throw Error('Invalid blocked shadow placeholder.');
+        continue;
+      }
+    }
+    if(node.isShadowHost)throw Error('Unsupported layout tree.');
+    if(node.type===2){
       if(result.length===1000)throw Error('Layout limit.');result.push(node);
     }
     if(Array.isArray(node.childNodes))pending.push(...node.childNodes);
