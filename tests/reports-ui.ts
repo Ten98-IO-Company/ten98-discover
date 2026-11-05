@@ -43,7 +43,7 @@ try {
     if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
   }
   async function selectProject(name:string) {
-    await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name,exact:true}).click();
+    await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).selectOption({label:name});
   }
   // Report pages are tabs in a section's strip: open the section from the sidebar, then its tab.
   async function section(name:string,tab:string) {
@@ -55,10 +55,11 @@ try {
   const projectGate=new Promise<void>(resolve=>{releaseProjects=resolve;});
   await page.route(projectPath,async(route:any)=>{const response=await route.fetch();await projectGate;await route.fulfill({response});});
   await page.goto(config.appUrl,{waitUntil:'domcontentloaded'});
-  await page.getByRole('navigation',{name:'Workspace settings',exact:true}).getByRole('button',{name:'Account security',exact:true}).click();
+  await page.getByRole('button',{name:'Account menu',exact:true}).click();
+  await page.locator('.t98-account-menu').getByRole('link',{name:'Security',exact:true}).click();
   await page.getByRole('heading',{name:'Two-factor authentication',exact:true}).waitFor();
   releaseProjects?.();
-  await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'UI report project',exact:true}).waitFor();
+  await page.getByLabel('Website',{exact:true}).getByRole('option',{name:'UI report project',exact:true,includeHidden:true}).waitFor({state:'attached'});
   assert.equal(await page.getByRole('heading',{name:'Two-factor authentication',exact:true}).isVisible(),true,'Late project loading must preserve newer explicit navigation.');
   await page.unroute(projectPath);
   // Exercise callback navigation without an IdP: this deliberately invalid proof
@@ -70,7 +71,7 @@ try {
     await identityPage.goto(`${config.appUrl}/#oidc-proof=${randomUUID()}`,{waitUntil:'domcontentloaded'});
     await identityPage.getByRole('heading',{name:'Your sign-in methods',exact:true}).waitFor();
     releaseIdentity();
-    await identityPage.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'UI report project',exact:true}).waitFor();
+    await identityPage.getByLabel('Website',{exact:true}).getByRole('option',{name:'UI report project',exact:true,includeHidden:true}).waitFor({state:'attached'});
     assert.equal(await identityPage.getByRole('heading',{name:'Your sign-in methods',exact:true}).isVisible(),true,'Project loading must preserve identity callback navigation.');
     assert.equal(new URL(identityPage.url()).hash,'','Identity callback fragments must be cleared.');
   } finally {releaseIdentity();await identityPage.close();}
@@ -104,7 +105,10 @@ try {
   console.log('PASS report UI: real save/reload, preserved private source, isolated preview and optimistic-conflict draft preservation');
 
   const panel=page.getByRole('region',{name:'Reports and sharing',exact:true});
-  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Fixture clipboard denial');}}}));
+  await page.evaluate(()=>{
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Fixture clipboard denial');}}});
+    document.execCommand=()=>false;
+  });
   await page.getByLabel('Link label',{exact:true}).fill('Client alpha');
   await page.getByRole('checkbox',{name:/I have reviewed saved revision 2/}).check();
   // Synchronous duplicate activation must still produce exactly one capability.
@@ -116,7 +120,10 @@ try {
   const publicSnapshot=await context.request.get(firstUrl);assert.equal(publicSnapshot.status(),200);assert.match(await publicSnapshot.text(),/Concurrent version/);
   await page.getByRole('button',{name:'Copy link',exact:true}).click();
   await page.getByText(/Automatic copy is unavailable/).waitFor();
-  const selection=await oneTime.evaluate((input:HTMLInputElement)=>({start:input.selectionStart,end:input.selectionEnd,length:input.value.length}));
+  const manualCopy=page.getByRole('textbox',{name:'Select and copy',exact:true});
+  assert.equal(await manualCopy.inputValue(),firstUrl);
+  assert.equal(await manualCopy.evaluate((input:HTMLInputElement)=>input===document.activeElement&&input.readOnly),true);
+  const selection=await manualCopy.evaluate((input:HTMLInputElement)=>({start:input.selectionStart,end:input.selectionEnd,length:input.value.length}));
   assert.deepEqual(selection,{start:0,end:selection.length,length:selection.length});
   await page.getByLabel('HTML source',{exact:true}).fill('<h1>Private version three</h1>');
   assert.equal(await page.getByRole('button',{name:'Create public link',exact:true}).isDisabled(),true,'Dirty source cannot be shared as though saved.');
@@ -152,7 +159,8 @@ try {
   await page.getByLabel('Template brief',{exact:true}).fill('Compare the previous month. <script>This is plain text.</script>');
   await page.getByRole('button',{name:'Save template',exact:true}).click();await page.getByText('Template saved.',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Copy brief',exact:true}).click();await page.getByText(/Automatic copy is unavailable/).waitFor();
-  assert.equal(await page.getByLabel('Template brief',{exact:true}).evaluate((input:HTMLTextAreaElement)=>input.selectionEnd===input.value.length&&input.selectionStart===0),true);
+  assert.equal(await manualCopy.inputValue(),'Compare the previous month. <script>This is plain text.</script>');
+  assert.equal(await manualCopy.evaluate((input:HTMLInputElement)=>input===document.activeElement&&input.readOnly&&input.selectionEnd===input.value.length&&input.selectionStart===0),true);
   await page.getByLabel('Template brief',{exact:true}).fill('Changed draft');
   assert.equal(await panel.getByRole('button',{name:'Reports',exact:true}).isDisabled(),true);
   await page.getByRole('button',{name:'Cancel edits',exact:true}).click();
@@ -210,17 +218,28 @@ try {
     await setViewport(page,{width,height:900});
     if(width===360) {
       const menu=page.getByRole('button',{name:'Menu',exact:true});
-      assert.equal(await menu.getAttribute('aria-expanded'),'false');assert.equal(await menu.getAttribute('aria-controls'),'app-navigation');
+      assert.equal(await menu.getAttribute('aria-expanded'),'false');
+      const controlledSidebar=await menu.evaluate((button:HTMLButtonElement)=>{
+        const id=button.getAttribute('aria-controls'),matches=Array.from(document.querySelectorAll('[id]')).filter(element=>element.id===id);
+        return {id,count:matches.length,isSidebar:matches[0]===document.querySelector('aside.t98-shell-sidebar')};
+      });
+      assert.ok(controlledSidebar.id?.trim());assert.equal(controlledSidebar.count,1);assert.equal(controlledSidebar.isSidebar,true);
+      const sidebar=page.locator('aside.t98-shell-sidebar');
+      await sidebar.waitFor({state:'hidden',timeout:10000});
+      assert.equal(await sidebar.getAttribute('data-sidebar-state'),'closed');assert.equal(await sidebar.evaluate((element:HTMLElement)=>element.hasAttribute('inert')),true);
       assert.equal(await page.getByRole('navigation',{name:'Sections',exact:true}).isVisible(),false);
       await menu.focus();await page.keyboard.press('Enter');
-      const close=page.getByRole('button',{name:'Close menu',exact:true});assert.equal(await close.getAttribute('aria-expanded'),'true');
+      const close=page.getByRole('button',{name:'Close navigation',exact:true});await close.waitFor({state:'visible',timeout:10000});
+      assert.equal(await page.locator('.t98-app-topbar__menu').getAttribute('aria-expanded'),'true');
       // With a project selected, the sidebar Settings link opens its Tracking code settings.
       const install=page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true});
       await install.focus();await page.keyboard.press('Enter');
       await page.getByRole('heading',{name:'Tracking code',level:1,exact:true}).waitFor();
       await page.waitForFunction(()=>document.activeElement===document.querySelector('main'));
+      await sidebar.waitFor({state:'hidden',timeout:10000});
+      assert.equal(await sidebar.getAttribute('data-sidebar-state'),'closed');assert.equal(await sidebar.evaluate((element:HTMLElement)=>element.hasAttribute('inert')),true);
       assert.equal(await menu.getAttribute('aria-expanded'),'false');assert.equal(await page.getByRole('navigation',{name:'Sections',exact:true}).isVisible(),false);
-      assert.match(await page.locator('pre.snippet').textContent()??'',/tracker\.js/);
+      assert.match(await page.locator('pre.snippet[aria-label="Tracking code"]').textContent()??'',/tracker\.js/);
       await menu.focus();await page.keyboard.press('Space');
       const overview=page.getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:'Overview',exact:true});
       await overview.focus();await page.keyboard.press('Enter');

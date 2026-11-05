@@ -1,4 +1,4 @@
-import {AppliedFilters,DataTable,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog,Disclosure} from '@ten98/ui';
+import {AppliedFilters,DataTable,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog,Disclosure,Tooltip} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -568,15 +568,41 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
 
   return(
     <section className="explorer stack" aria-labelledby={`${uid}-h`} style={{'--control-md':'var(--control-touch)'} as import('react').CSSProperties}>
-      <h2 id={`${uid}-h`}>Explore</h2>
-      {controlled&&<p className="hint">Explore uses one applied date range. Analytics filters carry over in UTC; comparison periods and ranking displays stay in Compare. Applied filters are stored in this page's link; drafts are not.</p>}
+      <div className="row between"><h2 id={`${uid}-h`}>Explore</h2>{controlled&&<Tooltip content="Explore uses one applied date range. Analytics filters carry over in UTC; comparison periods and ranking displays stay in Compare. Applied filters are stored in this page's link; drafts are not."><button className="btn ghost" type="button">About Explorer</button></Tooltip>}</div>
       {invalidLink&&<div className="alert" role="alert"><p>This Explore link contains unsupported or invalid filters. No report was loaded.</p><button className="btn" type="button" onClick={()=>onNavigate!({exploreQuery:readExplorerScope()!.qs})}>Reset report scope</button></div>}
 
       <div className="explorer-applied-bar">
-        <div><strong>{invalidLink?'No applied report':'Applied report'}</strong>{applied&&<p className="hint"><bdi>{appliedDates.get('from')} to {appliedDates.get('to')}</bdi> · <bdi>{appliedDates.get('timeZone')}</bdi><br/>{labelOf(KINDS,appliedDates.get('kind')??'all')} · {appliedDates.has('fields')?'Combined fields':labelOf(GROUPS,appliedDates.get('groupBy')??'event')}{appliedDates.get('groupProperty')&&<>: <bdi>{appliedDates.get('groupProperty')}</bdi></>}</p>}</div>
-        <div className="row"><button ref={filterButton} className="btn" type="button" onClick={()=>filterDialog.current?.showModal()}>Edit filters</button><button className="btn" type="button" disabled={phase==='loading'||!scopeReady} onClick={refresh}>Refresh</button>{phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}</div>
+        {phase==='ok'&&result&&(<AppliedFilters label="Applied Explorer scope" filters={[
+          {id:'range',label:'Dates',value:`${result.range.from} to ${result.range.to}`},
+          {id:'zone',label:'Time zone',value:result.range.timeZone},
+          {id:'kind',label:'Event kind',value:labelOf(KINDS,result.query.kind)},
+          {id:'group',label:'Group by',value:result.query.fields?result.query.fields.map(field=>labelOf(GROUPS,field)).join(' + '):`${labelOf(GROUPS,result.query.groupBy??'event')}${result.query.groupProperty?`: ${JSON.stringify(result.query.groupProperty)}`:''}`},
+          ...Object.entries(result.query.filters).map(([id,value])=>({id,label:labelOf(FILTERS,id),value:fieldValueLabel(id,value)})),
+          ...(result.query.property?[{id:'property',label:`Property ${JSON.stringify(result.query.property.key)} (${result.query.property.type})`,value:result.query.property.type==='missing'?'Missing / uncollected':JSON.stringify(result.query.property.value)}]:[]),
+          ...(result.cohort?[{id:'cohort',label:'Cohort',value:`${result.cohort.item.definition.name} · Revision ${result.cohort.item.revision}`}]:[]),
+        ]}/>)}
+        <div className="row"><button ref={filterButton} className="btn" type="button" onClick={()=>filterDialog.current?.showModal()}>Edit filters</button><button className="btn" type="button" disabled={phase==='loading'||!scopeReady} onClick={refresh}>Refresh</button>{phase==='ok'&&result&&<Tooltip content="CSV downloads the current bounded table, daily data and scope — it is not a complete data export."><button className="btn" type="button" onClick={download}>Download CSV</button></Tooltip>}</div>
       </div>
-      {phase==='ok'&&result&&<p className="hint dim">CSV downloads the current bounded table, daily data and scope — it is not a complete data export.</p>}
+      {phase==='ok'&&result&&t&&(<div className="metric-grid explorer-summary-metrics" aria-label="Explore summary">
+          <div className="card">
+            <div className={`metric-value${t.events===null?' is-unavailable':''}`}>{num(t.events)}</div>
+            <div className="metric-label">Events</div>
+            <div className="hint dim">{num(t.identifiedEvents)} identified · {num(t.unidentifiedEvents)} unidentified</div>
+          </div>
+          <div className="card">
+            <div className={`metric-value${t.pageViews===null?' is-unavailable':''}`}>{num(t.pageViews)}</div>
+            <div className="metric-label">Page views</div>
+          </div>
+          <div className="card">
+            <div className={`metric-value${t.customEvents===null?' is-unavailable':''}`}>{num(t.customEvents)}</div>
+            <div className="metric-label">Custom events</div>
+          </div>
+          <div className="card">
+            <div className={`metric-value${t.visitors===null?' is-unavailable':''}`}>{num(t.visitors)}</div>
+            <div className="metric-label">Visitors</div>
+            <div className="hint dim">{t.visitors==null?'Visitor estimate unavailable':`${num(t.visits)} visits`}</div>
+          </div>
+        </div>)}
       {unapplied&&!invalidLink&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
       {(pending||cohortPending)&&<p className="alert" role="status">A saved action still needs confirmation. Open Edit filters to review and retry that same request.</p>}
       {(savedError||cohortError)&&<p className="alert" role="status">Saved-filter or cohort access needs attention. Open Edit filters to review the message.</p>}
@@ -705,47 +731,12 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
       {(phase==='error'||phase==='unavailable')&&(accessDenied.current&&pending?<button className="btn" type="button" disabled={savedBusy} onClick={()=>void readSaved(undefined,false,undefined,true)}>Reload saved-filter access</button>:<button className="btn" type="button" onClick={refresh}>Retry</button>)}
 
       {phase==='ok'&&result&&t&&(<>
-        <AppliedFilters label="Applied Explorer scope" filters={[
-          {id:'range',label:'Dates',value:`${result.range.from} to ${result.range.to}`},
-          {id:'zone',label:'Time zone',value:result.range.timeZone},
-          {id:'kind',label:'Event kind',value:labelOf(KINDS,result.query.kind)},
-          {id:'group',label:'Group by',value:result.query.fields?result.query.fields.map(field=>labelOf(GROUPS,field)).join(' + '):`${labelOf(GROUPS,result.query.groupBy??'event')}${result.query.groupProperty?`: ${JSON.stringify(result.query.groupProperty)}`:''}`},
-          ...Object.entries(result.query.filters).map(([id,value])=>({id,label:labelOf(FILTERS,id),value:fieldValueLabel(id,value)})),
-          ...(result.query.property?[{id:'property',label:`Property ${JSON.stringify(result.query.property.key)} (${result.query.property.type})`,value:result.query.property.type==='missing'?'Missing / uncollected':JSON.stringify(result.query.property.value)}]:[]),
-          ...(result.cohort?[{id:'cohort',label:'Cohort',value:`${result.cohort.item.definition.name} · Revision ${result.cohort.item.revision}`}]:[]),
-        ]}/>
-        <EvidenceSummary variant="compact" title="Native Explorer evidence" source="Native Explorer retained observations"
-          availability={t.events===null?'unavailable':t.events===0?'empty':'ready'}
-          reason={`Retention coverage: ${result.coverage.status}. Capture coverage is unknown.${t.events===0?' No matching retained events.':''}`}
-          coverage={{status:result.coverage.status,reason:result.coverage.retainedFrom?`Retained from ${result.coverage.retainedFrom}.`:'No retention boundary.'}}
-          basis={`${result.range.from} to ${result.range.to} (${result.range.timeZone}); selected local dates within ${result.range.start} inclusive to ${result.range.end} exclusive.`}/>
-        {result.cohort&&(cohortMembershipUnavailable||result.cohort.membership.countsAreLowerBounds||cohortDeleted.current.has(result.cohort.item.id))&&<p className={cohortMembershipUnavailable?'alert':'banner'} role="status">{cohortDeleted.current.has(result.cohort.item.id)?'The applied cohort was deleted. Review its details before applying again.':cohortMembershipUnavailable?'Membership evidence is unavailable. Report counts below are unavailable.':'Some membership evidence is missing. Report counts below are observed lower bounds.'}</p>}
+        {result.cohort&&(cohortMembershipUnavailable||result.cohort.membership.countsAreLowerBounds||cohortDeleted.current.has(result.cohort.item.id))&&<p className={cohortMembershipUnavailable?'alert':'banner'} role="status">{cohortDeleted.current.has(result.cohort.item.id)?'The applied cohort was deleted. Review its details before applying again.':cohortMembershipUnavailable?'Membership evidence is unavailable. Report counts are unavailable.':'Some membership evidence is missing. Report counts are observed lower bounds.'}</p>}
         {result.sessionProperties&&<SessionStatus scope={result.sessionProperties} label="Report session properties"/>}
         {result.cohort?.sessionProperties&&<SessionStatus scope={result.cohort.sessionProperties} label="Qualification session properties"/>}
         {result.coverage.status!=='complete'&&(
-          <p className="hint">Coverage is {result.coverage.status}: results include retained observations only{result.coverage.retainedFrom?` from ${result.coverage.retainedFrom}`:''}.</p>
+          <p className="banner" role="status">Coverage is {result.coverage.status}: results include retained observations only{result.coverage.retainedFrom?` from ${result.coverage.retainedFrom}`:''}.</p>
         )}
-
-        <div className="metric-grid explorer-summary-metrics" aria-label="Explore summary">
-          <div className="card">
-            <div className={`metric-value${t.events===null?' is-unavailable':''}`}>{num(t.events)}</div>
-            <div className="metric-label">Events</div>
-            <div className="hint dim">{num(t.identifiedEvents)} identified · {num(t.unidentifiedEvents)} unidentified</div>
-          </div>
-          <div className="card">
-            <div className={`metric-value${t.pageViews===null?' is-unavailable':''}`}>{num(t.pageViews)}</div>
-            <div className="metric-label">Page views</div>
-          </div>
-          <div className="card">
-            <div className={`metric-value${t.customEvents===null?' is-unavailable':''}`}>{num(t.customEvents)}</div>
-            <div className="metric-label">Custom events</div>
-          </div>
-          <div className="card">
-            <div className={`metric-value${t.visitors===null?' is-unavailable':''}`}>{num(t.visitors)}</div>
-            <div className="metric-label">Visitors</div>
-            <div className="hint dim">{t.visitors==null?'Visitor estimate unavailable':`${num(t.visits)} visits`}</div>
-          </div>
-        </div>
 
         {result.propertyReport&&<PropertyDetails report={result.propertyReport} days={result.daily} timeZone={result.range.timeZone} totalEvents={result.totals.events} tab={propertyTab} setTab={setPropertyTab} onFirst={()=>{const p=new URLSearchParams(applied);p.delete('propertyCursor');setApplied(p.toString());refresh();}} onNext={()=>{if(result.propertyReport?.nextCursor){const p=new URLSearchParams(applied);p.set('propertyCursor',result.propertyReport.nextCursor);setApplied(p.toString());}}}/>}
 
@@ -782,11 +773,11 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
           <Disclosure summary="Qualification details" variant="plain"><div className="stack"><p className="hint">Qualification retained from: {result.cohort.coverage.retainedFrom??'No retention boundary'}. Identifier coverage: {result.cohort.identity.status}.</p><p className="hint">Qualifying events with identifiers: {num(result.cohort.identity.identifiedEvents)} · without identifiers: {num(result.cohort.identity.unidentifiedEvents)} · observed member keys: {num(result.cohort.identity.observedMemberKeys)}.</p><p className="hint">Qualification UTC bounds: {result.cohort.range.start} (inclusive) to {result.cohort.range.end} (exclusive).</p>{[...new URLSearchParams(result.cohort.item.definition.query)].filter(([key])=>!['from','to','timeZone','predicates'].includes(key)).map(([key,value])=><p className="hint" key={key}>{key==='kind'?'Qualifying event kind':key==='propertyKey'?'Property key':key==='propertyType'?'Property type':key==='propertyValue'?'Property value':labelOf(FILTERS,key)}: {fieldValueLabel(key,value)}</p>)}<AdvancedSummary draft={qualificationDraft(result.cohort.item.definition.query)!.advanced} zone={result.cohort.range.timeZone}/><p className="hint">{result.cohort.limitation}</p></div></Disclosure>
         </section>}
         <details className="explorer-scope"><summary>Applied filters and boundaries</summary>
-          <p className="hint">UTC bounds: {result.range.start} (inclusive) to {result.range.end} (exclusive). Only instants within the selected local dates are included.</p>
-          <p><strong>Required filters — all</strong></p>
-          {Object.entries(result.query.filters).map(([key,value])=><p key={key}>{labelOf(FILTERS,key)} equals {fieldValueLabel(key,value)}</p>)}
-          {result.query.property&&<p>Property {JSON.stringify(result.query.property.key)}: {result.query.property.type}{result.query.property.type!=='missing'?` equals ${JSON.stringify(result.query.property.value)}`:''}</p>}
-          {!Object.keys(result.query.filters).length&&!result.query.property&&<p className="hint">No additional filters.</p>}
+          <EvidenceSummary variant="compact" title="Native Explorer evidence" source="Native Explorer retained observations"
+          availability={t.events===null?'unavailable':t.events===0?'empty':'ready'}
+          reason={`Retention coverage: ${result.coverage.status}. Capture coverage is unknown.${t.events===0?' No matching retained events.':''}`}
+          coverage={{status:result.coverage.status,reason:result.coverage.retainedFrom?`Retained from ${result.coverage.retainedFrom}.`:'No retention boundary.'}}
+          basis={`${result.range.from} to ${result.range.to} (${result.range.timeZone}); selected local dates within ${result.range.start} inclusive to ${result.range.end} exclusive.`}/>
           {result.query.predicates&&<AdvancedSummary draft={readAdvanced(result.query.predicates)!} zone={result.range.timeZone}/>}
         </details>
         <Disclosure summary={<>Daily data ({result.daily.length} {result.daily.length===1?'day':'days'})</>} variant="boxed">
