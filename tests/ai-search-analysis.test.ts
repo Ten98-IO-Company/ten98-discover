@@ -9,6 +9,20 @@ import {normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidenc
 const filters=aiQueryFilters(new URLSearchParams()),brand={id:'brand' as const,name:'Acme',aliases:[],domains:[]},promptId=randomUUID(),versionId=randomUUID();
 function row(raw:unknown,prompt='Original prompt'):AiQueryInput{return {id:randomUUID(),promptId,versionId,requestedAt:'2026-10-15T12:00:00.123456Z',status:'completed',rawState:'retained',capturedPrompt:prompt,result:{profileId:aiSearchProfileId,source:'DataForSEO / ChatGPT consumer interface',capturedPrompt:prompt,locationCode:2840,languageCode:'en',forceWebSearch:true,reportedModel:null,providerObservedAt:null,receivedAt:'2026-10-15T12:00:00Z',evidence:normalizeDfsChatgptSearchEvidence(raw)}};}
 const aggregate=(rows:AiQueryInput[],extra:Partial<typeof filters>={})=>aggregateAiSearchQueries(rows,{...filters,...extra},brand);
+test('requested markets separate exact country/location and language while preserving failed and queued attempts',()=>{
+ const us={locationCode:2840,countryCode:'US',languageCode:'en'},gb={locationCode:2826,countryCode:'GB',languageCode:'en'},es={...us,languageCode:'es'};
+ const capture=(market:typeof us)=>{const r=row({markdown:'Acme',fan_out_queries:['market query']});return {...r,requestedMarket:market,result:{...r.result!,locationCode:market.locationCode,languageCode:market.languageCode}};};
+ const first=capture(us),rows=[first,capture(gb),capture(es),{...capture(us),status:'queued' as const,rawState:'not_recorded' as const,result:null},{...capture(us),status:'failed' as const,rawState:'not_recorded' as const,result:null},
+  {...capture(us),rawState:'expired' as const,capturedPrompt:null,result:null},{...capture(us),rawState:'invalid' as const,capturedPrompt:null,result:null},row({})];
+ const f=aiQueryFilters(new URLSearchParams({market:JSON.stringify(us)})),selected=aggregate(rows,f);
+ assert.equal(selected.coverage.attempted,3);assert.equal(selected.coverage.lifecycle.queued,1);assert.equal(selected.coverage.lifecycle.failed,1);assert.equal(selected.totals.answerMentions.denominator,1);assert.equal(selected.totals.queryInstances,1);
+ assert.equal(selected.marketOptions.length,3);assert.ok(selected.captures.every(c=>JSON.stringify(c.requestedMarket)===JSON.stringify(us)));
+ assert.equal(aggregate(rows,{market:gb}).coverage.attempted,1);assert.equal(aggregate(rows,{market:es}).coverage.attempted,1);assert.equal(aggregate(rows).coverage.attempted,8);
+ assert.deepEqual(aggregate(rows).captures.filter(c=>['expired','invalid'].includes(c.rawState)).map(c=>c.requestedMarket),[null,null]);
+ assert.throws(()=>aggregate([{...first,result:{...first.result!,languageCode:'es'}}]),AiQueryDataError);
+ for(const market of ['null','{}',JSON.stringify({...us,extra:true}),JSON.stringify({...us,locationCode:0}),JSON.stringify({...us,countryCode:'us'}),JSON.stringify({...us,languageCode:'en\n'}),JSON.stringify(us,null,1)])assert.throws(()=>aiQueryFilters(new URLSearchParams({market})));
+ assert.throws(()=>aiQueryFilters(new URLSearchParams('market='+encodeURIComponent(JSON.stringify(us))+'&market='+encodeURIComponent(JSON.stringify(gb)))));
+});
 test('distinct query votes and independent associated-answer denominators retain the golden A/B/C/D case',()=>{
  const rows=[row({markdown:'Acme answer',fan_out_queries:['q1','q1','q2']}),row({markdown:'Another answer',fan_out_queries:['q1']}),row({fan_out_queries:['q1']})],report=aggregate(rows);
  const q1=report.topQueries.find(q=>q.key==='q1')!,q2=report.topQueries.find(q=>q.key==='q2')!;
