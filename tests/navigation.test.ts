@@ -5,6 +5,11 @@ import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geogra
 import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 import {defaultParseSearch,defaultStringifySearch} from '@tanstack/react-router'
 import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
+test('requested capture market round-trips without becoming an API model locale',()=>{
+ const intent=readAISearchIntent()!,market={locationCode:2840,countryCode:'US',languageCode:'es'},selected={...intent,filters:{...intent.filters,market}};
+ assert.deepEqual(readAISearchIntent(aiSearchIntentQuery(selected)),selected);
+ assert.equal(readAISearchIntent(aiSearchIntentQuery(selected)+'&market=null'),null);
+});
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
