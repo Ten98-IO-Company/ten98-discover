@@ -216,7 +216,8 @@
     },
     "P08": {
       "migrations": [
-        "0031_ai_suggestions"
+        "0031_ai_suggestions",
+        "0083_prompt_request_isolation"
       ]
     },
     "P09": {
@@ -368,6 +369,7 @@
       ],
       "migrations": [
         "0031_ai_suggestions",
+        "0083_prompt_request_isolation",
         "0051_prompt_recurring",
         "0052_prompt_tracker_library"
       ]

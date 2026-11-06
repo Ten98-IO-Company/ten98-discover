@@ -30,6 +30,11 @@ export async function suggestionConnection(client:PoolClient,workspaceId:string,
 export function suggestionCredentials(row:any){return decryptCredentials(row.encrypted_credentials,{id:row.id,workspaceId:row.workspace_id,provider:row.provider,revision:row.revision});}
 export async function suggestionWorkspace(client:PoolClient,projectId:string){return (await client.query('SELECT workspace_id FROM project WHERE id=$1',[projectId])).rows[0].workspace_id as string;}
 function requireOwner(p:ContentProject){if(p.role!=='owner')throw new FoundationError(403,'Only an owner can run evaluation-only suggestion profiles.');}
+async function suggestionBusinessInputHash(client:PoolClient,input:SuggestionInput){
+ // Keep the authored-selector projection and PostgreSQL serialization identical to migration 0083.
+ const result=await client.query<{business_input_hash:string}>(`SELECT encode(sha256(convert_to(jsonb_build_array('prompt-suggestion-business-v1','prompt',input->'topic',input->'country',input->'language',COALESCE((SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT value#>>'{}' AS v FROM jsonb_array_elements(input->'sectionKeys')) s),'[]'::jsonb),COALESCE((SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT lower(value#>>'{}') AS v FROM jsonb_array_elements(input->'competitorIds')) s),'[]'::jsonb),COALESCE((SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT value#>>'{}' AS v FROM jsonb_array_elements(input->'excludedPrompts')) s),'[]'::jsonb))::text,'UTF8')),'hex') AS business_input_hash FROM (SELECT $1::jsonb AS input) q`,[JSON.stringify(input)]);
+ return result.rows[0].business_input_hash;
+}
 async function topicLibrary(client:PoolClient,projectId:string,topic:string){
  const bound=(await client.query(`SELECT count(*)::integer AS count,COALESCE(sum(octet_length(v.text)),0)::integer AS bytes FROM project_prompt p
  JOIN prompt_text_version v ON v.id=p.current_version_id AND v.project_id=p.project_id WHERE p.project_id=$1 AND p.topic=$2 AND p.archived_at IS NULL`,[projectId,topic])).rows[0];
@@ -100,9 +105,10 @@ export async function prepareAiSuggestions(projectId:string,userId:string,raw:un
   requireOwner(p);const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.prepare',receiptBody);if(receipt.replayed)return result(p.role,await preparationDto(client,p.id,receipt.result.id as string),true);
   const wid=await suggestionWorkspace(client,p.id);await suggestionConnection(client,wid,input.connectionId,saved.connectionRevision);await assertSuggestionSnapshot(client,p.id,input,saved.snapshot.snapshotHash);
   const id=randomUUID(),hash=canonicalHash({input,snapshotHash:saved.snapshot.snapshotHash,route});
-  await client.query(`INSERT INTO ai_suggestion_quote(id,workspace_id,project_id,user_id,request_id,connection_id,connection_revision,request_actor,key_fingerprint,input_hash,snapshot_hash,input,snapshot,messages,route,expires_at,request_version)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,clock_timestamp()+interval '5 minutes',1)`,
-   [id,wid,p.id,userId,input.requestId,input.connectionId,saved.connectionRevision,executionActor(userId),keyFingerprint(saved.credentials),hash,saved.snapshot.snapshotHash,JSON.stringify(input),JSON.stringify(saved.snapshot),JSON.stringify(suggestionMessages(saved.snapshot)),JSON.stringify(route)]);
+  const businessInputHash=await suggestionBusinessInputHash(client,input);
+  await client.query(`INSERT INTO ai_suggestion_quote(id,workspace_id,project_id,user_id,request_id,connection_id,connection_revision,request_actor,key_fingerprint,input_hash,snapshot_hash,input,snapshot,messages,route,expires_at,request_version,business_input_hash)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,clock_timestamp()+interval '5 minutes',1,$16)`,
+   [id,wid,p.id,userId,input.requestId,input.connectionId,saved.connectionRevision,executionActor(userId),keyFingerprint(saved.credentials),hash,saved.snapshot.snapshotHash,JSON.stringify(input),JSON.stringify(saved.snapshot),JSON.stringify(suggestionMessages(saved.snapshot)),JSON.stringify(route),businessInputHash]);
   await receipt.save({id});return result(p.role,await preparationDto(client,p.id,id),false);
  });
 }
@@ -114,7 +120,10 @@ export async function startAiSuggestions(projectId:string,userId:string,raw:unkn
   if(receipt.replayed)return result(receipt.result.id as string,true);
   const q=(await client.query("SELECT *,expires_at<=clock_timestamp() AS expired FROM ai_suggestion_quote WHERE id=$1 AND project_id=$2 AND user_id=$3 AND purpose='prompt' FOR UPDATE",[input.preparationId,p.id,userId])).rows[0];if(!q)throw unavailable();
   if(q.request_version!==1||q.expired||q.input_purged_at)throw new FoundationError(409,'This preparation is stale. Prepare the request again.');
-  if((await client.query("SELECT id FROM ai_suggestion_run WHERE project_id=$1 AND purpose='prompt' AND (quote_id=$2 OR status IN('queued','running','uncertain'))",[p.id,q.id])).rowCount)throw new FoundationError(409,'This preparation started already or another suggestion request is unfinished.');
+  const businessInputHash=await suggestionBusinessInputHash(client,q.input);
+  if((await client.query(`SELECT r.id FROM ai_suggestion_run r JOIN ai_suggestion_quote previous ON previous.id=r.quote_id
+   WHERE r.project_id=$1 AND r.purpose='prompt' AND (r.quote_id=$2 OR r.status IN('queued','running')
+    OR (r.status='uncertain' AND (previous.business_input_hash=$3 OR previous.business_input_hash IS NULL)))`,[p.id,q.id,businessInputHash])).rowCount)throw new FoundationError(409,'This preparation started already or another suggestion request is unfinished.');
   await suggestionConnection(client,q.workspace_id,q.connection_id,q.connection_revision);await assertSuggestionSnapshot(client,p.id,q.input,q.snapshot_hash);
   const reservation=await reserveRequestInTransaction(client,q.workspace_id,userId,{connectionId:q.connection_id,requestKey:input.requestId,operation:'ai.suggest',inputHash:q.input_hash},async(tx,id)=>{
    await tx.query("INSERT INTO ai_suggestion_run(id,quote_id,workspace_id,project_id,user_id,request_id,status) VALUES($1,$2,$3,$4,$5,$6,'queued')",[id,q.id,q.workspace_id,p.id,userId,input.requestId]);
