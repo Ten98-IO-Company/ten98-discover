@@ -82,6 +82,10 @@ import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,pr
 import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
 import {getContentSupport,getContentSupportRun,prepareContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
 import {recoverContentSupport} from './ai-content-support-worker.ts';
+import {getOpportunities,getOpportunitiesRun,prepareOpportunities} from './ai-opportunities.ts';
+import {getOpportunitiesSource} from './ai-opportunities-api.ts';
+import {startOpportunities,cancelOpportunities} from './ai-opportunities-execution.ts';
+import {recoverOpportunities} from './ai-opportunities-recovery.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -886,6 +890,26 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='prepare'&&!keywordAction){await limit(`rank-prepare:${user.id}`,10);return json(await prepareRankCheck(projectId,user.id,target,input));}
           if(action==='keywords'&&keywordAction)return json(await changeRankKeywords(projectId,user.id,target,keywordAction as 'add'|'remove'|'pin',input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const opportunitiesRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-opportunities(?:/(source|prepare|runs)(?:/(${id})(?:/(cancel|recover))?)?)?$`,'i'));
+    if(opportunitiesRoute){
+      const [,projectId,action,runId,operation]=opportunitiesRoute;
+      await projectAccess(projectId,user.id,false);await limit(`ai-opportunities:${user.id}`,30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'This read does not accept a body.');
+        if(!action||action==='runs'&&!runId)return json(await getOpportunities(projectId,user.id,url.searchParams));
+        if(url.search)throw new FoundationError(400,'This recommendation detail does not accept query parameters.');
+        if(action==='runs'&&runId&&!operation)return json(await getOpportunitiesRun(projectId,user.id,runId));
+      }else if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'This recommendation action does not accept query parameters.');
+        if(action==='source'&&!runId)return json(await getOpportunitiesSource(projectId,user.id,await readJson(request,4096),request.signal));
+        await limit(`ai-opportunities-write:${user.id}`,10);
+        if(action==='prepare'&&!runId)return json(await prepareOpportunities(projectId,user.id,await readJson(request,32768)));
+        if(action==='runs'&&!runId)return json(await startOpportunities(projectId,user.id,await readJson(request,2048)),202);
+        if(action==='runs'&&runId&&operation==='cancel')return json(await cancelOpportunities(projectId,user.id,runId,await readJson(request,2048)));
+        if(action==='runs'&&runId&&operation==='recover')return json(await recoverOpportunities(projectId,user.id,runId,await readJson(request,2048)));
       }
       return json({error:'Method not allowed.'},405);
     }

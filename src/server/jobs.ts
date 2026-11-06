@@ -16,6 +16,8 @@ import {reconcileSiteAnalyses} from './site-analysis.ts';
 import {executeAiSuggestion,reconcileAiSuggestionJobs} from './ai-suggestion-worker.ts';
 import {aiSearchQueue,executeAiSearch,reconcileAiSearchJobs} from './ai-search.ts';
 import {contentSupportQueue} from './ai-content-support.ts';
+import {opportunitiesQueue} from './ai-opportunities.ts';
+import {executeOpportunities,reconcileOpportunitiesJobs} from './ai-opportunities-worker.ts';
 import {executeContentSupport,reconcileContentSupportJobs} from './ai-content-support-worker.ts';
 import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectChecks} from './domain-redirects.ts';
 import {claimDueSiteAuditOccurrence} from './site-audit-recurring.ts';
@@ -26,7 +28,7 @@ import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 import {accountClosureRetentionCron,accountClosureRetentionJobOptions,accountClosureRetentionQueue,runClosedAccountRetention} from './account-closure-retention.ts';
-const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileSiteAnalyses, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
+const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileSiteAnalyses, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileOpportunitiesJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
 /**
@@ -37,7 +39,7 @@ const queueName = 'setup-probe';
  * `startAfter`, which a NOTIFY on insert cannot announce, so that queue keeps plain 2 s polling.
  */
 export const jobPolling = { pollingIntervalSeconds: 2, notifyPollingIntervalSeconds: 30 } as const;
-export const jobQueues = (): { name: string; notify: boolean }[] => [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue, accountClosureRetentionQueue]
+export const jobQueues = (): { name: string; notify: boolean }[] => [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, opportunitiesQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue, accountClosureRetentionQueue]
   .map((name) => ({ name, notify: name !== rankPollQueue }));
 /**
  * Only the worker holds the dedicated LISTEN connection; producers emit NOTIFY regardless. The worker also runs the
@@ -213,6 +215,7 @@ export function startWorker(): Promise<void> {
       await workJobs<{runId:string}>(boss,suggestionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSuggestion(job.data?.runId);});
       await workJobs<{runId:string}>(boss,aiSearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSearch(job.data?.runId);});
       await workJobs<{runId:string}>(boss,contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
+      await workJobs<{runId:string}>(boss,opportunitiesQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeOpportunities(job.data?.runId);});
       await workJobs<{checkId:string}>(boss,domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);
       // Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention): one bounded run a day. Its per-table counts are the

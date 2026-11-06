@@ -15,11 +15,11 @@ import { readMigrationSchema, type MigrationSchema } from './helpers/migration-s
 const accountLink = /user_?id|_by$|actor|inviter/i;
 /** Name-linked columns that do not hold an account id. */
 const notAccountIds: ReadonlyMap<string, string> = new Map([
-  'prompt_execution_quote.request_actor', 'ai_suggestion_quote.request_actor', 'ai_content_support_quote.request_actor',
+  'prompt_execution_quote.request_actor', 'ai_suggestion_quote.request_actor', 'ai_content_support_quote.request_actor', 'ai_opportunity_preparation.request_actor',
 ].map(column => [column, 'A 64-character hex binding of the requesting actor, not an account id.']));
 /** Live workspace rows that reference an aged-out table without being aged out themselves: they keep the row. */
 // Analysis history keeps its original AI request link while the workspace owns that history.
-const reviewedBlockers = ['rank_keyword', 'saved_keyword', 'site_analysis_run'];
+const reviewedBlockers = ['ai_opportunity_run', 'rank_keyword', 'saved_keyword', 'site_analysis_run'];
 
 const foreignKeys = (schema: MigrationSchema, table: string) => new Set([...schema.get(table)?.values() ?? []].flatMap(column => column.foreignKeys));
 
@@ -108,7 +108,7 @@ function uncertainTables(): Set<string> {
     .map(sql => sql.match(/(?:CREATE|ALTER)\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_]+)"?/i)?.[1]).filter((table): table is string => !!table));
 }
 
-test('uncertain charges stay: paid runs and dispatches reference their receipt, and only financial tables can be uncertain', () => {
+test('unknown request outcomes preserve their original receipts and reviewed retention classes', () => {
   const schema = readMigrationSchema(), targets = new Map(retentionTargets().map(target => [target.table, target]));
   const referencesReceipt = (table: string) => [...foreignKeys(schema, table)].some(key => key.table === 'provider_request');
   // rank_run and prompt_comparison are charged through their dispatches and executions.
@@ -126,9 +126,32 @@ test('uncertain charges stay: paid runs and dispatches reference their receipt, 
   assert.ok(uncertain.has('provider_request') && uncertain.has('rank_dispatch'));
   for (const table of uncertain) {
     const retention = accountClosureInventory.find(entry => entry.table === table)?.retention;
-    if (retention) assert.equal(retention.class, 'financial', `${table} can be uncertain, so it is financial.`);
-    if (targets.has(table)) assert.ok(protectedRow(table), `${table} can be uncertain but nothing keeps it while the charge is unresolved.`);
+    if (table === 'ai_opportunity_run') {
+      assert.equal(retention?.class, 'workspace');
+      assert.ok(referencesReceipt(table));
+      assert.ok(!targets.has(table), 'Workspace request history must not age out with closed-account records.');
+    } else if (retention) assert.equal(retention.class, 'financial', `${table} must retain its existing historical retention class.`);
+    if (targets.has(table)) assert.ok(protectedRow(table), `${table} can be uncertain but nothing keeps its unresolved request.`);
   }
+});
+
+test('workspace-owned recommendations protect their original request from closed-account retention', () => {
+  const targets = retentionTargets(), schema = readMigrationSchema();
+  for (const table of ['ai_opportunity_preparation', 'ai_opportunity_run']) {
+    const entry = accountClosureInventory.find(item => item.table === table)!;
+    assert.equal(entry.rule, 'keep');
+    assert.equal(entry.retention?.class, 'workspace');
+    assert.deepEqual(entry.retention?.accountColumns, ['user_id']);
+    assert.equal(entry.retention?.survivesWorkspaceDeletion, false);
+    assert.ok(!targets.some(target => target.table === table));
+  }
+  const key = [...foreignKeys(schema, 'ai_opportunity_run')].find(item => item.table === 'provider_request')!;
+  assert.deepEqual(key.columns, ['id', 'workspace_id']);
+  const prune = pruneSql(targets, [{child: 'ai_opportunity_run', childColumns: key.columns, parent: key.table, parentColumns: ['id', 'workspace_id']}]);
+  assert.equal(prune.length, 1);
+  assert.ok(prune[0].includes("x.tbl='provider_request'"));
+  assert.ok(prune[0].includes('FROM "ai_opportunity_run" c WHERE c."id"=p."id" AND c."workspace_id"=p."workspace_id"'));
+  assert.ok(!prune[0].includes("k.tbl='ai_opportunity_run'"));
 });
 
 test('the daily job is never retried while it may still run', () => {

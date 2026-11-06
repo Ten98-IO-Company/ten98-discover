@@ -10,6 +10,8 @@ import {AIInsightsView,type AIInsightsDraft,type AIInsightsViewProps} from './AI
 import {AIComparisonPanel} from './AIComparisonPanel';
 import {CitationAnalysisPanel} from './CitationAnalysisPanel';
 import {CitationSpecializationsPanel} from './CitationSpecializationsPanel';
+import {AIRecommendationsPanel} from './AIRecommendationsPanel';
+import {opportunitiesScopeSchema} from '../lib/ai-opportunities';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime/browser';
 
@@ -43,7 +45,7 @@ function queryDraft(query:string|undefined,fallback:AIInsightsDraft):AIInsightsD
  try{decodeURIComponent(query.replaceAll('+',' '));const params=new URLSearchParams(query),keys=['from','to','timeZone','model','promptId','tag','matcher'];if([...params.keys()].some(key=>!keys.includes(key)||params.getAll(key).length!==1)||keys.some(key=>!params.has(key)))return null;const draft=Object.fromEntries(params) as AIInsightsDraft;return filters(draft)?draft:null;}catch{return null;}
 }
 const draftQuery=(draft:AIInsightsDraft)=>new URLSearchParams({...draft}).toString();
-const modes:{id:AIInsightsMode;label:string}[]=[{id:'summary',label:'Answer analysis'},{id:'comparison',label:'Compare periods'},{id:'citations',label:'Analyze citations'},{id:'specialized',label:'Specialized citation reports'}];
+const modes:{id:AIInsightsMode;label:string}[]=[{id:'summary',label:'Answer analysis'},{id:'comparison',label:'Compare periods'},{id:'citations',label:'Analyze citations'},{id:'specialized',label:'Specialized citation reports'},{id:'recommendations',label:'Recommendations'}];
 const same=(a:AIInsightsDraft,b:AIInsightsDraft)=>Object.keys(a).every(k=>a[k as keyof AIInsightsDraft]===b[k as keyof AIInsightsDraft]);
 const equalFilters=(v:unknown,f:InsightFilters)=>object(v)&&Object.entries(f).every(([k,value])=>v[k]===value)&&Object.keys(v).length===7;
 function validCoverage(v:unknown):v is InsightCoverage{return object(v)&&coverageKeys.every(k=>integer(v[k]))&&kinds.reduce((n,k)=>n+v[k],0)===v.attempted;}
@@ -110,7 +112,7 @@ function Controller(props:Props){
  useEffect(()=>{
   alive.current=true;invalidate();purge();setReceipt(null);setResolvedNavigation(navigationIdentity);patch({reading:false,exporting:false,error:'',notice:''});
   if(invalid){setSnapshot(null);patch({error:'This answer analysis link is invalid. Open Answer analysis to reset the report.'});}
-  else if(mode==='summary'||snapshotRef.current?.query!==draftQuery(requested!)){setSnapshot(null);void load(requested!);}
+  else if(mode!=='recommendations'&&(mode==='summary'||snapshotRef.current?.query!==draftQuery(requested!))){setSnapshot(null);void load(requested!);}
   return()=>{alive.current=false;invalidate();};
  },[navigationIdentity]);
  useEffect(()=>{if(s.focus){(document.getElementById(returnFocus.current??'')??document.getElementById(prefix+'heading'))?.focus();returnFocus.current=null;patch({focus:false});}},[s.focus]);
@@ -170,9 +172,13 @@ function Controller(props:Props){
   const value:AIInsightsNavigation={...next!=='summary'?{aiInsightsMode:next}:{},...query?{aiInsightsQuery:query}:{}};
   if(props.onNavigate)props.onNavigate(value);else setLocalNavigation(value);
  }
- const navItems=modes.map(item=>({id:item.id,label:item.label,current:item.id===mode,href:defaultStringifySearch({workspace:props.workspaceId,project:props.projectId,view:'ai-insights',...item.id!=='summary'?{aiInsightsMode:item.id}:{},...!invalid&&(snapshot?.query??navigation.aiInsightsQuery)?{aiInsightsQuery:snapshot?.query??navigation.aiInsightsQuery}:{}}),disabled:item.id!=='summary'&&(invalid||!snapshot||mode==='summary'&&(busy||dirty)),disabledReason:dirty?'Apply filter changes first.':'Load Answer analysis first.'}));
+ const navItems=modes.map(item=>({id:item.id,label:item.label,current:item.id===mode,href:defaultStringifySearch({workspace:props.workspaceId,project:props.projectId,view:'ai-insights',...item.id!=='summary'?{aiInsightsMode:item.id}:{},...!invalid&&(snapshot?.query??navigation.aiInsightsQuery)?{aiInsightsQuery:snapshot?.query??navigation.aiInsightsQuery}:{}}),disabled:item.id!=='summary'&&(invalid||item.id!=='recommendations'&&!snapshot||mode==='summary'&&(busy||dirty)),disabledReason:dirty?'Apply filter changes first.':'Load Answer analysis first.'}));
  let content=navigationCurrent?<AIInsightsView {...view}/>:<p role="status">Opening report…</p>;
  if(navigationCurrent&&receipt)content=<PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to answer analysis" initialExpiredAnswerIds={[...expired.current]} initialExpiredInputComparisonIds={[...expiredInputs.current]} onEvidenceExpired={({comparisonId,answerIds,inputIds})=>{for(const id of answerIds)expired.current.add(id);if(inputIds.length)expiredInputs.current.add(comparisonId);}} onUnauthorized={props.onUnauthorized} onBack={()=>{returnFocus.current=receipt.originId;patch({dailyEntity:receipt.dailyEntity,promptSearch:receipt.promptSearch,promptQuery:receipt.promptQuery});setReceipt(null);void load(state.current.applied,[null],receipt.drill);}}/>;
+ else if(navigationCurrent&&!invalid&&mode==='recommendations'){
+  const scope=opportunitiesScopeSchema.safeParse(filters(requested!));
+  if(scope.success)content=<AIRecommendationsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} scope={scope.data} selectedRunId={navigation.aiRecommendationsRun??null} category={navigation.aiRecommendationsCategory??'all'} onUnauthorized={props.onUnauthorized} onSelectionChange={({runId,category})=>{const value:AIInsightsNavigation={aiInsightsMode:'recommendations',...navigation.aiInsightsQuery!==undefined?{aiInsightsQuery:navigation.aiInsightsQuery}:{},...runId?{aiRecommendationsRun:runId}:{},...category!=='all'?{aiRecommendationsCategory:category}:{}};if(props.onNavigate)props.onNavigate(value);else setLocalNavigation(value);}}/>;
+ }
  else if(navigationCurrent&&!invalid&&mode!=='summary'&&snapshot&&snapshot.query===draftQuery(requested!)){
   const common={userId:props.userId,workspaceId:props.workspaceId,projectId:props.projectId,filtersLabel:snapshot.label,initialExpiredAnswerIds:[...expired.current],onAnswerExpired:(ids:string[])=>{for(const id of ids)expired.current.add(id);},onUnauthorized:props.onUnauthorized,onBack:()=>navigateMode('summary')};
   const {matcher:_,...scope}=snapshot.filters;

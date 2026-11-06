@@ -344,6 +344,9 @@
         "0017_prompt_execution"
       ]
     },
+    "P22": {
+      "migrations": ["0084_ai_opportunities"]
+    },
     "P23": {
       "routes": [
         "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/export"
