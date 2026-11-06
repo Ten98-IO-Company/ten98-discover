@@ -1,18 +1,20 @@
 /* Realtime keeps the established card, control and semantic token system. */
-.realtime { --control-md: var(--control-touch); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-5); min-width: 0; }
+.realtime { --control-md: var(--control-touch); --t98-control-height: var(--t98-control-touch); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); min-width: 0; }
 .realtime > * { grid-column: 1 / -1; min-width: 0; }
 .realtime > .card { margin-bottom: 0; }
 .realtime > .realtime-ranking { grid-column: auto; }
-.realtime-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.realtime-toolbar .row, .realtime-activity-controls .row { flex-wrap: wrap; }
-.realtime-freshness { flex-basis: 100%; font-variant-numeric: tabular-nums; }
+.realtime-toolbar h2, .realtime-toolbar p { margin: 0; }
+.realtime-activity-controls .row { flex-wrap: wrap; }
+.realtime-freshness { font-variant-numeric: tabular-nums; }
 .realtime .btn, .realtime input, .realtime summary { min-height: var(--control-touch); }
 .realtime .btn { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .realtime summary { padding-block: var(--space-3); cursor: pointer; color: var(--blue); }
-.realtime-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin-block: var(--space-4); }
-.realtime-stat { padding: var(--space-3); border-inline-end: 1px solid var(--line); }
+.realtime-overview { padding-block: var(--space-3); }
+.realtime-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin-block: 0; }
+.realtime-stat { padding: var(--space-1) var(--space-3); border-inline-end: 1px solid var(--line); }
 .realtime-stat:last-child { border: 0; }
-.realtime-stat > .hint { display: block; min-height: 2.5em; }
+.realtime-stat > .hint { display: block; }
+.realtime-stat > p { margin-block: var(--space-2) 0; }
 .realtime-unavailable { font-size: var(--text-lg); color: var(--muted); margin-block: var(--space-3); }
 .realtime-active { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); margin-block-start: var(--space-5); }
 .realtime-active strong { font-size: var(--text-metric); max-width: 100%; overflow-wrap: anywhere; }
