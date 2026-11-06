@@ -692,7 +692,14 @@ function App() {
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
   // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
   const sectionNavGroups: SidebarNavGroup[] = [{ id: 'sections', items: appSections.map((section): SidebarNavItem => ({ id: section.id, label: section.label, icon: section.icon, href: section.tabs[0].view,
-    current: currentSection?.section.id === section.id, keywords: [...section.tabs.map(tab => tab.label), ...section.keywords] })) }]
+    current: currentSection?.section.id === section.id })) }]
+  // Search opens each page or mode directly; a mode sharing its parent's view remains one result.
+  const toolSearchGroups: SidebarNavGroup[] = appSections.map(section => ({ id: section.id, label: section.label,
+    items: section.tabs.flatMap(tab => {
+      const modes = subTabs[tab.view] ?? []
+      const ownMode = modes.find(mode => mode.view === tab.view)
+      return [{ ...tab, keywords: [...tab.keywords ?? [], ...ownMode ? [ownMode.label, ...ownMode.keywords ?? []] : []] }, ...modes.filter(mode => mode.view !== tab.view)]
+    }).map(tab => ({ id: tab.view, label: tab.label, icon: section.icon, href: tab.view, current: view === tab.view, keywords: [section.label, ...tab.keywords ?? []] })) }))
   // Settings pages appear in the sidebar only as search results, so "Find a tool" still reaches them.
   const settingsAllowed = (entry: AppView) => entry === 'google-app' || entry === 'identity-providers' ? me!.instanceOperator : entry === 'diagnostics' ? project !== null : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
     : ['domains','destinations'].includes(entry) ? adminRole && project !== null : projectSettingsViews.includes(entry) ? project !== null : entry === 'retention' ? workspace !== undefined : true
@@ -721,7 +728,7 @@ function App() {
         <Link to='/' search={target('project')} aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Add website',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.',project:'Website',noProjects:'No websites yet',choose:'Choose a website',loading:'Loading websites…'}} />
-        {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
+        {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...toolSearchGroups,...settingsSearchGroups]:sectionNavGroups} emptyFilter={query=><Text role='status'>No tools match “{query}”. Clear the search to show all tools.</Text>} />}
         <SidebarFooter version={appVersion}>
           {project&&<SidebarStatus tone='idle' label={eventsError?'Visit history unavailable':eventsBusy?'Checking visit history':lastReceived?'Retained visits available':events===null?'Visit history not checked':'Waiting for the first visit'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target(project?'installation':'preferences')}><AppIcon name='settings'/><span>Settings</span></Link>

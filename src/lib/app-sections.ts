@@ -4,30 +4,37 @@ import type { AppView } from './navigation.ts'
 // The app's information architecture: six report sections in the sidebar, each one page with a strip of sibling
 // tabs, plus grouped settings. Every tab keeps its own `view` id, so existing URLs, shares and history stay valid.
 export type SectionId = 'overview' | 'behaviour' | 'conversions' | 'search' | 'ai' | 'reports'
-export interface SectionTab { view: AppView; label: string }
-export interface AppSection { id: SectionId; label: string; icon: IconName; tabs: readonly SectionTab[]; keywords: readonly string[] }
+export interface SectionTab { view: AppView; label: string; keywords?: readonly string[] }
+export interface AppSection { id: SectionId; label: string; icon: IconName; tabs: readonly SectionTab[] }
 
 export const appSections: readonly AppSection[] = [
-  { id: 'overview', label: 'Overview', icon: 'home', tabs: [{ view: 'project', label: 'Dashboard' }, { view: 'realtime', label: 'Live' }, { view: 'explore', label: 'Explore' }, { view: 'events', label: 'Latest events' }, { view: 'performance', label: 'Page speed' }],
-    keywords: ['analytics', 'traffic', 'realtime', 'compare periods', 'traffic explorer', 'recent events', 'web performance', 'core web vitals'] },
-  { id: 'behaviour', label: 'Behaviour', icon: 'users', tabs: [{ view: 'sessions', label: 'Visitors' }, { view: 'journeys', label: 'Journeys' }, { view: 'visitor-retention', label: 'Returning visitors' }, { view: 'replays', label: 'Recordings' }, { view: 'heatmaps', label: 'Heatmaps' }],
-    keywords: ['visitor activity', 'sessions', 'retention', 'session replay', 'paths'] },
-  { id: 'conversions', label: 'Conversions', icon: 'target', tabs: [{ view: 'conversions', label: 'Goals' }, { view: 'revenue', label: 'Revenue' }, { view: 'attribution', label: 'Channels' }, { view: 'campaigns', label: 'Campaigns' }],
-    keywords: ['funnels', 'attribution', 'utm campaigns', 'tracked links', 'tracking images', 'pixels'] },
-  { id: 'search', label: 'Search', icon: 'search', tabs: [{ view: 'keywords', label: 'Keywords' }, { view: 'ranks', label: 'Rankings' }, { view: 'domain-seo', label: 'Domain overview' }, { view: 'audits', label: 'Site health' }, { view: 'google', label: 'Google' }],
-    keywords: ['seo', 'keyword research', 'rank tracking', 'domain seo', 'backlinks', 'site audits', 'search console', 'google analytics', 'ga4', 'google reports'] },
-  { id: 'ai', label: 'AI visibility', icon: 'compass', tabs: [{ view: 'prompts', label: 'Prompts' }, { view: 'ai-insights', label: 'Answers' }],
-    keywords: ['ai search', 'ai insights', 'saved prompts', 'answer analysis', 'chatgpt answers', 'citations', 'aeo', 'geo'] },
-  { id: 'reports', label: 'Reports', icon: 'grid', tabs: [{ view: 'boards', label: 'Boards' }, { view: 'reports', label: 'Saved reports' }],
-    keywords: ['boards', 'dashboards', 'share', 'templates'] },
+  { id: 'overview', label: 'Overview', icon: 'home', tabs: [
+    { view: 'project', label: 'Dashboard', keywords: ['analytics', 'traffic'] }, { view: 'realtime', label: 'Live', keywords: ['realtime'] },
+    { view: 'explore', label: 'Explore', keywords: ['traffic explorer'] }, { view: 'events', label: 'Latest events', keywords: ['recent events'] },
+    { view: 'performance', label: 'Page speed', keywords: ['web performance', 'core web vitals'] }] },
+  { id: 'behaviour', label: 'Behaviour', icon: 'users', tabs: [
+    { view: 'sessions', label: 'Visitors', keywords: ['visitor activity', 'sessions'] }, { view: 'journeys', label: 'Journeys', keywords: ['paths'] },
+    { view: 'visitor-retention', label: 'Returning visitors', keywords: ['retention'] }, { view: 'replays', label: 'Recordings', keywords: ['session replay'] }, { view: 'heatmaps', label: 'Heatmaps' }] },
+  { id: 'conversions', label: 'Conversions', icon: 'target', tabs: [
+    { view: 'conversions', label: 'Goals', keywords: ['funnels'] }, { view: 'revenue', label: 'Revenue' },
+    { view: 'attribution', label: 'Channels', keywords: ['attribution'] }, { view: 'campaigns', label: 'Campaigns', keywords: ['utm campaigns'] }] },
+  { id: 'search', label: 'Search', icon: 'search', tabs: [
+    { view: 'keywords', label: 'Keywords', keywords: ['seo', 'keyword research'] }, { view: 'ranks', label: 'Rankings', keywords: ['seo', 'rank tracking'] },
+    { view: 'domain-seo', label: 'Domain overview', keywords: ['seo', 'domain seo', 'backlinks'] }, { view: 'audits', label: 'Site health', keywords: ['seo', 'site audits'] },
+    { view: 'google', label: 'Google', keywords: ['seo', 'search console', 'google analytics', 'ga4', 'google reports'] }] },
+  { id: 'ai', label: 'AI visibility', icon: 'compass', tabs: [
+    { view: 'prompts', label: 'Prompts', keywords: ['saved prompts'] },
+    { view: 'ai-insights', label: 'Answers', keywords: ['ai insights', 'answer analysis', 'citations', 'aeo', 'geo'] }] },
+  { id: 'reports', label: 'Reports', icon: 'grid', tabs: [
+    { view: 'boards', label: 'Boards', keywords: ['dashboards', 'share'] }, { view: 'reports', label: 'Saved reports', keywords: ['share', 'templates'] }] },
 ]
 
 // Some tabs hold a second strip of modes or tools: the Dashboard's period comparison and the campaign tools.
 export const subTabs: Partial<Record<AppView, readonly SectionTab[]>> = {
   project: [{ view: 'project', label: 'Summary' }, { view: 'compare', label: 'Compare periods' }],
   // Answers from API models and from the ChatGPT app are measured separately and never pooled.
-  'ai-insights': [{ view: 'ai-insights', label: 'API models' }, { view: 'ai-search', label: 'ChatGPT app' }],
-  campaigns: [{ view: 'campaigns', label: 'Campaign tags' }, { view: 'links', label: 'Tracked links' }, { view: 'pixels', label: 'Tracking images' }],
+  'ai-insights': [{ view: 'ai-insights', label: 'API models' }, { view: 'ai-search', label: 'ChatGPT app', keywords: ['ai search', 'chatgpt answers'] }],
+  campaigns: [{ view: 'campaigns', label: 'Campaign tags' }, { view: 'links', label: 'Tracked links' }, { view: 'pixels', label: 'Tracking images', keywords: ['pixels'] }],
 }
 const tabOf: Partial<Record<AppView, AppView>> = Object.fromEntries(Object.entries(subTabs).flatMap(([tab, entries]) => entries!.map(entry => [entry.view, tab])))
 
