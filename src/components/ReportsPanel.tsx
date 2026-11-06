@@ -1,7 +1,9 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {useBlocker} from '@tanstack/react-router';
+import {readReportIntent,reportIntentQuery,reportTargetKey as targetKey,type ReportIntent} from '../lib/navigation';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {WorkspaceRole} from '@ten98/runtime/browser';
-import {CopyButton,LoadMore,SegmentedControl,StatusLine,useToast} from '@ten98/ui';
+import {CopyButton,LoadMore,SegmentedControl,StatusLine,useToast,useConfirmDialog} from '@ten98/ui';
 
 type Role=WorkspaceRole;
 type Tab='reports'|'report-templates';
@@ -11,7 +13,7 @@ type Listed={role:Role;reports?:Summary[];templates?:Summary[];nextCursor:string
 type Selected={role:Role;report?:Detail;template?:Detail};
 type Share={id:string;label:string;reportRevision:number;createdAt:string;expiresAt:string;revokedAt:string|null};
 type Shares={shares:Share[];nextCursor:string|null};
-type Props={projectId:string;userId:string;onUnauthorized:()=>void};
+type Props={projectId:string;userId:string;query?:string;readOwner?:string;readEnabled?:boolean;onNavigate:(query:string,replace?:boolean)=>void;onUnauthorized:()=>void};
 const blankHtml='<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Report</title></head>\n<body>\n<h1>Report</h1>\n<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody><tr><td>Example metric</td><td>0</td></tr></tbody></table>\n</body>\n</html>';
 const label=(row:Summary)=>row.title??row.name??'';
 const content=(row:Detail)=>row.html??row.brief??'';
@@ -29,7 +31,11 @@ export default function ReportsPanel(props:Props) {
   return <ReportsView key={`${props.userId}:${props.projectId}`} {...props}/>;
 }
 
-function ReportsView({projectId,onUnauthorized}:Props) {
+function ReportsView({projectId,onUnauthorized,query,readOwner='',readEnabled=true,onNavigate}:Props) {
+  const route=readReportIntent(query),target=targetKey(route);
+  const [confirm,confirmDialog]=useConfirmDialog({danger:true});
+  const bypass=useRef<string|null>(null);
+  const [stale,setStale]=useState(false);
   const [tab,setTab]=useState<Tab>('reports');
   const selectedTab=useRef<Tab>('reports');
   const [role,setRole]=useState<Role|null>(null);
@@ -56,6 +62,16 @@ function ReportsView({projectId,onUnauthorized}:Props) {
   const [revokeConfirm,setRevokeConfirm]=useState<string|null>(null);
   const active=useRef({alive:false,generation:0,locked:false});
   const controller=useRef<AbortController|null>(null);
+  const restored=useRef(false);
+  const routeState=useRef({target,preview:!!route?.preview,readOwner,readEnabled,epoch:0});
+  const previous=routeState.current;
+  if(previous.target!==target||previous.readOwner!==readOwner||previous.readEnabled!==readEnabled||previous.preview!==!!route?.preview){
+    const sameOwner=previous.target===target&&previous.readOwner===readOwner;
+    routeState.current={target,preview:!!route?.preview,readOwner,readEnabled,epoch:previous.epoch+(sameOwner?0:1)};
+    if(!sameOwner||!readEnabled){active.current.generation++;active.current.locked=false;controller.current?.abort();}
+  }
+  const epoch=routeState.current.epoch;
+  const [renderEpoch,setRenderEpoch]=useState(epoch);
   const {toast}=useToast();
   const unauthorized=useRef(onUnauthorized);unauthorized.current=onUnauthorized;
   const reports=tab==='reports',writable=role!==null&&role!=='viewer';
@@ -63,6 +79,14 @@ function ReportsView({projectId,onUnauthorized}:Props) {
   const baseline=record?content(record):reports?blankHtml:'';
   const dirty=editor&&(title!==(record?label(record):'')||body!==baseline);
   const navDisabled=pending||dirty;
+  useBlocker({shouldBlockFn:async({current,next})=>{
+    const destination=next.search as Record<string,unknown>,origin=current.search as Record<string,unknown>;
+    if(bypass.current!==null&&destination.view==='reports'&&destination.workspace===origin.workspace&&destination.project===origin.project&&destination.reportInvalid===undefined&&targetKey(readReportIntent(destination.reportQuery as string|undefined))===bypass.current){bypass.current=null;return false;}
+    if(destination.view==='reports'&&destination.workspace===origin.workspace&&destination.project===origin.project&&destination.reportInvalid===undefined&&targetKey(readReportIntent(destination.reportQuery as string|undefined))===target)return false;
+    return dirty&&!await confirm({title:'Discard your unsaved report changes?',description:'Your edits have not been saved.',confirmLabel:'Discard changes'});
+  },enableBeforeUnload:()=>dirty});
+  function navigate(value:ReportIntent,replace=false,ack=false){if(ack)bypass.current=targetKey(value);onNavigate(reportIntentQuery(value),replace);}
+  function savedRoute(value:Detail){navigate({kind:reports?'report':'template',id:value.id,revision:value.revision},true,true);}
 
   function clearEditor() {
     setRecord(null);setEditor(false);setTitle('');setBody('');setPreview(false);setConflict(false);
@@ -88,11 +112,12 @@ function ReportsView({projectId,onUnauthorized}:Props) {
 
   // One operation at a time includes its refresh callbacks. The ref closes double-click races.
   async function run(work:(request:Requester,current:()=>boolean)=>Promise<void>) {
-    if(!active.current.alive||active.current.locked) return;
+    if(!active.current.alive||active.current.locked||!routeState.current.readEnabled) return;
     active.current.locked=true;setPending(true);setError('');setNotice('');
     const generation=active.current.generation,ac=new AbortController();controller.current=ac;
-    const current=()=>active.current.alive&&active.current.generation===generation&&!ac.signal.aborted;
+    const current=()=>active.current.alive&&active.current.generation===generation&&routeState.current.readEnabled&&!ac.signal.aborted;
     const request:Requester=async<T,>(path:string,value?:unknown)=>{
+      if(!current()) throw new DOMException('Cancelled','AbortError');
       const result=await api<T>(path,{signal:ac.signal,...(value===undefined?{}:{method:'POST',body:value})});
       if(!current()) throw new DOMException('Cancelled','AbortError');return result;
     };
@@ -119,23 +144,49 @@ function ReportsView({projectId,onUnauthorized}:Props) {
 
   useEffect(()=>{
     active.current.alive=true;active.current.locked=false;active.current.generation++;
-    void run(async request=>{await readList(request,'reports');});
+    setRenderEpoch(epoch);setPending(false);setStale(false);setError('');
+    bypass.current=null;
+    restored.current=false;
+    clearEditor();setRows([]);setLoaded(false);setRole(null);setNext(null);
     return ()=>{active.current.alive=false;active.current.generation++;active.current.locked=false;controller.current?.abort();};
-  },[]);
+  },[epoch]);
+  // Transport readiness can pause during a preview URL change without changing who owns the draft.
+  useEffect(()=>{
+    setPending(false);
+    if(readEnabled&&route){
+      const kind=route.kind==='report'?'reports':'report-templates';selectedTab.current=kind;setTab(kind);
+      if(restored.current){
+        if(!loaded||record&&kind==='reports'&&canShare(role)&&!sharesLoaded)void run(async request=>{
+          if(!loaded)await readList(request,kind);
+          if(record&&kind==='reports'&&canShare(role)&&!sharesLoaded)await readShares(request,record.id);
+        });
+        return;
+      }
+      void run(async request=>{
+        if(route.id){const result=await request<Selected>(`/api/projects/${projectId}/${kind}/${route.id}`),selected=result.report??result.template;
+          if(!selected||selected.id!==route.id)throw new Error('The saved item could not be loaded.');
+          restored.current=true;
+          if(selected.revision!==route.revision){setStale(true);await readList(request,kind);return;}
+          setRole(result.role);applyRecord(selected);setPreview(routeState.current.preview);
+          await readList(request,kind);
+          if(kind==='reports'&&canShare(result.role))await readShares(request,selected.id);
+        }else {await readList(request,kind);restored.current=true;}
+      });
+    }
+  },[epoch,readEnabled]);
+  useEffect(()=>{setPreview(!!route?.preview);},[query]);
 
   function switchTab(kind:Tab) {
-    if(active.current.locked||dirty||kind===tab) return;
-    clearEditor();setRows([]);setNext(null);setLoaded(false);setRole(null);selectedTab.current=kind;setTab(kind);
-    void run(async request=>{await readList(request,kind);});
+    if(kind===tab)return;navigate({kind:kind==='reports'?'report':'template'});
   }
   function select(id:string,reload=false) {
-    if(active.current.locked||dirty&&!reload) return;
+    if(!reload&&(editor||route?.id!==id)){const selected=rows.find(row=>row.id===id);if(selected)navigate({kind:reports?'report':'template',id,revision:selected.revision});return;}
+    if(active.current.locked)return;
     setOneTime(null);setShareConfirm(false);setRevokeConfirm(null);setDeleteConfirm(false);setPreview(false);
     void run(async request=>{
       const result=await request<Selected>(`${collection}/${id}`),selected=result.report??result.template;
       if(!selected) throw new Error('The saved item could not be loaded. Try again.');
-      setRole(result.role);applyRecord(selected);
-      if(reports&&canShare(result.role)) await readShares(request,id);
+      setRole(result.role);applyRecord(selected);setStale(false);savedRoute(selected);
     });
   }
   function create() {
@@ -155,13 +206,13 @@ function ReportsView({projectId,onUnauthorized}:Props) {
       const input=reports?{title,html:body}:{name:title,brief:body};
       const result=await request<Selected>(`${collection}${record?`/${record.id}`:''}`,{...input,...(record?{revision:record.revision}:{})});
       const saved=result.report??result.template;if(!saved) throw new Error('The saved item could not be loaded. Refresh the list.');
-      applyRecord(saved);await readList(request);if(reports&&canShare(role)) await readShares(request,saved.id);
+      applyRecord(saved);savedRoute(saved);
       toast(reports?'Report saved. Preview the saved version before sharing.':'Template saved.');
     });
   }
   function remove() {
     if(!record||!deleteConfirm||!writable||dirty) return;
-    void run(async request=>{await request(`${collection}/${record.id}/delete`,{revision:record.revision});clearEditor();await readList(request);toast(reports?'Report deleted. Its public links are now unavailable.':'Template deleted.');});
+    void run(async request=>{await request(`${collection}/${record.id}/delete`,{revision:record.revision});clearEditor();navigate({kind:reports?'report':'template'},true,true);toast(reports?'Report deleted. Its public links are now unavailable.':'Template deleted.');});
   }
   function share(event:FormEvent) {
     event.preventDefault();if(!record||!canShare(role)||!shareConfirm||dirty) return;
@@ -177,7 +228,11 @@ function ReportsView({projectId,onUnauthorized}:Props) {
     void run(async request=>{await request(`${collection}/${record.id}/shares/${id}/revoke`,{});setOneTime(previous=>previous?.id===id?null:previous);setRevokeConfirm(null);await readShares(request,record.id);toast('Link revoked. New visits cannot read this snapshot.');});
   }
 
+  if(!readEnabled||renderEpoch!==epoch)return <section aria-label='Reports and sharing'><p role='status'>Loading reports…</p>{confirmDialog}</section>;
+  if(!route)return <section aria-label='Reports and sharing'><p role='alert'>This report link is invalid. No report was loaded.</p>{confirmDialog}</section>;
   return <section aria-label='Reports and sharing'>
+    {confirmDialog}
+    {stale&&route.id&&<div role='alert'><p>The saved item changed. Reload its saved version to use the current revision.</p><button className='btn' disabled={pending} onClick={()=>select(route.id!,true)}>Reload saved version</button></div>}
     <div className='card'>
       <SegmentedControl label='Report sections' value={tab} onValueChange={value=>switchTab(value as Tab)} options={[{value:'reports',label:'Reports',disabled:navDisabled},{value:'report-templates',label:'Templates',disabled:navDisabled}]}/>
       <p className='dim' style={{marginTop:12}}>{reports?'Save an HTML report and share a fixed snapshot.':'Save reusable writing briefs. Templates do not generate reports automatically.'}</p>
@@ -207,7 +262,7 @@ function ReportsView({projectId,onUnauthorized}:Props) {
           {writable&&<button className='btn primary' disabled={pending||!dirty}>{record?'Save changes':reports?'Save report':'Save template'}</button>}
           {dirty&&<button type='button' className='btn' disabled={pending} onClick={cancel}>Cancel edits</button>}
           {!reports&&<CopyButton value={body} label='Copy brief' messages={{copied:'Brief copied.',copyFailed:copyFailed}}/>}
-          {record&&reports&&<button type='button' className='btn' disabled={pending} onClick={()=>setPreview(value=>!value)}>{preview?'Hide preview':'Preview saved report'}</button>}
+          {record&&reports&&<button type='button' className='btn' disabled={pending} onClick={()=>navigate({kind:'report',id:record.id,revision:record.revision,...!preview?{preview:true}:{}})}>{preview?'Hide preview':'Preview saved report'}</button>}
           {record&&writable&&<button type='button' className='btn' disabled={pending||dirty} onClick={()=>setDeleteConfirm(true)}>{reports?'Delete report':'Delete template'}</button>}
         </div>
       </form>

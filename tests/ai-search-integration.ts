@@ -58,16 +58,16 @@ export async function runAiSearchChecks(){
   const provider=await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic adapter only',credentials:{login:'search@example.invalid',password:'synthetic-never-live'}}),connectionId=provider.connection.id;
   await pool.query("UPDATE provider_connection SET check_status='ok'WHERE id=$1",[connectionId]);await saveProviderRequestControls(workspace,owner,{paused:false});
   const editor=randomUUID(),viewer=randomUUID();for(const[id,role]of[[editor,'editor'],[viewer,'viewer']]){await pool.query('INSERT INTO "user"(id,name,email)VALUES($1,\'Search role fixture\',$2)',[id,id+'@ai-search.test']);await pool.query('INSERT INTO membership(workspace_id,user_id,role)VALUES($1,$2,$3)',[workspace,id,role]);}
-  let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'wallet'='ok';const receipts=new Map<string,{id:string;metadata:any}>();
+  let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'wallet'='ok',duringSend:(()=>Promise<void>)|undefined;const receipts=new Map<string,{id:string;metadata:any}>();
   const path=(address:string)=>new URL(address).pathname.slice(1).split('/');
   const envelope=(address:string,rows:unknown[],data?:unknown)=>Response.json({status_code:20000,tasks_count:1,tasks_error:0,tasks:[{id:randomUUID(),status_code:20000,path:path(address),result_count:rows.length,result:rows,...data?{data}:{}}]});
   const send:typeof fetch=async(address,options)=>{
    const url=String(address);assert.equal(options?.redirect,'error');assert.equal(options?.credentials,'omit');
    if(url==='https://api.dataforseo.com/v3/appendix/user_data'){free++;return envelope(url,[{login:'search@example.invalid'}]);}
-   if(url===aiSearchEndpoints.locations){free++;return envelope(url,[{location_code:2840,location_name:'United States',location_type:'Country',country_iso_code:'US'}]);}
+   if(url===aiSearchEndpoints.locations){free++;return envelope(url,[{location_code:2840,location_name:'United States',location_type:'Country',country_iso_code:'US'},{location_code:2826,location_name:'United Kingdom',location_type:'Country',country_iso_code:'GB'}]);}
    if(url===aiSearchEndpoints.languages){free++;return envelope(url,[{language_code:'en',language_name:'English'}]);}
    if(url===aiSearchEndpoints.reconciliation){free++;const data=JSON.parse(String(options?.body))[0],rows=[];for(const receipt of receipts.values()){const runId=receipt.metadata.tag.slice('ten98:ai-search:'.length),row=(await pool.query('SELECT dispatched_at FROM ai_search_run WHERE id=$1',[runId])).rows[0];if(!row?.dispatched_at)continue;const posted=(row.dispatched_at as Date).toISOString().slice(0,19).replace('T',' ')+' +00:00';if(posted<data.datetime_from||posted>data.datetime_to)continue;rows.push({...receipt,status:'20000',url:path(aiSearchEndpoints.live).join('/'),datetime_posted:posted});}return envelope(url,rows,data);}
-   assert.equal(url,aiSearchEndpoints.live);paid++;
+   assert.equal(url,aiSearchEndpoints.live);paid++;if(duringSend)await duringSend();
    // A provider refusal has a known outcome without a task reference.
    if(mode==='wallet')return Response.json({status_code:40200,status_message:'Synthetic provider refusal.',tasks_count:0,tasks_error:0,tasks:null});
    const metadata=JSON.parse(String(options?.body))[0],receipt={id:randomUUID(),metadata};receipts.set(metadata.tag,receipt);if(mode==='lost')throw Error('Synthetic lost response.');
@@ -121,6 +121,47 @@ export async function runAiSearchChecks(){
    assert.equal((await pool.query("SELECT count(*)::int AS n FROM provider_request WHERE status='uncertain'")).rows[0].n,0);assert.equal((await pool.query('SELECT COALESCE((SELECT paused FROM workspace_provider_control WHERE workspace_id=$1),false) AS paused',[workspace])).rows[0].paused,false);
    const afterWallet=await prepare(),afterStart=await startAiSearch(afterWallet.pid,owner,{requestId:randomUUID(),preparationId:afterWallet.quoted.preparation.id});assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[afterStart.run.id])).rows[0].status,'reserved');assert.equal(paid,walletPaid+1);assert.equal(outbound,0);
    console.log('PASS provider refusal has a settled failed request and fixed text, nothing uncertain, and the next start reserves');
+  const isolation=await prepare(),pid=isolation.pid;
+  const addPrompt=async(text:string)=>{
+   const promptId=randomUUID(),versionId=randomUUID(),client=await pool.connect();
+   try{await client.query('BEGIN');await client.query('INSERT INTO project_prompt(id,project_id,current_version_id)VALUES($1,$2,$3)',[promptId,pid,versionId]);await client.query('INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by)VALUES($1,$2,$3,1,$4,lower($4),$5)',[versionId,pid,promptId,text,owner]);await client.query('COMMIT');return {promptId,versionId};}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  };
+  const prepareRelated=async(overrides:Partial<typeof isolation.input>={})=>(await prepareAiSearch(pid,owner,{...isolation.input,...overrides,requestId:randomUUID()},send)).preparation;
+  const startRelated=(preparationId:string,requestId=randomUUID())=>startAiSearch(pid,owner,{requestId,preparationId});
+  const originalStart={requestId:randomUUID(),preparationId:isolation.quoted.preparation.id},unknownA=await startAiSearch(pid,owner,originalStart);
+  mode='lost';await executeAiSearch(unknownA.run.id,send);mode='ok';
+  const differentPrompt=await addPrompt('Independent synthetic research'),quoteB=await prepareRelated(differentPrompt),unknownB=await startRelated(quoteB.id);
+  mode='lost';await executeAiSearch(unknownB.run.id,send);mode='ok';
+  const unknownIds=[unknownA.run.id,unknownB.run.id],unknownRows=async()=> (await pool.query('SELECT id,status,provider_reference,connection_revision,input_hash FROM provider_request WHERE id=ANY($1::uuid[]) ORDER BY id',[unknownIds])).rows;
+  const originalUnknowns=await unknownRows();assert.ok(originalUnknowns.every(r=>r.status==='uncertain'));
+  const hashA=(await pool.query('SELECT business_input_hash FROM ai_search_quote WHERE id=$1',[originalStart.preparationId])).rows[0].business_input_hash;assert.match(hashA,/^[a-f0-9]{64}$/);
+  const duplicate=await prepareRelated();assert.equal((await pool.query('SELECT business_input_hash FROM ai_search_quote WHERE id=$1',[duplicate.id])).rows[0].business_input_hash,hashA);
+  await assert.rejects(startRelated(duplicate.id),{status:409});await assert.rejects(startRelated(originalStart.preparationId),{status:409});assert.equal((await startAiSearch(pid,owner,originalStart)).run.id,unknownA.run.id);
+  const copiedPrompt=await addPrompt('Acme C++ %20'),copied=await prepareRelated(copiedPrompt);await assert.rejects(startRelated(copied.id),{status:409});
+  const otherConnection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic alternate identity',credentials:{login:'search@example.invalid',password:'synthetic-alternate'}})).connection.id;
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[otherConnection]);const otherCatalog=await refreshAiSearchCatalog(pid,owner,{connectionId:otherConnection},send),otherQuote=await prepareRelated({connectionId:otherConnection,expectedCatalogRevision:otherCatalog.catalog.revision});await assert.rejects(startRelated(otherQuote.id),{status:409});
+  const market=await prepareRelated({locationCode:2826}),third=await startRelated(market.id),beforeThird=paid;await executeAiSearch(third.run.id,send);assert.equal(paid,beforeThird+1);assert.equal((await getAiSearchRun(pid,owner,third.run.id)).run.status,'completed');assert.deepEqual(await unknownRows(),originalUnknowns);
+  const concurrentQuotes=[await prepareRelated({locationCode:2826}),await prepareRelated({...differentPrompt,locationCode:2826})],concurrentBodies=concurrentQuotes.map(q=>({requestId:randomUUID(),preparationId:q.id}));
+  const concurrent=await Promise.allSettled(concurrentBodies.map(body=>startAiSearch(pid,owner,body))),winner=concurrent.findIndex(result=>result.status==='fulfilled'),loser=1-winner;
+  assert.equal(concurrent.filter(result=>result.status==='fulfilled').length,1);const refusal=concurrent[loser];assert.equal(refusal.status,'rejected');if(refusal.status==='rejected')assert.equal(refusal.reason.status,409);
+  const admitted=concurrent[winner];assert.equal(admitted.status,'fulfilled');if(admitted.status!=='fulfilled')throw Error('Expected one admitted start.');
+  duringSend=async()=>{await assert.rejects(startAiSearch(pid,owner,concurrentBodies[loser]),{status:409});};
+  const beforeConcurrent=paid;try{await Promise.all([executeAiSearch(admitted.value.run.id,send),executeAiSearch(admitted.value.run.id,send)]);}finally{duringSend=undefined;}assert.equal(paid,beforeConcurrent+1);
+  const untouched={paid,free};for(const id of unknownIds)await executeAiSearch(id,send);assert.deepEqual({paid,free},untouched);assert.deepEqual(await unknownRows(),originalUnknowns);
+  await assert.rejects(startAiSearch(pid,viewer,{requestId:randomUUID(),preparationId:market.id}),{status:403});await assert.rejects(startAiSearch(pid,randomUUID(),{requestId:randomUUID(),preparationId:market.id}),{status:404});await assert.rejects(startAiSearch(firstService.pid,owner,{requestId:randomUUID(),preparationId:market.id}),{status:404});
+  const stale=await prepareRelated({...differentPrompt,locationCode:2826});await saveProvider(workspace,owner,{name:'Synthetic revised credential',credentials:{login:'search@example.invalid',password:'synthetic-revised'}},connectionId);await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[connectionId]);await assert.rejects(startRelated(stale.id),{status:409});
+  const currentCatalog=await refreshAiSearchCatalog(pid,owner,{connectionId},send);isolation.input.expectedCatalogRevision=currentCatalog.catalog.revision;
+  await pool.query("UPDATE ai_search_quote SET raw_expired_at=clock_timestamp() WHERE id=ANY($1::uuid[])",[[originalStart.preparationId,quoteB.id]]);
+  const retention=await pool.connect();try{await retention.query('BEGIN');await expireAiSearch(retention,pid,new Date(Date.now()-86400000));await retention.query('COMMIT');}catch(error){await retention.query('ROLLBACK');throw error;}finally{retention.release();}
+  assert.deepEqual((await pool.query('SELECT input,business_input_hash FROM ai_search_quote WHERE id=$1',[originalStart.preparationId])).rows[0],{input:null,business_input_hash:hashA});await assert.rejects(startRelated((await prepareRelated()).id),{status:409});
+  const afterPurge=await startRelated((await prepareRelated({locationCode:2826})).id);await cancelAiSearch(pid,owner,afterPurge.run.id,{requestId:randomUUID()});
+  // Legacy purged inputs cannot prove that another market is independent of the original.
+  await pool.query('UPDATE ai_search_quote SET business_input_hash=NULL WHERE id=$1',[originalStart.preparationId]);await assert.rejects(startRelated((await prepareRelated({locationCode:2826})).id),{status:409});await assert.rejects(startRelated((await prepareRelated(copiedPrompt)).id),{status:409});
+  const legacyIndependent=await startRelated((await prepareRelated({...differentPrompt,locationCode:2826})).id);await cancelAiSearch(pid,owner,legacyIndependent.run.id,{requestId:randomUUID()});assert.deepEqual(await unknownRows(),originalUnknowns);
+  await pool.query("UPDATE ai_search_run SET dispatched_at=clock_timestamp()-interval '180 seconds' WHERE id=ANY($1::uuid[])",[unknownIds]);const beforeRecovery=paid,recoveryBody={requestId:randomUUID(),connectionId};
+  const recoveredA=await recoverAiSearch(pid,owner,unknownA.run.id,recoveryBody,send);assert.equal(recoveredA.run.requestStatus,'settled');assert.equal(recoveredA.run.result,null);assert.equal((await recoverAiSearch(pid,owner,unknownA.run.id,recoveryBody,send)).replayed,true);assert.equal((await getAiSearchRun(pid,owner,unknownB.run.id)).run.requestStatus,'uncertain');
+  await executeAiSearch(unknownA.run.id,send);await executeAiSearch(unknownB.run.id,send);assert.equal(paid,beforeRecovery);assert.equal(outbound,0);
+  console.log('PASS same-project independent work, two unknown originals, immutable business duplicates, concurrent serialization, tenant/credential fences, purged identities and original-only recovery');
  }finally{await stopJobs();globalThis.fetch=original;assert.equal(outbound,0);}
 }
 if(import.meta.main&&process.env.TEN98_AI_SEARCH_TEST==='1'){try{await runAiSearchChecks();}finally{await closeDatabase();}}
