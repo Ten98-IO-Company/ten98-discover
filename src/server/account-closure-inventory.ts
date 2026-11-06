@@ -188,6 +188,8 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'provider_connection', rule: 'keep', columns: ['name', 'encrypted_credentials'], reason: keepWorkspace },
   { table: 'google_connection', rule: 'keep', columns: ['name', 'encrypted_tokens', 'property_name'],
     reason: 'Workspace-owned reporting connection; owners disconnect it. Member removal and closure leave it in service.' },
+  { table: 'cloudflare_connection', rule: 'keep', columns: ['created_by', 'name', 'account_id', 'encrypted_credentials'],
+    reason: 'Workspace-owned reporting connection; owners disconnect it. Creator closure removes their authority while retaining the workspace configuration.', retention: workspaceOwned(['created_by']) },
   { table: 'report_template', rule: 'keep', columns: ['name'], reason: keepWorkspace },
   { table: 'saved_keyword_tag', rule: 'keep', columns: ['name', 'normalized_name'], reason: keepWorkspace },
   { table: 'tracked_asset', rule: 'keep', columns: ['name'], reason: keepWorkspace },

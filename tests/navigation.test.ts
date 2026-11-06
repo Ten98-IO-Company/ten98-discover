@@ -467,6 +467,15 @@ test('personal profile preferences are role-independent and preserve only native
   assert.notEqual(navigationKey({view:'preferences'}),navigationKey({view:'security'}));
 });
 
+test('Cloudflare is a project settings read view without credential capabilities in its URL',()=>{
+ const target={workspace,project,view:'cloudflare'} as const,wire=defaultStringifySearch(target);
+ assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('cloudflare'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('cloudflare',role,false),true);
+ assert.equal(allowedView('cloudflare',undefined,false),false);
+ assert.deepEqual(parseNavigation({...target,apiToken:'secret',accountId:'a'.repeat(32),connectionId:workspace,expectedRevision:'1'}),target);
+ assert.notEqual(navigationKey(target),navigationKey({...target,view:'destinations'}));
+});
+
 test('Domain SEO is a project Research view distinct from serving-domain configuration',()=>{
  const target={workspace,project,view:'domain-seo'} as const,wire=defaultStringifySearch(target);
  assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('domain-seo'),true);

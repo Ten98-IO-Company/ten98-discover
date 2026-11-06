@@ -26,6 +26,6 @@ test('modes and campaign tools select their parent tab and list it first',()=>{
 });
 
 test('website setup lives in settings, not in the report sections',()=>{
-  assert.deepEqual(projectSettingsViews,['installation','domains','collection','destinations','context','imports']);
+  assert.deepEqual(projectSettingsViews,['installation','domains','collection','destinations','context','imports','cloudflare']);
   for(const view of projectSettingsViews)assert.equal(sectionOf(view),undefined);
 });
