@@ -50,7 +50,12 @@ export async function runAiOpportunitiesSourceChecks(){
  const read=(f:Fixture,patch:Partial<OpportunitiesScope>={},user=owner,signal?:AbortSignal)=>readOpportunitiesSource(f.project,user,scope(patch),signal);
  try{
   const f=await fixture(),rows=await seed(f,[{citations:[citation('https://acme.com/guide','Owned'),citation('https://beta.com/guide','Competitor'),citation('https://www.reddit.com/r/solar/comments/1','Community'),citation('https://www.google.com/search?q=solar','Search')]},{at:previous+'T12:00:00.000000Z',citations:[citation('https://previous-only.com/a')]}]);
-  const first=await read(f,{},viewer);assert.equal(first.availability,'available');assert.equal(first.snapshot.executions.length,1);assert.equal(first.dependencies[0].executionId,rows[0].id);assert.equal(first.snapshot.citations.length,4);assert.ok(!JSON.stringify(first).includes('previous-only.com'));
+  const first=await read(f,{},viewer);assert.equal(first.availability,'available');
+  assert.deepEqual(first.snapshot.executions.map(execution=>execution.id),[rows[0].id]);
+  assert.deepEqual(first.dependencies.map(dependency=>dependency.executionId),[rows[0].id]);
+  assert.deepEqual(first.snapshot.citations.map(c=>c.url).sort(),[
+   'https://acme.com/guide','https://beta.com/guide','https://www.reddit.com/r/solar/comments/1','https://www.google.com/search?q=solar',
+  ].sort());
   assert.deepEqual(first.snapshot.citations.map(c=>[c.retainedCitationIndex,c.ownership,c.sourceType]).sort((a,b)=>Number(a[0])-Number(b[0])),[[0,'brand','publisher'],[1,'competitor','publisher'],[2,'untracked','publisher'],[3,'untracked','google_search']]);
   assert.equal(first.snapshot.subjects.find(s=>s.id==='brand')!.name,'Acme');assert.equal(first.snapshot.subjects.find(s=>s.id===f.competitor)!.name,'Beta');assert.deepEqual(first.snapshot.executions[0].competitorIds,[f.competitor]);assert.ok(first.warnings.some(w=>w.includes('preceding equal-length')));
   const stored=(await pool.query("SELECT encode(sha256(convert_to(result::text,'UTF8')),'hex') AS hash FROM prompt_execution WHERE id=$1",[rows[0].id])).rows[0];assert.equal(first.dependencies[0].resultHash,stored.hash);
