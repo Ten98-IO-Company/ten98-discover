@@ -5,6 +5,16 @@ import {resolve} from 'node:path';
 import {runInNewContext} from 'node:vm';
 
 // Synthetic adapter/DOM seam only. Actual rrweb geometry remains the separate Edge gate.
+// Advance one native timeout task at a time; cancelled work cannot publish readiness.
+function readinessTimers(){
+ const pending=new Map(),delays=[];let nextId=0,runs=0;
+ return{delays,get size(){return pending.size;},get runs(){return runs;},
+  setTimeout(callback,delay){assert.ok(delay===0||delay===16);assert.equal(pending.size,0,'Only one readiness retry may be pending.');const id=++nextId;pending.set(id,callback);delays.push(delay);return id;},
+  clearTimeout(id){pending.delete(id);},
+  next(){const entry=pending.entries().next().value;assert.ok(entry,'Expected a pending readiness task.');assert.ok(++runs<=120,'Readiness work must remain bounded.');pending.delete(entry[0]);entry[1]();}
+ };
+}
+
 test('historical overlay position commands repaint actual native offsets before delayed scroll events',()=>{
  const asset=readFileSync(resolve('public/replay.js'),'utf8');
  const marker='// App adapter appended inside the private CommonJS closure around pinned rrweb.';
@@ -21,7 +31,7 @@ test('historical overlay position commands repaint actual native offsets before 
  for(const shape of cases)for(const mode of ['click','scroll','replay']){
   const geometry={basis:'document-css-v1',...shape},maxX=shape.pageWidth-shape.viewportWidth,maxY=shape.pageHeight-shape.viewportHeight;
   const root={scrollWidth:shape.pageWidth,scrollHeight:shape.pageHeight,clientWidth:shape.viewportWidth,clientHeight:shape.viewportHeight,appendChild(){}};
-  const docListeners={},windowListeners={},frames=[],messages=[],observers=[],replayerListeners={};
+  const docListeners={},windowListeners={},timers=readinessTimers(),messages=[],observers=[],replayerListeners={};
   let destroyed=0,scrollCalls=0;
   const element=tag=>({tag,style:{},attributes:{},children:[],setAttribute(k,v){this.attributes[k]=v;},appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}});
   const wrapper=element('wrapper');
@@ -39,7 +49,7 @@ test('historical overlay position commands repaint actual native offsets before 
   const parent={},port={postMessage:value=>messages.push(JSON.parse(JSON.stringify(value))),start(){},close(){},onmessage:null};
   const document={currentScript:{getAttribute:()=> 'player'},body:{style:{}},createElementNS:(_ns,tag)=>element(tag)};
   const context={module:{exports:{Replayer}},document,window:{parent},parent,innerWidth:800,innerHeight:500,TextEncoder,
-   addEventListener:(type,fn)=>{windowListeners[type]=fn;},removeEventListener(){},requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},cancelAnimationFrame(){},clearInterval(){},setInterval(){return 1;},
+   addEventListener:(type,fn)=>{windowListeners[type]=fn;},removeEventListener(){},setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,clearInterval(){},setInterval(){return 1;},
    MutationObserver:class{observe(){}disconnect(){}},ResizeObserver:class{constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){this.disconnected=true;}}};
   runInNewContext('(function(){'+source+'\n})();',context,{timeout:1000});
   const points=[{x:shape.pageWidth-80,y:shape.pageHeight-80,count:1}],bands=Array.from({length:10},(_,i)=>({depth:(i+1)*10,captures:10-i}));
@@ -50,9 +60,9 @@ test('historical overlay position commands repaint actual native offsets before 
   ]},ports:[port]});
   // Synthetic delayed vendor Finish: paused end-seek must not publish playback state in static heatmap mode.
   assert.equal(typeof replayerListeners.finish,'function');
-  if(mode==='replay'){assert.deepEqual(messages,[{type:'ready',duration:1}]);replayerListeners.finish();assert.deepEqual(messages,[{type:'ready',duration:1},{type:'ended'}]);assert.equal(frames.length,0);port.onmessage({data:{type:'destroy'}});assert.equal(destroyed,1);continue;}
+  if(mode==='replay'){assert.deepEqual(messages,[{type:'ready',duration:1}]);replayerListeners.finish();assert.deepEqual(messages,[{type:'ready',duration:1},{type:'ended'}]);assert.equal(timers.size,0);port.onmessage({data:{type:'destroy'}});assert.equal(destroyed,1);continue;}
   replayerListeners.finish();assert.deepEqual(messages,[],'Static end-seek completion must not precede geometry readiness.');
-  assert.equal(frames.length,1);frames.shift()();
+  assert.equal(timers.size,1);timers.next();
   assert.deepEqual(messages,[{type:'ready',duration:1}]);replayerListeners.finish();assert.deepEqual(messages,[{type:'ready',duration:1}],'Static preview must not emit playback-ended after readiness either.');assert.equal(observers.length,1);
   const svg=wrapper.children[0];assert.match(svg.style.cssText,/^position:absolute;left:2px;top:2px;/,'The plane starts at the frame viewport origin, past the iframe border.');
   const check=()=>{
@@ -98,7 +108,7 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
   // classic: a real scrollbar occupies the gutter, so the recorded viewport and the client box are both narrower; otherwise the gutter is reserved behind hidden scrollbars and only the initial containing block shrinks.
   const client=classic?1440-gutter:1440,geometry={basis:'document-css-v1',direction,pageWidth:exact?2400*zoom:(zoom===2?5085:2542),pageHeight:exact?3000*zoom:3200*zoom,viewportWidth:client,viewportHeight:900};
   let naturalWidth=2400*zoom,naturalHeight=3000*zoom,destroyed=0;if(fault==='oversized')naturalWidth=geometry.pageWidth+1;
-  const frames=[],messages=[],observers=[],mutations=[],markers=[],listeners={},docListeners={},events={};
+  const timers=readinessTimers(),messages=[],observers=[],mutations=[],markers=[],listeners={},docListeners={},events={};
   const css=()=>({direction,writingMode:'horizontal-tb',scrollbarWidth:'none',transform:'none',perspective:'none',rotate:'none',scale:'none',translate:'none',animationName:'none',transitionDuration:'0s'});
   const view={scrollX:0,scrollY:0,innerWidth:metaWidth,innerHeight:metaHeight,getComputedStyle(node){const s=css();s.position=node===fixed?'fixed':'static';if(node===root){if(fault==='scrollbar')s.scrollbarWidth='auto';if(fault==='root-transform')s.transform='matrix(1,0,0,1,1,0)';if(fault==='writing-mode')s.writingMode='vertical-rl';}if(node===body&&fault==='body-transform')s.scale='2';if(node===body&&['body-scroller','body-scrolled'].includes(fault))s.overflowY='auto';if(node===plane){if(fault==='child-transform')s.transform='matrix(1,0,0,1,1,0)';if(fault==='animation')s.animationName='moving';if(fault==='transition')s.transitionDuration='0.2s';}return s;},scrollTo(x,y){this.scrollX=Math.max(direction==='rtl'?-(geometry.pageWidth-geometry.viewportWidth):0,Math.min(direction==='rtl'?0:geometry.pageWidth-geometry.viewportWidth,x));this.scrollY=Math.max(0,Math.min(geometry.pageHeight-geometry.viewportHeight,y));}};
   const rect=(left,top,width,height)=>({left,top,width,height,right:left+width,bottom:top+height});
@@ -119,13 +129,13 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
   const wrapper=element('wrapper'),iframe={width:String(metaWidth),height:String(metaHeight),offsetLeft:0,offsetTop:0,clientLeft:2,clientTop:2,contentDocument:innerDoc,contentWindow:view,addEventListener(){}};
   class Replayer{constructor(){this.iframe=iframe;this.wrapper=wrapper;}disableInteract(){}enableInteract(){}pause(){}getMirror(){return{getId:()=>mirror?1:-1,getNode:id=>[root,body,plane,target,fixed][id-2]};}getMetaData(){return{totalTime:1};}on(name,fn){events[name]=fn;}destroy(){destroyed++;}}
   const parent={},port={postMessage:value=>messages.push(JSON.parse(JSON.stringify(value))),start(){},close(){}},outerDoc={currentScript:{getAttribute:()=> 'player'},body:{style:{}},createElementNS:(_ns,tag)=>element(tag)};
-  const context={module:{exports:{Replayer}},document:outerDoc,window:{parent},parent,innerWidth:1440,innerHeight:900,TextEncoder,addEventListener:(name,fn)=>{listeners[name]=fn;},removeEventListener:(name,fn)=>{if(listeners[name]===fn)delete listeners[name];},requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},cancelAnimationFrame(){},clearInterval(){},setInterval(){return 1;},ResizeObserver:class{constructor(callback){this.callback=callback;this.targets=[];observers.push(this);}observe(n){this.targets.push(n);}disconnect(){this.disconnected=true;}},MutationObserver:class{constructor(callback){this.callback=callback;mutations.push(this);}observe(_root,options){this.options=options;}disconnect(){this.disconnected=true;}}};
+  const context={module:{exports:{Replayer}},document:outerDoc,window:{parent},parent,innerWidth:1440,innerHeight:900,TextEncoder,addEventListener:(name,fn)=>{listeners[name]=fn;},removeEventListener:(name,fn)=>{if(listeners[name]===fn)delete listeners[name];},setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,clearInterval(){},setInterval(){return 1;},ResizeObserver:class{constructor(callback){this.callback=callback;this.targets=[];observers.push(this);}observe(n){this.targets.push(n);}disconnect(){this.disconnected=true;}},MutationObserver:class{constructor(callback){this.callback=callback;mutations.push(this);}observe(_root,options){this.options=options;}disconnect(){this.disconnected=true;}}};
   runInNewContext('(function(){'+source+'\n})();',context,{timeout:1000});
   listeners.message({source:parent,data:{type:'ten98-replay-init',protocol:1,events:[{type:4,timestamp:0,data:{width:metaWidth,height:metaHeight}},{type:2,timestamp:1,data:{node:{type:0,childNodes:[root,body,plane,target,fixed].map((n,i)=>({type:2,id:i+2}))},initialOffset:{left:0,top:0},ten98Layout:{version:1,boxes:[root,body,plane,target,fixed].map((n,i)=>{const r=n.getBoundingClientRect();return[i+2,r.left-gutter,r.top,r.width,r.height];})}}}],...replay?{}:{heatmap:{mode:'click',geometry,points:[{x:geometry.pageWidth-80,y:geometry.pageHeight-80,count:1}]}}},ports:[port]});
-  return{geometry,root,body,plane,target,fixed,view,frames,messages,observers,mutations,markers,listeners,port,wrapper,destroyed:()=>destroyed,shrink(){naturalHeight-=50;},naturalRect(n){const r=n.getBoundingClientRect();return[r.left+view.scrollX,r.top+view.scrollY,r.width,r.height];}};
+  return{geometry,root,body,plane,target,fixed,view,timers,messages,observers,mutations,markers,listeners,port,wrapper,destroyed:()=>destroyed,shrink(){naturalHeight-=50;},naturalRect(n){const r=n.getBoundingClientRect();return[r.left+view.scrollX,r.top+view.scrollY,r.width,r.height];}};
  }
  for(const direction of['ltr','rtl'])for(const zoom of[1,2]){
-  const h=scene({direction,zoom}),before=h.naturalRect(h.target);h.frames.shift()();
+  const h=scene({direction,zoom}),before=h.naturalRect(h.target);h.timers.next();
   assert.deepEqual(h.messages,[{type:'ready',duration:1}]);assert.equal(h.markers.length,1);assert.equal(h.root.scrollWidth,h.geometry.pageWidth);assert.equal(h.root.scrollHeight,h.geometry.pageHeight);assert.deepEqual(h.naturalRect(h.target),before,'The empty extent must not move existing content.');
   assert.match(h.wrapper.children[0].style.cssText,/^position:absolute;left:2px;top:2px;/);
   const marker=h.markers[0],r=marker.getBoundingClientRect();assert.equal(r.left+h.view.scrollX,direction==='rtl'?1440-h.geometry.pageWidth:h.geometry.pageWidth-1);assert.equal(r.top+h.view.scrollY,h.geometry.pageHeight-1);assert.equal(r.width,1);assert.equal(r.height,1);assert.equal(marker.children.length,0);assert.equal(marker.attributes['aria-hidden'],'true');
@@ -137,36 +147,37 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
   assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);assert.ok(h.observers.every(o=>o.disconnected));assert.ok(h.mutations.every(o=>o.disconnected));assert.equal(h.messages.at(-1).type,direction==='ltr'&&zoom===2?'ready':'error');const count=h.messages.length;h.mutations[0].callback([{type:'childList',target:h.body}]);assert.equal(h.messages.length,count,'Queued callbacks after teardown must be harmless.');
  }
  for(const fault of['body-scroller','body-scrolled','root-transform','body-transform','writing-mode','child-transform','animation','transition','selector-shift','axes','oversized','node-cap','quirks','shadow-root']){
-  const h=scene({fault});h.frames.shift()();assert.equal(h.messages.at(-1).type,'error',fault);assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);
+  const h=scene({fault});h.timers.next();assert.equal(h.messages.at(-1).type,'error',fault);assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);
  }
- const exact=scene({exact:true,fault:'child-transform'});exact.frames.shift()();assert.equal(exact.messages.at(-1).type,'error','An exact outer extent does not excuse unsupported interior layout.');assert.equal(exact.markers.length,0);
- for(const fault of['root-transform','writing-mode','body-scroller','body-scrolled']){const h=scene({exact:true,fault});h.frames.shift()();assert.equal(h.messages.at(-1).type,'error');assert.equal(h.markers.length,0);}
+ const exact=scene({exact:true,fault:'child-transform'});exact.timers.next();assert.equal(exact.messages.at(-1).type,'error','An exact outer extent does not excuse unsupported interior layout.');assert.equal(exact.markers.length,0);
+ for(const fault of['root-transform','writing-mode','body-scroller','body-scrolled']){const h=scene({exact:true,fault});h.timers.next();assert.equal(h.messages.at(-1).type,'error');assert.equal(h.markers.length,0);}
  for(const exact of[false,true]){
-  const h=scene({exact,fault:'scrollbar'}),before=h.naturalRect(h.target);h.frames.shift()();
+  const h=scene({exact,fault:'scrollbar'}),before=h.naturalRect(h.target);h.timers.next();
   assert.equal(h.view.getComputedStyle(h.root).scrollbarWidth,'auto');assert.deepEqual(h.messages,[{type:'ready',duration:1}]);assert.equal(h.markers.length,exact?0:1);assert.equal(h.root.scrollWidth,h.geometry.pageWidth);assert.equal(h.root.scrollHeight,h.geometry.pageHeight);assert.deepEqual(h.naturalRect(h.target),before,'Native default scrollbar styling cannot move the restored content.');
   h.shrink();h.port.onmessage({data:{type:'heatmap-position',axis:'y',value:0}});assert.equal(h.messages.at(-1).type,'error','Default scrollbar styling retains the exact natural-drift fence.');assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);
  }
  for(const exact of[false,true]){
-  const h=scene({direction:'ltr',exact,fault:'scrollbar',metaWidth:1455,metaHeight:915}),before=h.naturalRect(h.target);h.frames.shift()();
+  const h=scene({direction:'ltr',exact,fault:'scrollbar',metaWidth:1455,metaHeight:915}),before=h.naturalRect(h.target);h.timers.next();
   assert.deepEqual(h.messages,[{type:'ready',duration:1}]);assert.equal(h.root.clientWidth,1440);assert.equal(h.root.clientHeight,900);assert.deepEqual(h.naturalRect(h.target),before,'A larger native Meta frame retains exact client geometry and content placement.');
   h.shrink();h.port.onmessage({data:{type:'heatmap-position',axis:'y',value:0}});assert.equal(h.messages.at(-1).type,'error');assert.equal(h.markers.length,0);
  }
  for(const metadata of[{metaWidth:1439},{metaHeight:899},{metaWidth:0},{metaWidth:20001},{metaWidth:1455.5}]){
-  const h=scene({exact:true,...metadata});h.frames.shift()?.();assert.equal(h.messages.at(-1).type,'error','Narrower, nonpositive, over-limit or noninteger Meta cannot admit a background.');assert.equal(h.markers.length,0);
+  const h=scene({exact:true,...metadata});if(h.timers.size)h.timers.next();assert.equal(h.messages.at(-1).type,'error','Narrower, nonpositive, over-limit or noninteger Meta cannot admit a background.');assert.equal(h.markers.length,0);
  }
  // A classic scrollbar drawn on the left of the replay frame shifts the whole document 15 client px and narrows the client box like the recording did; the recorded top-level viewport had no such offset.
  for(const direction of['ltr','rtl'])for(const exact of[false,true]){
-  const h=scene({direction,exact,gutter:15,classic:true}),before=h.naturalRect(h.target);h.frames.shift()();
+  const h=scene({direction,exact,gutter:15,classic:true}),before=h.naturalRect(h.target);h.timers.next();
   assert.deepEqual(h.messages,[{type:'ready',duration:1}],direction+' gutter');assert.equal(h.markers.length,exact?0:1);assert.equal(h.root.scrollWidth,h.geometry.pageWidth);assert.equal(h.root.scrollHeight,h.geometry.pageHeight);assert.deepEqual(h.naturalRect(h.target),before);
   if(!exact){const r=h.markers[0].getBoundingClientRect();assert.equal(r.left+h.view.scrollX,15+(direction==='rtl'?h.geometry.viewportWidth-h.geometry.pageWidth:h.geometry.pageWidth-1));assert.equal(r.top+h.view.scrollY,h.geometry.pageHeight-1);}
   assert.match(h.wrapper.children[0].style.cssText,/^position:absolute;left:17px;top:2px;/,'The plane follows the measured in-frame viewport origin, not client (0,0).');
   h.port.onmessage({data:{type:'destroy'}});assert.equal(h.markers.length,0);
  }
  // A gutter reserved behind hidden scrollbars narrows the initial containing block while clientWidth still reads the recorded 1440: no origin can repair that frame, so it fails closed.
- for(const direction of['ltr','rtl'])for(const exact of[false,true]){const h=scene({direction,exact,gutter:15});h.frames.shift()();assert.equal(h.messages.at(-1).type,'error',direction+' reserved gutter');assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);}
- const waiting=scene({mirror:false});for(let i=0;i<120&&waiting.frames.length;i++)waiting.frames.shift()();assert.equal(waiting.messages.at(-1).type,'error');assert.equal(waiting.markers.length,0,'A transient document outside the rebuilt rrweb mirror must never receive an extent.');
- const added=scene({exact:true});added.frames.shift()();assert.equal(added.messages.at(-1).type,'ready');const beforeAdded=added.naturalRect(added.target);added.mutations[0].callback([{type:'childList',target:added.body}]);assert.deepEqual(added.naturalRect(added.target),beforeAdded);assert.equal(added.messages.at(-1).type,'error','An untracked absolute insertion must refuse an exact-extent background even when all old boxes stay unchanged.');
- const ordinary=scene({replay:true,fault:'root-transform'});assert.deepEqual(ordinary.messages,[{type:'ready',duration:1}]);assert.equal(ordinary.frames.length,0);assert.equal(ordinary.markers.length,0);ordinary.port.onmessage({data:{type:'destroy'}});
+ for(const direction of['ltr','rtl'])for(const exact of[false,true]){const h=scene({direction,exact,gutter:15});h.timers.next();assert.equal(h.messages.at(-1).type,'error',direction+' reserved gutter');assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);}
+ const waiting=scene({mirror:false});for(let i=0;i<120&&waiting.timers.size;i++)waiting.timers.next();assert.equal(waiting.messages.at(-1).type,'error');assert.equal(waiting.markers.length,0,'A transient document outside the rebuilt rrweb mirror must never receive an extent.');assert.equal(waiting.timers.runs,120);assert.equal(waiting.timers.size,0);assert.equal(waiting.destroyed(),1);assert.deepEqual(waiting.timers.delays,[0,...Array(119).fill(16)]);
+ for(const retry of[false,true]){const h=scene({mirror:false});assert.deepEqual(h.messages,[]);assert.deepEqual(h.timers.delays,[0]);if(retry){h.timers.next();assert.deepEqual(h.messages,[]);assert.deepEqual(h.timers.delays,[0,16]);}assert.equal(h.timers.size,1);h.port.onmessage({data:{type:'destroy'}});assert.equal(h.timers.size,0,'Destroy cancels initial and retry readiness tasks.');assert.equal(h.destroyed(),1);assert.deepEqual(h.messages,[]);assert.equal(h.markers.length,0);assert.equal(h.wrapper.children.length,0);}
+ const added=scene({exact:true});added.timers.next();assert.equal(added.messages.at(-1).type,'ready');const beforeAdded=added.naturalRect(added.target);added.mutations[0].callback([{type:'childList',target:added.body}]);assert.deepEqual(added.naturalRect(added.target),beforeAdded);assert.equal(added.messages.at(-1).type,'error','An untracked absolute insertion must refuse an exact-extent background even when all old boxes stay unchanged.');
+ const ordinary=scene({replay:true,fault:'root-transform'});assert.deepEqual(ordinary.messages,[{type:'ready',duration:1}]);assert.equal(ordinary.timers.size,0);assert.equal(ordinary.markers.length,0);ordinary.port.onmessage({data:{type:'destroy'}});
 });
 
 
