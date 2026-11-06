@@ -184,5 +184,5 @@ function Controller(props:Props){
   const {matcher:_,...scope}=snapshot.filters;
   content=mode==='comparison'?<AIComparisonPanel {...common} filters={snapshot.filters}/>:mode==='citations'?<CitationAnalysisPanel {...common} filters={scope}/>:<CitationSpecializationsPanel {...common} filters={scope}/>;
  }
- return <div className="stack" style={{minWidth:0}}><SectionNav label="API model reports" items={navItems} wrap onSelect={(item,event)=>{event.preventDefault();navigateMode(item.id as AIInsightsMode);}}/>{content}</div>;
+ return <div className="stack" style={{minWidth:0}}><SectionNav label="API model reports" items={navItems} onSelect={(item,event)=>{event.preventDefault();navigateMode(item.id as AIInsightsMode);}}/>{content}</div>;
 }
