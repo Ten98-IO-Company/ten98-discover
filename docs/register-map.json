@@ -965,6 +965,12 @@
       ]
     },
     "P76": {
+      "routes": [
+        "GET /api/projects/{projectId}/cloudflare/connections",
+        "POST /api/projects/{projectId}/cloudflare/connections",
+        "POST /api/projects/{projectId}/cloudflare/connections/disconnect",
+        "POST /api/projects/{projectId}/cloudflare/connections/check"
+      ],
       "migrations": [
         "0015_google_imports",
         "0025_meta_auth",
@@ -976,7 +982,8 @@
         "0046_ga4_report_inventory",
         "0049_google_organic_reports",
         "0053_ga4_commerce_reports",
-        "0064_remove_meta_google_ads"
+        "0064_remove_meta_google_ads",
+        "0085_cloudflare_connections"
       ]
     },
     "P77": {

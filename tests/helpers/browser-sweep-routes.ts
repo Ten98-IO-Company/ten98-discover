@@ -67,6 +67,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   component('tests/citation-specializations-browser.mjs', ['TEN98_CITATION_SPECIALIZATIONS_BROWSER']),
   component('tests/citation-specializations-view-browser.mjs', ['TEN98_SPECIALIZED_CITATION_VIEW_BROWSER']),
   component('tests/citation-view-browser.mjs', ['TEN98_CITATION_VIEW_BROWSER']),
+  component('tests/cloudflare-connections-browser.ts', ['TEN98_CLOUDFLARE_BROWSER']),
   component('tests/cohorts-browser.mjs', ['TEN98_COHORTS_BROWSER']),
   component('tests/context-tabs-browser.ts', ['TEN98_CONTEXT_TABS_BROWSER']),
   component('tests/site-analysis-browser.ts', ['TEN98_SITE_ANALYSIS_BROWSER']),
