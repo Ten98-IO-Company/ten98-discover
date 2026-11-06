@@ -813,6 +813,11 @@
         "0053_ga4_commerce_reports"
       ]
     },
+    "P61": {
+      "migrations": [
+        "0086_project_assistant"
+      ]
+    },
     "P62": {
       "migrations": [
         "0010_reports"

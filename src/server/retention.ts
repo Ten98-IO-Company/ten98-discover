@@ -17,6 +17,7 @@ import {expireSiteAuditScheduleHistory} from './site-audit-recurring.ts';
 import { expireSiteAuditData, previewSiteAuditRetention } from './site-audit-retention.ts';
 import {expireSessionProperties,latchSessionPropertyRetention} from './session-property-retention.ts';
 import {expireIdentityLinks,latchIdentityLinkRetention} from './identity-links.ts';
+import {expireAssistantPayloads,previewAssistantRetention} from './project-assistant-retention.ts';
 
 const days = z.number().int().min(1).max(3650);
 export const retentionSettingsInput = z.object({ rawAnalyticsDays: days, replayDays: days, rawProviderEvidenceDays: days, derivedHistoryDays: days }).strict();
@@ -81,6 +82,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     let aiSearchEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;protected:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,protected:null,atLeast:false};
     let contentSupportEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let opportunitiesEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
+    let assistantEstimate:{status:'available'|'unavailable';payloads:number|null;atLeast:boolean}={status:'unavailable',payloads:null,atLeast:false};
     let redirectEstimate:{status:'available'|'unavailable';checks:number|null;atLeast:boolean}={status:'unavailable',checks:null,atLeast:false};
     let auditEstimate: { status: 'available' | 'unavailable'; rawRuns: number | null; rawPages: number | null; rawEdges: number | null; derivedRuns: number | null; derivedPages: number | null; atLeast: boolean } =
       { status: 'unavailable', rawRuns: null, rawPages: null, rawEdges: null, derivedRuns: null, derivedPages: null, atLeast: false };
@@ -146,12 +148,13 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       auditEstimate = await previewSiteAuditRetention(client, workspaceId, { rawCutoff: rawEvidenceCutoff, derivedCutoff });
       contentSupportEstimate=await previewContentSupportRetention(client,workspaceId,input.settings.rawProviderEvidenceDays,input.settings.derivedHistoryDays);
       opportunitiesEstimate=await previewOpportunitiesRetention(client,workspaceId,input.settings.rawProviderEvidenceDays,input.settings.derivedHistoryDays);
+      assistantEstimate=await previewAssistantRetention(client,workspaceId,input.settings.derivedHistoryDays);
     } catch (error) {
       await client.query('ROLLBACK TO SAVEPOINT estimate');
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, replayEstimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, opportunitiesEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, replayEstimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, opportunitiesEstimate, assistantEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -178,6 +181,8 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
       to_char((instant-$2::integer*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ai_search_cutoff
       FROM (SELECT clock_timestamp() AS instant) clock`,[Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays),Math.min(rows[0].raw_provider_evidence_days,s.rawProviderEvidenceDays)])).rows[0];
     const saveNow=saveClock.now as Date;
+    await client.query(`UPDATE project SET assistant_payload_retained_from=GREATEST(assistant_payload_retained_from,
+      $2::timestamptz-$3::integer*interval '24 hours') WHERE workspace_id=$1`,[workspaceId,saveNow,Math.min(rows[0].derived_history_days,s.derivedHistoryDays)]);
     await client.query('UPDATE tracked_asset SET retained_from=GREATEST(retained_from,$2::timestamptz),next_cleanup_at=clock_timestamp() WHERE workspace_id=$1',[workspaceId,saveClock.link_cutoff]);
     await client.query('UPDATE project SET replay_retained_from=GREATEST(replay_retained_from,$2::timestamptz) WHERE workspace_id=$1',[workspaceId,new Date(saveNow.getTime()-Math.min(rows[0].replay_days,s.replayDays)*86400000)]);
     await latchSessionPropertyRetention(client,projects.rows.map(p=>p.id),new Date(saveNow.getTime()-Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)*86_400_000),saveNow);
@@ -301,11 +306,12 @@ export async function runRetentionBatch(projectId?: string) {
     const aiSearch=await expireAiSearch(client,selected!,state.raw_evidence_cutoff);
     const contentSupport=await expireContentSupport(client,selected!);
     const opportunities=await expireOpportunities(client,selected!);
+    const assistant=await expireAssistantPayloads(client,selected!,state.derived_cutoff);
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const auditScheduleHistory = await expireSiteAuditScheduleHistory(client,selected!,state.derived_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !heatmapBackgroundPending && !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !opportunities.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending && !auditScheduleHistory.pending;
+    const complete = !assistant.pending && !heatmapBackgroundPending && !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !opportunities.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending && !auditScheduleHistory.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
@@ -317,6 +323,7 @@ export async function runRetentionBatch(projectId?: string) {
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,
       expiredContentSupportInputs:contentSupport.expiredContentSupportInputs,expiredContentSupportResults:contentSupport.expiredContentSupportResults,
       expiredOpportunityInputs:opportunities.expiredOpportunityInputs,expiredOpportunityResults:opportunities.expiredOpportunityResults,
+      expiredAssistantPayloads:assistant.expiredPayloads,
       expiredSessionProperties:profiles.expiredProperties,expiredIdentifyReceipts:profiles.expiredReceipts,
       expiredIdentityLinks:links.expiredIdentityLinks,
       expiredRankRuns: ranks.expiredRankRuns, expiredRankTasks: ranks.expiredRankTasks, clearedRankEvidence: ranks.clearedRankEvidence, expiredRankKeywordMetrics: ranks.expiredRankKeywordMetrics,

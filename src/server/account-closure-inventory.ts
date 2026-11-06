@@ -135,6 +135,9 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'account_closure_audit', rule: 'keep', columns: ['user_id', 'actor_user_id', 'reason'], reason: 'The closure security event: account ids, kind and an operator reason only.', retention: audit(['user_id', 'actor_user_id']) },
 
   // Shares and authored workspace content stay with the workspace; the creator id shows as "Closed account".
+  { table: 'assistant_conversation', rule: 'keep', columns: ['created_by'], reason: 'Workspace-owned conversation identity; the creator resolves to a closed-account tombstone.', retention: workspaceOwned(['created_by']) },
+  { table: 'assistant_event', rule: 'keep', columns: ['actor_id','payload_sha256'], reason: 'Immutable workspace-owned message provenance retained with its project; the author resolves to a tombstone.', retention: workspaceOwned(['actor_id']) },
+  { table: 'assistant_event_payload', rule: 'keep', columns: ['exact_text'], reason: 'Workspace-owned exact user text; derived-history retention deletes payloads independently of immutable message headers.' },
   { table: 'project_share', rule: 'keep', columns: ['token_hash', 'created_by', 'label'], reason: 'Workspace-owned share; access never resolves through the creator, and listings show the tombstone name.', retention: workspaceOwned(['created_by']) },
   { table: 'tracking_revision', rule: 'keep', columns: ['created_by', 'configuration'], reason: keepContent, retention: workspaceOwned(['created_by']) },
   { table: 'analytics_annotation', rule: 'keep', columns: ['user_id', 'note'], reason: keepContent, retention: workspaceOwned(['user_id']) },
