@@ -8,7 +8,7 @@ import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 import {isOidcReturnCode,type OidcReturnCode} from './auth-messages.ts'
 
-export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'google-app', 'identity-providers', 'diagnostics', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'cloudflare', 'google-app', 'identity-providers', 'diagnostics', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type ReportNavigation={reportQuery?:string;reportInvalid?:'1'};
 export type ReportIntent={kind:'report'|'template';id?:string;revision?:number;preview?:boolean};
@@ -58,12 +58,13 @@ export function conversionNavigation(raw:Record<string,unknown>):ConversionNavig
 export type ProviderIntent = 'openrouter' | 'dataforseo'
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
-export type AIInsightsMode='summary'|'comparison'|'citations'|'specialized';
-export type AIInsightsNavigation={aiInsightsMode?:AIInsightsMode;aiInsightsQuery?:string;aiInsightsInvalid?:'1'};
+export type AIInsightsMode='summary'|'comparison'|'citations'|'specialized'|'recommendations';
+export type AIRecommendationsCategory='all'|'creation'|'existing-content'|'outreach'|'social';
+export type AIInsightsNavigation={aiInsightsMode?:AIInsightsMode;aiInsightsQuery?:string;aiRecommendationsRun?:string;aiRecommendationsCategory?:AIRecommendationsCategory;aiInsightsInvalid?:'1'};
 export function aiInsightsNavigation(raw:Record<string,unknown>):AIInsightsNavigation{
- const mode=raw.aiInsightsMode,query=raw.aiInsightsQuery;
- if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.aiInsightsInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','aiInsightsMode','aiInsightsQuery','aiInsightsInvalid'].includes(key))||mode!==undefined&&!['summary','comparison','citations','specialized'].includes(mode as string)||query!==undefined&&(typeof query!=='string'||!query.length||query.length>6144||/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(query)))return{aiInsightsInvalid:'1'};
- return{...mode!==undefined&&mode!=='summary'?{aiInsightsMode:mode as AIInsightsMode}:{},...query!==undefined?{aiInsightsQuery:query as string}:{}};
+ const mode=raw.aiInsightsMode,query=raw.aiInsightsQuery,run=raw.aiRecommendationsRun,category=raw.aiRecommendationsCategory;
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.aiInsightsInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','aiInsightsMode','aiInsightsQuery','aiInsightsInvalid','aiRecommendationsRun','aiRecommendationsCategory'].includes(key))||mode!==undefined&&!['summary','comparison','citations','specialized','recommendations'].includes(mode as string)||query!==undefined&&(typeof query!=='string'||!query.length||query.length>6144||/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(query))||(run!==undefined||category!==undefined)&&mode!=='recommendations'||run!==undefined&&!navigationId(run)||category!==undefined&&!['all','creation','existing-content','outreach','social'].includes(category as string))return{aiInsightsInvalid:'1'};
+ return{...mode!==undefined&&mode!=='summary'?{aiInsightsMode:mode as AIInsightsMode}:{},...query!==undefined?{aiInsightsQuery:query as string}:{},...run!==undefined?{aiRecommendationsRun:(run as string).toLowerCase()}:{},...category!==undefined?{aiRecommendationsCategory:category as AIRecommendationsCategory}:{}};
 }
 export type AISearchNavigation={aiSearchQuery?:string;aiSearchInvalid?:'1'};
 export type AISearchIntent={section:'analysis'|'captures';tab:'prompts'|'top'|'words';filters:AiQueryFilters;captureId:string|null;create:boolean};
@@ -324,7 +325,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'keywords', 'diagnostics', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'cloudflare', 'keywords', 'diagnostics', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {

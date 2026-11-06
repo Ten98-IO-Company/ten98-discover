@@ -40,7 +40,11 @@ test('saved prompt navigation retains read-only history and exact receipt identi
 
 test('API model report modes preserve exact scope through reload and history without leaking to siblings',()=>{
  const base={workspace,project,view:'ai-insights'} as const,aiInsightsQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',model:'',promptId:project,tag:'true',matcher:'unicode-boundary-v1'}).toString();
- for(const aiInsightsMode of ['comparison','citations','specialized'] as const){const target={...base,aiInsightsMode,aiInsightsQuery},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.deepEqual(parseNavigation({...target,view:'prompts'}),{workspace,project,view:'prompts'});assert.equal(canonicalNavigation(wire+'&aiInsightsMode=summary',target),false);}
+ for(const aiInsightsMode of ['comparison','citations','specialized','recommendations'] as const){const target={...base,aiInsightsMode,aiInsightsQuery},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.deepEqual(parseNavigation({...target,view:'prompts'}),{workspace,project,view:'prompts'});assert.equal(canonicalNavigation(wire+'&aiInsightsMode=summary',target),false);}
+ const selected={...base,aiInsightsMode:'recommendations' as const,aiInsightsQuery,aiRecommendationsRun:project,aiRecommendationsCategory:'creation' as const};
+ assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(selected))),selected);
+ for(const patch of [{aiInsightsMode:'summary'},{aiInsightsMode:'citations'},{aiRecommendationsRun:'bad'},{aiRecommendationsRun:[project,workspace]},{aiRecommendationsCategory:'other'},{aiRecommendationsCategory:['creation','social']}])assert.equal(parseNavigation({...selected,...patch}).aiInsightsInvalid,'1');
+ assert.equal(canonicalNavigation(defaultStringifySearch(selected)+'&aiRecommendationsRun='+workspace,selected),false);
  assert.deepEqual(parseNavigation({...base,aiInsightsMode:'summary'}),base);
  const invalid={...base,aiInsightsInvalid:'1'};for(const patch of [{aiInsightsMode:'unknown'},{aiInsightsMode:['comparison','citations']},{aiInsightsQuery:[]},{aiInsightsQuery:''},{aiInsightsQuery:'a\0b'},{aiInsightsQuery:'x'.repeat(6145)},{aiInsightsMode:'comparison',project:undefined},{aiInsightsMode:'comparison',capability:'private'}])assert.equal(parseNavigation({...base,...patch}).aiInsightsInvalid,'1');
  assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(invalid))),invalid);
@@ -461,6 +465,15 @@ test('personal profile preferences are role-independent and preserve only native
   }
   assert.deepEqual(parseNavigation({workspace,project,view:'preferences',revenueQuery:'currency=USD',analyticsFrom:'2026-01-01',locale:'ar-SA',theme:'dark',userId:workspace}),{workspace,project,view:'preferences'});
   assert.notEqual(navigationKey({view:'preferences'}),navigationKey({view:'security'}));
+});
+
+test('Cloudflare is a project settings read view without credential capabilities in its URL',()=>{
+ const target={workspace,project,view:'cloudflare'} as const,wire=defaultStringifySearch(target);
+ assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('cloudflare'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('cloudflare',role,false),true);
+ assert.equal(allowedView('cloudflare',undefined,false),false);
+ assert.deepEqual(parseNavigation({...target,apiToken:'secret',accountId:'a'.repeat(32),connectionId:workspace,expectedRevision:'1'}),target);
+ assert.notEqual(navigationKey(target),navigationKey({...target,view:'destinations'}));
 });
 
 test('Domain SEO is a project Research view distinct from serving-domain configuration',()=>{

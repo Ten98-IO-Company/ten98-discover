@@ -10,6 +10,7 @@ import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts
 import {assertSiteAuditAccessKeys,rotateSiteAuditAccessEncryption} from './site-audit-access.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
+import { assertCloudflareCredentialsReadable, rotateCloudflareCredentials } from './cloudflare-connections.ts';
 import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { auditOperatorPaidWorkExport, clearEmailSuppressionAsOperator, setInstanceOperator } from './instance-operators.ts';
 import { closeAccountFromHost } from './account-security.ts';
@@ -54,6 +55,7 @@ async function diagnose(checkWorker: boolean) {
     ['Shopify crawler access keyring', assertSiteAuditAccessKeys],
     ['Identity credential keyring', assertOidcCredentialsReadable],
     ['Google reporting credential keyring', assertGoogleCredentialsReadable],
+    ['Cloudflare reporting credential keyring', assertCloudflareCredentialsReadable],
     ['Provider account recovery keyring', assertProviderAccountIdentityReadable],
     ['Artifact directory', async () => {
       await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
@@ -123,6 +125,7 @@ async function worker() {
     await assertSiteAuditAccessKeys();
     await assertOidcCredentialsReadable();
     await assertGoogleCredentialsReadable();
+    await assertCloudflareCredentialsReadable();
     await assertProviderAccountIdentityReadable();
     await startWorker();
   });
@@ -174,10 +177,11 @@ try {
       const providers = await rotateCredentialEncryption();
       const identities = await rotateOidcCredentials();
       await rotateGoogleCredentials();
+      await rotateCloudflareCredentials();
       await rotateSiteAuditAccessEncryption();
       await rotateProviderAccountIdentityEncryption();
       console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
-      console.log('Google reporting and Shopify crawler access credentials re-encrypted with the active key.');
+      console.log('Google and Cloudflare reporting and Shopify crawler access credentials re-encrypted with the active key.');
       console.log('Provider account recovery keys re-encrypted with the active key.');
       break;
     }

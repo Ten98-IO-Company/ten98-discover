@@ -115,7 +115,11 @@ Upstream curated-list provenance comments, including Wikipedia seed references, 
 
 `src/server/context-input.ts` functions `classificationTerms` and `classifyPrompt` adapt the behavior and structure of [`packages/lib/src/tag-utils.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/packages/lib/src/tag-utils.ts) from Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`. The implementation combines substring classification and explicit user-tag overrides, adds a classifier version, and uses stored project profile aliases. Tests are newly authored synthetic fixtures. Other context and prompt storage/API code is original; no upstream dependency manifest or assets were copied.
 
-Elmo notice, retained with this adaptation:
+### Retained-answer recommendations
+
+The recommendation categories and evidence-led report flow in `src/lib/ai-opportunities.ts`, `src/server/ai-opportunities-input.ts` and `src/components/AIRecommendationsView.tsx` adapt the Opportunities feature from Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b` (MIT, Copyright 2026 Blue Whale Software, LLC). The pinned references are `apps/web/src/server/opportunities.ts`, `apps/web/src/server/opportunities-core.ts` and `apps/web/src/components/opportunities-report.tsx`. Discover uses its own retained API-answer evidence, strict output validation, native request lifecycle and shared Ten98 presentation components. No Elmo branding, customer data or dependency manifest is copied. The MIT notice below applies to this adaptation.
+
+Elmo notice, retained with these adaptations:
 
 > MIT License
 >

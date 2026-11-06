@@ -96,6 +96,9 @@ jobs:
             await client.query('CREATE DATABASE ten98_invitation_email_ci');
             await client.query('CREATE DATABASE ten98_prompt_recurring_ci');
             await client.query('CREATE DATABASE ten98_google_ga4_ci');
+            await client.query('CREATE DATABASE ten98_cloudflare_ci');
+            await client.query('CREATE DATABASE ten98_cloudflare_http_ci');
+            await client.query('CREATE DATABASE ten98_cloudflare_check_ci');
             await client.query('CREATE DATABASE ten98_web_performance_ci');
             await client.query('CREATE DATABASE ten98_session_replay_ci');
             await client.query('CREATE DATABASE ten98_replay_heatmaps_ci');
@@ -115,6 +118,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_prompt_citations_ci');
             await client.query('CREATE DATABASE ten98_prompt_citation_specializations_ci');
             await client.query('CREATE DATABASE ten98_ai_suggestions_ci');
+            for (const kind of ['source', 'preparation', 'admission', 'dispatch', 'retention', 'http', 'recovery']) await client.query('CREATE DATABASE ten98_opportunities_' + kind + '_ci');
             await client.query('CREATE DATABASE ten98_ai_search_ci');
             await client.query('CREATE DATABASE ten98_ai_search_boundaries_ci');
             await client.query('CREATE DATABASE ten98_ai_queries_ci');
@@ -189,6 +193,9 @@ jobs:
               ['ten98_domain_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/domain-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_backlink_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/backlink-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_google_ga4_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-commerce-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', TEN98_GOOGLE_COMMERCE_INTEGRATION: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_cloudflare_ci', [['src/server/cli.ts', 'migrate'], ['tests/cloudflare-connections-integration.ts']], { TEN98_CLOUDFLARE_STORAGE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_cloudflare_http_ci', [['src/server/cli.ts', 'migrate'], ['tests/cloudflare-http-integration.ts']], { TEN98_CLOUDFLARE_HTTP_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_cloudflare_check_ci', [['src/server/cli.ts', 'migrate'], ['tests/cloudflare-check-integration.ts']], { TEN98_CLOUDFLARE_CHECK_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_web_performance_ci', [['src/server/cli.ts', 'migrate'], ['tests/web-performance-integration.ts']], { TEN98_WEB_PERFORMANCE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_session_replay_ci', [['tests/session-replay-integration.ts']], { TEN98_SESSION_REPLAY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_replay_heatmaps_ci', [['tests/replay-heatmaps-integration.ts']], { TEN98_REPLAY_HEATMAPS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
@@ -251,6 +258,7 @@ jobs:
               ['ten98_content_coverage_ci', [['tests/ai-content-coverage-integration.ts']], { TEN98_CONTENT_COVERAGE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_project_content_ci', [['tests/ai-project-content-coverage-integration.ts']], { TEN98_PROJECT_CONTENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_content_support_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-content-support-integration.ts']], { TEN98_CONTENT_SUPPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ...['source', 'preparation', 'admission', 'dispatch', 'retention', 'http', 'recovery'].map(kind => ['ten98_opportunities_' + kind + '_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-opportunities-' + kind + '-integration.ts']], { ['TEN98_OPPORTUNITIES_' + kind.toUpperCase() + '_TEST']: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }]),
               ['ten98_dynamic_models_ci', [['src/server/cli.ts', 'migrate'], ['tests/openrouter-models-integration.ts']], { TEN98_MODELS_DYNAMIC_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111' }],
               ['ten98_environment_ci', [['src/server/cli.ts', 'migrate'], ['tests/analytics-environment-integration.ts']], { TEN98_ENVIRONMENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_geography_query_ci', [['tests/analytics-geography-query-integration.ts']], { TEN98_GEOGRAPHY_QUERY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
@@ -414,6 +422,27 @@ jobs:
         run: |
           timeout 120s node tests/ai-insights-view-browser.mjs
           timeout 120s node tests/ai-insights-browser.mjs
+      - name: Verify evidence-linked recommendations
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_AI_RECOMMENDATIONS_VIEW_BROWSER: '1'
+          TEN98_AI_RECOMMENDATIONS_BROWSER: '1'
+        run: |
+          timeout 120s node tests/ai-recommendations-view-browser.ts
+          timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=races timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=read-failures timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-retry timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-default-retry timeout 120s node tests/ai-recommendations-browser.ts
+      - name: Verify Cloudflare connection setup and recovery
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_CLOUDFLARE_BROWSER: '1'
+        run: timeout 120s node tests/cloudflare-connections-browser.ts
       - name: Verify notes and Explore recovery
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash

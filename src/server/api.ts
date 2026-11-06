@@ -51,6 +51,7 @@ import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
+import { assertCloudflareCredentialsReadable, getCloudflareConnections, saveCloudflareConnection, disconnectCloudflareConnection, checkCloudflareConnection } from './cloudflare-connections.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,prepareKeywordResearch,startKeywordResearch,cancelKeywordResearch,recoverKeywordResearch} from './keyword-research.ts';
 import {getDomainResearch,getDomainResearchRun,exportDomainResearchRun,refreshDomainResearchMarkets,prepareDomainResearch,startDomainResearch,cancelDomainResearch,recoverDomainResearch} from './domain-research.ts';
@@ -82,6 +83,10 @@ import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,pr
 import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
 import {getContentSupport,getContentSupportRun,prepareContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
 import {recoverContentSupport} from './ai-content-support-worker.ts';
+import {getOpportunities,getOpportunitiesRun,prepareOpportunities} from './ai-opportunities.ts';
+import {getOpportunitiesSource} from './ai-opportunities-api.ts';
+import {startOpportunities,cancelOpportunities} from './ai-opportunities-execution.ts';
+import {recoverOpportunities} from './ai-opportunities-recovery.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -276,6 +281,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await assertCredentialKeys();
       await assertOidcCredentialsReadable();
       await assertGoogleCredentialsReadable();
+      await assertCloudflareCredentialsReadable();
       await assertProviderAccountIdentityReadable();
       await access(config.artifactDir, constants.W_OK);
       return json({ status: 'ready' });
@@ -886,6 +892,54 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='prepare'&&!keywordAction){await limit(`rank-prepare:${user.id}`,10);return json(await prepareRankCheck(projectId,user.id,target,input));}
           if(action==='keywords'&&keywordAction)return json(await changeRankKeywords(projectId,user.id,target,keywordAction as 'add'|'remove'|'pin',input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const cloudflareConnectionsRoute=path.match(new RegExp(`^/api/projects/(${id})/cloudflare/connections(?:/(disconnect|check))?$`,'i'));
+    if(cloudflareConnectionsRoute){
+      const [,projectId,action]=cloudflareConnectionsRoute;
+      await projectAccess(projectId,user.id,false);
+      await limit(`cloudflare-connections:${request.method==='GET'?'read':'write'}:${user.id}`,request.method==='GET'?120:30);
+      if(url.search)throw new FoundationError(400,'Cloudflare connection requests do not accept query parameters.');
+      if(request.method==='GET'&&!action){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'This read does not accept a body.');
+        return json(await getCloudflareConnections(projectId,user.id));
+      }
+      if(request.method==='POST'&&action==='check'){
+        await limit(`cloudflare-connection-check:${user.id}`,5);
+        const input=await readJson(request,2048);
+        const original=await getAuth().api.getSession({headers:request.headers});
+        if(!original||original.user.id!==user.id)throw new FoundationError(401,'Sign in to continue.');
+        const outcome=await checkCloudflareConnection(projectId,user.id,input,{signal:request.signal})
+          .then(value=>({ok:true as const,value}),error=>({ok:false as const,error}));
+        const current=await getAuth().api.getSession({headers:request.headers});
+        if(!current||current.user.id!==user.id||current.session.id!==original.session.id)throw new FoundationError(401,'Sign in to continue.');
+        await requireWorkspaceFactor(path,user.id);
+        if(!outcome.ok)throw outcome.error;
+        return json(outcome.value);
+      }
+      if(request.method==='POST')return json(action==='disconnect'
+        ?await disconnectCloudflareConnection(projectId,user.id,await readJson(request,2048))
+        :await saveCloudflareConnection(projectId,user.id,await readJson(request,8192)));
+      return json({error:'Method not allowed.'},405);
+    }
+    const opportunitiesRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-opportunities(?:/(source|prepare|runs)(?:/(${id})(?:/(cancel|recover))?)?)?$`,'i'));
+    if(opportunitiesRoute){
+      const [,projectId,action,runId,operation]=opportunitiesRoute;
+      await projectAccess(projectId,user.id,false);await limit(`ai-opportunities:${user.id}`,30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'This read does not accept a body.');
+        if(!action||action==='runs'&&!runId)return json(await getOpportunities(projectId,user.id,url.searchParams));
+        if(url.search)throw new FoundationError(400,'This recommendation detail does not accept query parameters.');
+        if(action==='runs'&&runId&&!operation)return json(await getOpportunitiesRun(projectId,user.id,runId));
+      }else if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'This recommendation action does not accept query parameters.');
+        if(action==='source'&&!runId)return json(await getOpportunitiesSource(projectId,user.id,await readJson(request,4096),request.signal));
+        await limit(`ai-opportunities-write:${user.id}`,10);
+        if(action==='prepare'&&!runId)return json(await prepareOpportunities(projectId,user.id,await readJson(request,32768)));
+        if(action==='runs'&&!runId)return json(await startOpportunities(projectId,user.id,await readJson(request,2048)),202);
+        if(action==='runs'&&runId&&operation==='cancel')return json(await cancelOpportunities(projectId,user.id,runId,await readJson(request,2048)));
+        if(action==='runs'&&runId&&operation==='recover')return json(await recoverOpportunities(projectId,user.id,runId,await readJson(request,2048)));
       }
       return json({error:'Method not allowed.'},405);
     }
