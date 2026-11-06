@@ -345,6 +345,16 @@
       ]
     },
     "P22": {
+      "routes": [
+        "GET /api/projects/{projectId}/ai-opportunities",
+        "POST /api/projects/{projectId}/ai-opportunities/source",
+        "POST /api/projects/{projectId}/ai-opportunities/prepare",
+        "GET /api/projects/{projectId}/ai-opportunities/runs",
+        "POST /api/projects/{projectId}/ai-opportunities/runs",
+        "GET /api/projects/{projectId}/ai-opportunities/runs/{runId}",
+        "POST /api/projects/{projectId}/ai-opportunities/runs/{runId}/cancel",
+        "POST /api/projects/{projectId}/ai-opportunities/runs/{runId}/recover"
+      ],
       "migrations": ["0084_ai_opportunities"]
     },
     "P23": {

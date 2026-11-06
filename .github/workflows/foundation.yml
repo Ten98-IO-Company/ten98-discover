@@ -424,12 +424,12 @@ jobs:
           TEN98_AI_RECOMMENDATIONS_VIEW_BROWSER: '1'
           TEN98_AI_RECOMMENDATIONS_BROWSER: '1'
         run: |
-          timeout 120s node tests/ai-recommendations-view-browser.mjs
-          timeout 120s node tests/ai-recommendations-browser.mjs
-          TEN98_AI_RECOMMENDATIONS_SCENARIO=races timeout 120s node tests/ai-recommendations-browser.mjs
-          TEN98_AI_RECOMMENDATIONS_SCENARIO=read-failures timeout 120s node tests/ai-recommendations-browser.mjs
-          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-retry timeout 120s node tests/ai-recommendations-browser.mjs
-          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-default-retry timeout 120s node tests/ai-recommendations-browser.mjs
+          timeout 120s node tests/ai-recommendations-view-browser.ts
+          timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=races timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=read-failures timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-retry timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-default-retry timeout 120s node tests/ai-recommendations-browser.ts
       - name: Verify notes and Explore recovery
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash

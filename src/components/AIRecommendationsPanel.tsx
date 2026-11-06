@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState} from 'react';
-import {Alert, Button, Disclosure, Field, Select} from '@ten98/ui';
+import {Alert, Button, Disclosure, Field, Link, Select, Text} from '@ten98/ui';
 import {workspaceRoles} from '@ten98/runtime/browser';
 import {z} from 'zod';
 import {ApiError, errMsg} from '../lib/api';
@@ -171,10 +171,10 @@ function RecommendationsController(props: AIRecommendationsPanelProps) {
   }
   const setup = <>
     {errors.models && <Alert tone="warning" title="Model metadata unavailable">{errors.models}</Alert>}
-    {attempt && <Alert tone="warning" title="Unconfirmed request"><p>The original request is retained. A retry uses the same request identity.</p><Button variant="secondary" disabled={loading.action || revoked} onClick={() => {if (state.current.attempt) void mutate(state.current.attempt);}}>Retry same request</Button></Alert>}
+    {attempt && <Alert tone="warning" title="Unconfirmed request"><Text>The original request is retained. A retry uses the same request identity.</Text><Button variant="secondary" disabled={loading.action || revoked} onClick={() => {if (state.current.attempt) void mutate(state.current.attempt);}}>Retry same request</Button></Alert>}
     {history?.canPrepare && <Disclosure summary="Recommendation model and connection" variant="plain" defaultOpen={!props.selectedRunId}>
-      <Field label="OpenRouter connection" htmlFor={prefix + 'connection'}><Select id={prefix + 'connection'} value={connectionId} disabled={loading.action || !!attempt} onChange={event => {if (!state.current.locked && !state.current.attempt) setConnectionId(event.target.value);}}><option value="">Choose a checked connection</option>{history.connections.map(item => <option key={item.id} value={item.id}>{item.name}{item.checkStatus === 'ok' ? '' : ' — check required'}</option>)}</Select></Field>
-      {props.onOpenConnections ? <Button variant="ghost" onClick={props.onOpenConnections}>Settings › Connections</Button> : <a href={'/?' + new URLSearchParams({workspace: props.workspaceId, project: props.projectId, view: 'providers', provider: 'openrouter'})}>Settings › Connections</a>}
+      <Field label="OpenRouter connection" htmlFor={prefix + 'connection'}><Select id={prefix + 'connection'} value={connectionId} disabled={loading.action || !!attempt} options={[{value: '', label: 'Choose a checked connection'}, ...history.connections.map(item => ({value: item.id, label: item.name + (item.checkStatus === 'ok' ? '' : ' — check required')}))]} onChange={event => {if (!state.current.locked && !state.current.attempt) setConnectionId(event.target.value);}}/></Field>
+      {props.onOpenConnections ? <Button variant="ghost" onClick={props.onOpenConnections}>Settings › Connections</Button> : <Link href={'/?' + new URLSearchParams({workspace: props.workspaceId, project: props.projectId, view: 'providers', provider: 'openrouter'})}>Settings › Connections</Link>}
       <OpenRouterModelPicker catalog={catalog} selected={models} maximum={1} structured disabled={loading.action || !!attempt} refreshing={loading.models} canRefresh={!revoked && history.canPrepare} onChange={value => {if (!state.current.locked && !state.current.attempt) setModels(value);}} onRefresh={() => {if (!loading.models && !state.current.locked && !state.current.attempt) void read('models', true);}}/>
     </Disclosure>}
   </>;
