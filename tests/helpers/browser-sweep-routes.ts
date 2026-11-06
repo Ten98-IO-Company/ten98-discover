@@ -83,6 +83,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   component('tests/google-organic-browser.mjs', ['TEN98_GOOGLE_ORGANIC_BROWSER']),
   component('tests/heatmap-collector-browser.mjs', ['TEN98_HEATMAP_COLLECTOR_BROWSER']),
   component('tests/heatmap-geometry-browser.mjs', ['TEN98_HEATMAP_GEOMETRY_BROWSER']),
+  component('tests/heatmap-visibility-browser.ts', ['TEN98_HEATMAP_VISIBILITY_BROWSER']),
   component('tests/journey-saved-scopes-browser.mjs', ['TEN98_JOURNEY_SAVED_BROWSER']),
   component('tests/journey-step-search-browser.mjs', ['TEN98_JOURNEY_STEP_BROWSER']),
   component('tests/journeys-browser.mjs', ['TEN98_JOURNEYS_BROWSER'], 'optional TEN98_JOURNEYS_SQL_DTOS not supplied'),
