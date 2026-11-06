@@ -9,7 +9,7 @@ type Selection = z.output<typeof contentSupportSelectionSchema>;
 export type SupportQuoteRow = {
  id: string; workspace_id: string; project_id: string; user_id: string; request_id: string;
  connection_id: string; connection_revision: number; request_actor: string; key_fingerprint: string;
- source_kind: 'capture' | 'project'; audit_run_id: string; input_hash: string; payload_hash: string; schema_hash: string;
+ source_kind: 'capture' | 'project'; audit_run_id: string; input_hash: string; payload_hash: string; schema_hash: string; business_input_hash: string | null;
  query_receipt_hash: string; corpus_receipt_hash: string; source_context_revision: number | null; source_profile_hash: string | null;
  retention_revision: number; raw_days_at_quote: number; derived_days_at_quote: number;
  source_input: Record<string,unknown> | null;

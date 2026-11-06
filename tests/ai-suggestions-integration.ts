@@ -14,7 +14,7 @@ import {prepareAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions
 import {executeAiSuggestion,recoverAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
-import {suggestionProfiles,suggestionQuoteInput} from '../src/server/ai-suggestion-input.ts';
+import {suggestionProfiles,suggestionQuoteInput,type SuggestionInput} from '../src/server/ai-suggestion-input.ts';
 
 function assertNoApiMoney(value:unknown):void{
  if(!value||typeof value!=='object')return;
@@ -226,6 +226,87 @@ export async function runSuggestionChecks(){
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retained.workspace]);await executeAiSuggestion(retainedRun.id,send);const masked=await detail(retained,retainedRun.id);assert.equal(masked.proposal,null);assert.equal(masked.snapshot,null);
   await assert.rejects(acceptAiSuggestions(retained.project,owner,retainedRun.id,{requestId:randomUUID(),expectedProposalRevision:1,expectedContextRevision:1,expectedTopicLibraryHash:'a'.repeat(64),selections:[{candidateId:originalProposal.prompts[0].id,text:'Never resurrect',tags:[]}]}),{status:409});
   console.log('PASS immediate raw cutoff, bounded cleanup and irreversible input/proposal tombstones');
+
+  const isolated=await fixture();
+  await updateProjectContext(isolated.project,owner,{requestId:randomUUID(),revision:1,updates:[
+   {kind:'section',key:'business_overview',content:'Coffee equipment'},
+   {kind:'section',key:'current_goal',content:'Research useful questions'},
+   {kind:'competitor',primaryDomain:'first.example.com',name:'First'},
+   {kind:'competitor',primaryDomain:'second.example.com',name:'Second'},
+  ]});
+  const competitorIds=(await pool.query('SELECT id FROM context_competitor WHERE project_id=$1 ORDER BY id',[isolated.project])).rows.map(r=>r.id as string);
+  let authoredSelectors:SuggestionInput={...isolated.input,contextRevision:2,sectionKeys:['business_overview','current_goal'],competitorIds,excludedPrompts:['Excluded A?','Excluded B?']};
+  let isolationCalls=0;
+  const prepareIsolated=async(overrides:Partial<SuggestionInput>={})=>{
+   assert.ok(++isolationCalls<=100,'Bound new native service calls; provider transport remains synthetic.');
+   return (await prepareAiSuggestions(isolated.project,owner,{...authoredSelectors,requestId:randomUUID(),...overrides},send)).preparation;
+  };
+  const startIsolated=async(preparationId:string,requestId=randomUUID())=>{
+   assert.ok(++isolationCalls<=100);
+   return startAiSuggestions(isolated.project,owner,{requestId,preparationId});
+  };
+  const savedIdentity=async(id:string)=>(await pool.query('SELECT business_input_hash,input_hash,snapshot_hash,input_purged_at FROM ai_suggestion_quote WHERE id=$1',[id])).rows[0];
+  const savedRun=async(id:string)=>(await pool.query('SELECT to_jsonb(r) AS run,to_jsonb(p) AS request FROM ai_suggestion_run r JOIN provider_request p ON p.id=r.id WHERE r.id=$1',[id])).rows[0];
+  const unknownQuote=await prepareIsolated(),unknownRequestId=randomUUID(),unknownA=(await startIsolated(unknownQuote.id,unknownRequestId)).run;
+  mode='lost';await executeAiSuggestion(unknownA.id,send);mode='ok';
+  assert.equal((await detail(isolated,unknownA.id)).requestStatus,'uncertain');
+  const originalUnknown=await savedRun(unknownA.id),paidAfterA=paid;
+  const otherQuote=await prepareIsolated({topic:'Tea'}),unknownB=(await startIsolated(otherQuote.id)).run;
+  assert.equal(unknownB.status,'queued','A distinct authored task must start while the original outcome is unknown.');
+  assert.equal(paid,paidAfterA,'Starting unrelated work must not dispatch either request.');
+  const thirdQuote=await prepareIsolated({topic:'Cocoa'});
+  await assert.rejects(startIsolated(thirdQuote.id),{status:409},'Queued work still owns the project-purpose slot.');
+  mode='unknown';await executeAiSuggestion(unknownB.id,send);mode='ok';
+  assert.equal((await detail(isolated,unknownB.id)).requestStatus,'uncertain');
+  const secondUnknown=await savedRun(unknownB.id),identity=await savedIdentity(unknownQuote.id);
+  assert.match(identity.business_input_hash,/^[a-f0-9]{64}$/);
+  assert.notEqual((await savedIdentity(otherQuote.id)).business_input_hash,identity.business_input_hash);
+  await assert.rejects(startIsolated(unknownQuote.id),{status:409},'The same quote cannot start again.');
+  assert.equal((await startIsolated(unknownQuote.id,unknownRequestId)).run.id,unknownA.id,'An existing receipt still replays its original run.');
+
+  await updateProjectContext(isolated.project,owner,{requestId:randomUUID(),revision:2,updates:[{kind:'profile',name:'Refreshed source context'},{kind:'section',key:'current_goal',content:'Refreshed context content'}]});
+  await createPrompts(isolated.project,owner,{requestId:randomUUID(),prompts:[{text:'A freshly saved library question?',topic:'Coffee'}]});
+  authoredSelectors={...authoredSelectors,contextRevision:3};
+  const alternative=(await saveProvider(isolated.workspace,owner,{provider:'openrouter',name:'Alternate synthetic',credentials:{apiKey:'synthetic-alternate-'+isolated.project}})).connection;
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[alternative.id]);
+  const sameQuote=await prepareIsolated({connectionId:alternative.id,profileId:'benchmark-standard-v1',sectionKeys:['current_goal','business_overview'],competitorIds:[...competitorIds].reverse().map(id=>id.toUpperCase()),excludedPrompts:['Excluded B?','Excluded A?','Excluded B?']});
+  const sameIdentity=await savedIdentity(sameQuote.id);
+  assert.equal(sameIdentity.business_input_hash,identity.business_input_hash,'Set order, duplicate exclusions, UUID case, routes and refreshed source metadata are not new work.');
+  assert.notEqual(sameIdentity.input_hash,identity.input_hash);assert.notEqual(sameIdentity.snapshot_hash,identity.snapshot_hash);
+  assert.notEqual(sameQuote.route.model,unknownQuote.route.model);
+  await assert.rejects(startIsolated(sameQuote.id),{status:409});
+  await assert.rejects(startIsolated(thirdQuote.id),{status:409},'Distinct work still requires a fresh source snapshot.');
+  const currentThird=await prepareIsolated({topic:'Cocoa'}),runningBlock=await prepareIsolated({topic:'Chocolate'});
+  const third=(await startIsolated(currentThird.id)).run;
+  afterPaid=async()=>{await assert.rejects(startIsolated(runningBlock.id),{status:409},'Running work still owns the project-purpose slot.');};
+  await executeAiSuggestion(third.id,send);afterPaid=null;
+  assert.equal((await detail(isolated,third.id)).status,'completed');
+  for(const change of [{country:'Canada'},{language:'French'},{sectionKeys:['business_overview']},{competitorIds:competitorIds.slice(0,1)},{excludedPrompts:['Different excluded question?']}] satisfies Partial<SuggestionInput>[]){
+   const quote=await prepareIsolated(change);assert.notEqual((await savedIdentity(quote.id)).business_input_hash,identity.business_input_hash);
+   const run=(await startIsolated(quote.id)).run;await cancelAiSuggestion(isolated.project,owner,run.id,{requestId:randomUUID()});
+  }
+  assert.deepEqual(await savedRun(unknownA.id),originalUnknown);assert.deepEqual(await savedRun(unknownB.id),secondUnknown);
+  const beforeReplay=paid;await executeAiSuggestion(unknownA.id,send);await executeAiSuggestion(unknownB.id,send);assert.equal(paid,beforeReplay);
+  await pool.query("UPDATE membership SET role='editor' WHERE workspace_id=$1 AND user_id=$2",[isolated.workspace,owner]);
+  await assert.rejects(startIsolated(unknownQuote.id,unknownRequestId),{status:403},'Receipt replay still requires current authorization.');
+  await pool.query("UPDATE membership SET role='owner' WHERE workspace_id=$1 AND user_id=$2",[isolated.workspace,owner]);
+  console.log('PASS distinct prompt work with two unknown originals, stable authored selectors, queued/running fences and current receipt authorization');
+
+  await pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '91 days' WHERE id=$1",[unknownQuote.id]);
+  await runRetentionBatch(isolated.project);
+  const purgedIdentity=await savedIdentity(unknownQuote.id);assert.equal(purgedIdentity.business_input_hash,identity.business_input_hash);assert.ok(purgedIdentity.input_purged_at);
+  const afterPurge=await prepareIsolated();await assert.rejects(startIsolated(afterPurge.id),{status:409},'Purging raw input must not remove the unknown-request fence.');
+  const afterPurgeDistinct=await prepareIsolated({topic:'Matcha'}),afterPurgeRun=(await startIsolated(afterPurgeDistinct.id)).run;
+  await cancelAiSuggestion(isolated.project,owner,afterPurgeRun.id,{requestId:randomUUID()});
+  await pool.query('UPDATE ai_suggestion_quote SET business_input_hash=NULL WHERE id=$1',[otherQuote.id]);
+  const legacyBlocked=await prepareIsolated({topic:'New unrelated topic'});await assert.rejects(startIsolated(legacyBlocked.id),{status:409},'A retained legacy NULL identity fails closed.');
+  await pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '91 days' WHERE id=$1",[otherQuote.id]);await runRetentionBatch(isolated.project);
+  await assert.rejects(startIsolated(legacyBlocked.id),{status:409},'A purged legacy NULL identity also fails closed.');
+  const beforeRecovery=paid,unknownBBeforeRecovery=await savedRun(unknownB.id);
+  const recoveredOriginal=await recoverAiSuggestion(isolated.project,owner,unknownA.id,{requestId:randomUUID()},send);
+  assert.equal(recoveredOriginal.run.requestStatus,'settled');assert.equal(paid,beforeRecovery);assert.deepEqual(await savedRun(unknownB.id),unknownBBeforeRecovery);
+  assert.equal((await savedIdentity(unknownQuote.id)).input_hash,identity.input_hash);assert.equal((await savedIdentity(unknownQuote.id)).snapshot_hash,identity.snapshot_hash);
+  console.log('PASS durable prompt identity after purge, conservative legacy fallback and original-only recovery without redispatch');
 
   // Earlier groups called the handler directly; settle their already-terminal
   // synthetic queue entries before measuring the actual registered worker.
