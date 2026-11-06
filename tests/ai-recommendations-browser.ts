@@ -176,6 +176,11 @@ try {
   mode = 'lost-start'; const before = requests.length;
   await button('Run recommendations').evaluate(node => {node.click(); node.click();});
   await page.getByText('This action could not be confirmed.', {exact: false}).waitFor();
+  assert.equal(await button('Model and source').isDisabled(), true, 'An unconfirmed request cannot jump to disabled settings.');
+  assert.equal(await button('Retry same request').evaluate(node => {
+    const report = document.querySelector('article');
+    return Boolean(report && (node.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }), true, 'Original-request recovery remains before the retained report.');
   const actions = () => requests.slice(before).filter(value => /\/(prepare|runs)$/.test(value.path) && value.method === 'POST');
   assert.equal(actions().filter(value => value.path.endsWith('/prepare')).length, 1); assert.equal(actions().filter(value => value.path.endsWith('/runs')).length, 1);
   await button('Retry same request').click(); await saved().waitFor();
