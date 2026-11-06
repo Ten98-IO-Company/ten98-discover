@@ -17937,8 +17937,8 @@ if (mode === 'record') {
   var heatmap = null;
   /** @type {ResizeObserver|null} */
   var heatmapObserver = null;
-  /** @type {number|null} */
-  var heatmapFrame = null;
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  var heatmapTimer = null;
   var heatmapAttempts = 0;
   /** @type {Record<string,unknown>|null} */
   var heatmapSnapshot=null;
@@ -17957,7 +17957,7 @@ if (mode === 'record') {
   var heatmapExtent = null;
   /** @param {Ten98Tracker.ReplayPlayerMessage} value */
   function send(value) { if (port) port.postMessage(value); }
-  function destroy() { resetPlayback();playing = false; heatmapTextCheck=null;heatmapControlCheck=null;heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
+  function destroy() { resetPlayback();playing = false; heatmapTextCheck=null;heatmapControlCheck=null;heatmapLayoutCheck=null; if(heatmapLayoutObserver)heatmapLayoutObserver.disconnect();heatmapLayoutObserver=null; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapTimer!==null)clearTimeout(heatmapTimer);heatmapTimer=null;clearInterval(/** @type {ReturnType<typeof setInterval>|undefined} */ (ticker)); ticker = null; if (player) { player.destroy(); player = null; } }
   function fail() { destroy(); send({type:'error',message:'This recording could not be played safely.'}); }
   function position() { return player ? playing ? Math.max(0,Math.min(duration,player.getCurrentTime())) : pausedOffset : 0; }
   // rrweb 2.1.7 pauses before equal-timestamp events; recorded timestamps are integer ms.
@@ -18096,12 +18096,13 @@ if (mode === 'record') {
   }
 
   function prepareHeatmap(){
+    heatmapTimer=null;
     if(!player||!heatmap)return;
     var g=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap).geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement,origin=null;
     if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&!heatmapTextRestored){if(!restoreHeatmapText(doc,view)||!restoreHeatmapControls(doc,view)){fail();return;}heatmapTextRestored=true;}
     if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!(origin=preserveHeatmapExtent(doc,view,g)))){fail();return;}
     if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
-      if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;
+      if(++heatmapAttempts<120){heatmapTimer=setTimeout(prepareHeatmap,16);return;}fail();return;
     }
     if(!origin||!verifyHeatmapLayout(doc,view,origin)){fail();return;}
     player.wrapper.style.position='relative';var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -18183,7 +18184,8 @@ if (mode === 'record') {
           else if (['play','pause'].includes(/** @type {string} */ (command.type)) && Number.isFinite(/** @type {number} */ (command.offset)) && /** @type {number} */ (command.offset) >= 0 && /** @type {number} */ (command.offset) <= duration) { clearPlayback();playing = command.type === 'play'; if (playing) player.play(/** @type {number} */ (command.offset)); else pauseAt(/** @type {number} */ (command.offset)); send({type:'tick',time:position(),playing:playing}); }
         } catch (_) { fail(); }
       };
-      port.start();if(heatmap){heatmapFrame=requestAnimationFrame(prepareHeatmap);}else{ticker=setInterval(function(){try{send({type:'tick',time:position(),playing:playing});}catch(_){fail();}},250);send({type:'ready',duration:duration});}
+      // Browsers suspend animation frames for offscreen embeds; readiness still needs to run.
+      port.start();if(heatmap){heatmapTimer=setTimeout(prepareHeatmap,0);}else{ticker=setInterval(function(){try{send({type:'tick',time:position(),playing:playing});}catch(_){fail();}},250);send({type:'ready',duration:duration});}
     } catch (_) { fail(); }
   });
 }
