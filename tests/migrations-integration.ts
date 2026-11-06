@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { getConfig } from '../src/server/config.ts';
-import { assertSchema, closeDatabase, getDatabase, migrationSource, migrationSources } from '../src/server/db.ts';
+import { assertSchema, closeDatabase, getDatabase, migrationSource, migrationSources, migrationFiles, migrationLockKey } from '../src/server/db.ts';
+import { createMigrationLedger } from '@ten98/runtime';
 import { saveAnalysis } from '../src/server/funnels.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
 import {assertProviderAccountIdentityReadable,getProviderAccountIdentityKey} from '../src/server/provider-account-identity.ts';
@@ -93,7 +94,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048', '0049', '0050', '0051', '0052', '0053', '0054', '0055', '0056', '0057', '0058', '0059', '0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068', '0069', '0070', '0071', '0072', '0073', '0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081', '0082', '0083', '0084', '0085']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048', '0049', '0050', '0051', '0052', '0053', '0054', '0055', '0056', '0057', '0058', '0059', '0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068', '0069', '0070', '0071', '0072', '0073', '0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081', '0082', '0083', '0084', '0085', '0086']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -119,7 +120,7 @@ try {
   assert.equal(sources.find(source=>source.filename==='0073_operator_export_audit.sql')!.checksum,'eaedea9006be24ce5a1e9b96a05ac35c7e848b35511202bfddb05817e96dc120','Preserve the exact registered migration 0073_operator_export_audit.sql.');
   assert.equal(sources.find(source=>source.filename==='0074_api_key_prefix_last_used.sql')!.checksum,'5e888f8a43361b0cc86f3dfeb62caed8fc6d6e80fa28e9d77edbb778ea72ccbf','Preserve the exact registered migration 0074_api_key_prefix_last_used.sql.');
   assert.equal(sources.find(m=>m.version==='0075')?.filename,'0075_email_suppression_keyed_clear.sql');assert.equal(sources[75]?.filename,'0076_provider_request_activity.sql','Append0076 without changing historical source bytes.');
-  assert.deepEqual(sources.slice(76).map(({filename})=>filename),['0077_context_personas.sql','0078_site_analysis.sql','0079_site_audit_schedules.sql','0080_site_audit_access.sql','0081_ai_search_request_isolation.sql','0082_content_support_request_isolation.sql','0083_prompt_request_isolation.sql','0084_ai_opportunities.sql','0085_cloudflare_connections.sql']);
+  assert.deepEqual(sources.slice(76).map(({filename})=>filename),['0077_context_personas.sql','0078_site_analysis.sql','0079_site_audit_schedules.sql','0080_site_audit_access.sql','0081_ai_search_request_isolation.sql','0082_content_support_request_isolation.sql','0083_prompt_request_isolation.sql','0084_ai_opportunities.sql','0085_cloudflare_connections.sql','0086_project_assistant.sql']);
   const foundation = await migrationSource();
   assert.equal(sources.find(source=>source.filename==='0084_ai_opportunities.sql')!.checksum,'7b11feff83f65a87724488bbb1091438e157b3d4647d312d0338f5af2d8e3c7c','Append Cloudflare connection storage without rewriting the Recommendations migration.');
 
@@ -1219,15 +1220,29 @@ try {
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('PASS populated0037 events, assignments, properties, receipts and exact project markers survive0038 unchanged; new proof fields remain NULL and repeat migration is inert');
   console.log('PASS populated0038 proof/settings/epochs survive0039/0040 unchanged; historical basis stays NULL and existing geography setting stays absent, future defaults are cookieless with geography capture, and invalid basis/proof combinations fail');
-  stage='actual current CLI populated0075 to current registered schema';
+  stage='canonical ledger populated0075 to0085, then actual CLI0085 to0086';
   const tables75=(await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(r=>r.tablename);
   const versions76=['keyword_quote','prompt_execution_quote','rank_run','ai_suggestion_quote','ai_search_quote','ai_content_support_quote','domain_research_quote','saved_keyword_refresh_plan'],evidence76=['rank_task','rank_dispatch','ai_content_support_run'];
-  const addedCurrentTables=['workspace_provider_control','context_persona','site_analysis_run','site_audit_schedule','site_audit_occurrence','site_audit_access','ai_opportunity_preparation','ai_opportunity_run','cloudflare_connection'];
+  const assistantTables=['assistant_conversation','assistant_event','assistant_event_payload'];
+  const addedCurrentTables=['workspace_provider_control','context_persona','site_analysis_run','site_audit_schedule','site_audit_occurrence','site_audit_access','ai_opportunity_preparation','ai_opportunity_run','cloudflare_connection',...assistantTables];
   const purposeTables=['ai_suggestion_quote','ai_suggestion_run'];
-  const addedCurrent=(table:string)=>[...(versions76.includes(table)?['request_version']:[]),...(evidence76.includes(table)?['request_evidence']:[]),...(purposeTables.includes(table)?['purpose']:[]),...(['ai_search_quote','ai_content_support_quote','ai_suggestion_quote'].includes(table)?['business_input_hash']:[])];
+  const addedCurrent=(table:string)=>[...(versions76.includes(table)?['request_version']:[]),...(evidence76.includes(table)?['request_evidence']:[]),...(purposeTables.includes(table)?['purpose']:[]),...(['ai_search_quote','ai_content_support_quote','ai_suggestion_quote'].includes(table)?['business_input_hash']:[]),...(table==='project'?['assistant_payload_retained_from']:[])];
   const every75:Record<string,unknown[]>={};for(const table of tables75)every75[table]=(await pool.query('SELECT to_jsonb(t) AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY to_jsonb(t)::text')).rows.map(r=>r.row);
   const controls75=(await pool.query('SELECT workspace_id,paused FROM workspace_budget ORDER BY workspace_id')).rows;
-  assert.match(runMigrate(0),/Database migrations applied: 0076, 0077, 0078, 0079, 0080, 0081, 0082, 0083, 0084, 0085\./);await assertSchema();assert.deepEqual(await history(),sources.map(({version,checksum})=>({version,checksum})));
+  const files85=migrationFiles.filter(filename=>filename.slice(0,4)<='0085');
+  assert.equal(files85.length,85);assert.equal(files85.at(-1),'0085_cloudflare_connections.sql');
+  const ledger85=createMigrationLedger({directory:join(checkout,'migrations'),files:files85,lockKey:migrationLockKey});
+  assert.deepEqual(await ledger85.migrateWithDeadline(pool,{timeoutMs:45_000}),['0076','0077','0078','0079','0080','0081','0082','0083','0084','0085']);
+  const history85=await history();assert.deepEqual(history85,sources.slice(0,85).map(({version,checksum})=>({version,checksum})));
+  await assert.rejects(assertSchema(),{code:'SCHEMA_MISMATCH'});
+  const tables85=(await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(r=>r.tablename);
+  const every85:Record<string,unknown[]>={};for(const table of tables85)every85[table]=(await pool.query('SELECT to_jsonb(t) AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY to_jsonb(t)::text')).rows.map(r=>r.row);
+  assert.match(runMigrate(0),/Database migrations applied: 0086\./);await assertSchema();assert.deepEqual(await history(),sources.map(({version,checksum})=>({version,checksum})));
+  assert.deepEqual((await history()).slice(0,85),history85,'0086 preserves all85 registered checksums.');
+  for(const table of tables85){const projection=table==='project'?"to_jsonb(t)-'assistant_payload_retained_from'":'to_jsonb(t)';assert.deepEqual((await pool.query('SELECT '+projection+' AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY ('+projection+')::text')).rows.map(r=>r.row),every85[table],'0086 preserves every prior field and row in '+table);}
+  assert.equal((await pool.query("SELECT 1 FROM project WHERE assistant_payload_retained_from<>'-infinity'::timestamptz")).rowCount,0);
+  for(const table of assistantTables)assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(table))).rowCount,0,'0086 creates no implicit assistant content.');
+  console.log('PASS genuine populated0085-to0086 CLI upgrade preserves prior data and checksums');
   assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(r=>r.tablename),[...tables75,...addedCurrentTables].sort());
   for(const table of tables75){const projection='to_jsonb(t)-$1::text[]';assert.deepEqual((await pool.query('SELECT '+projection+' AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY ('+projection+')::text',[addedCurrent(table)])).rows.map(r=>r.row),every75[table],'The current upgrade preserves every original '+table+' field and row.');}
   for(const table of versions76)assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(table)+' WHERE request_version<>0')).rowCount,0,'Historical preparations retain version0.');
@@ -1275,8 +1290,8 @@ try {
   for(const [table,columns]of Object.entries(newColumns)){assert.deepEqual(currentSchema.columns.filter(r=>r.table_name===table).map(r=>r.column_name),columns);assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(table))).rowCount,0,'The upgrade creates no implicit '+table+' work or records.');}
   const currentRows:Record<string,unknown[]>={},currentHistory=await history();for(const table of [...tables75,...addedCurrentTables])currentRows[table]=(await pool.query('SELECT to_jsonb(t) AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY to_jsonb(t)::text')).rows;
   stage='actual current CLI current schema no-op';assert.match(runMigrate(0),/Database migrations already applied; all checksums verified\./);await assertSchema();assert.deepEqual(await history(),currentHistory);assert.deepEqual(await schemaSnapshot(),currentSchema);for(const table of Object.keys(currentRows))assert.deepEqual((await pool.query('SELECT to_jsonb(t) AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY to_jsonb(t)::text')).rows,currentRows[table]);
-  assert.deepEqual(migrationCliExits,[1,1,1,1,0,0],'Four original rejected migrations, actual75-to-current upgrade and current no-op are the bounded CLI workload.');
-  console.log('PASS historical75 oracles and actual CLI75-to-current preserve original values/checksums, copy manual pause, add declared request/context/audit shapes and0081 retained-input identity with legacy NULL, preserve active serialization and leave current no-op inert');
+  assert.deepEqual(migrationCliExits,[1,1,1,1,0,0],'Four original rejected migrations, actual85-to86 upgrade and current no-op are the bounded CLI workload.');
+  console.log('PASS historical75 oracles, canonical ledger75-to85 and actual CLI85-to86 preserve original values/checksums, copy manual pause, add declared request/context/audit shapes and0081 retained-input identity with legacy NULL, preserve active serialization and leave current no-op inert');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch(error) {
   console.error(`Migration integration checks failed during: ${stage}.`);

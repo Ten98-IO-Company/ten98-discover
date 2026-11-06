@@ -62,7 +62,7 @@ test('the agreed council rules: credentials go, actor and financial rows stay un
     assert.equal(rule(table), 'delete', table);
   assert.equal(rule('user'), 'tombstone');
   assert.equal(rule('pgboss.job'), 'cancel');
-  for (const table of ['provider_request', 'keyword_quote', 'prompt_execution_quote', 'ai_search_quote', 'domain_research_quote', 'rank_run', 'project_share', 'instance_operator_audit', 'account_closure_audit'])
+  for (const table of ['provider_request', 'keyword_quote', 'prompt_execution_quote', 'ai_search_quote', 'domain_research_quote', 'rank_run', 'project_share', 'instance_operator_audit', 'account_closure_audit', 'assistant_conversation', 'assistant_event', 'assistant_event_payload'])
     assert.equal(rule(table), 'keep', table);
   // Statements receive only the account id, its previous email and derived limit keys; none persists them.
   for (const entry of accountClosureInventory) assert.ok(!/INSERT|UPDATE/i.test(entry.sql ?? ''), `${entry.table} must not write new data.`);
