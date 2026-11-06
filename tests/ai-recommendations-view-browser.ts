@@ -43,6 +43,18 @@ try {
   await page.getByRole('heading', {name: 'Recommendations', exact: true}).waitFor();
   const firstCardTop = await page.locator('article').first().evaluate(node => node.getBoundingClientRect().top);
   const regressions = firstCardTop > 560 ? [`First recommendation starts at ${firstCardTop}px; expected at or above 560px.`] : [];
+  const assertResultBeforeSupport = async (result: Locator) => {
+    const order = await result.evaluate(node => {
+      const setup = [...document.querySelectorAll('p')].find(item => item.textContent === 'Model selection supplied by the controller.');
+      const support = ['Current answer coverage', 'Previous reports'].map(label => [...document.querySelectorAll('summary')].find(item => item.textContent === label));
+      return [setup, ...support].map(item => Boolean(item && (node.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    });
+    assert.deepEqual(order, [true, true, true], 'The saved result precedes setup, current-source coverage and report history.');
+  };
+  await assertResultBeforeSupport(page.locator('article').first());
+  await run({report: {...initialReport, opportunities: []}});
+  await assertResultBeforeSupport(page.getByText('No recommendations in this completed report', {exact: true}));
+  await reset();
   for (const status of ['queued', 'running', 'uncertain', 'failed', 'cancelled'] as const) {
     await run({status, available: false, report: null, savedEvidence: null});
     if (await page.getByText('Report evidence unavailable or expired', {exact: true}).count()) regressions.push(`${status} incorrectly reports expired evidence.`);
@@ -78,6 +90,10 @@ try {
   await reset();
   await patch({sourceError: 'Source request failed.', historyError: 'History request failed.', runError: 'New request failed.'});
   for (const title of ['Current source unavailable', 'Report history could not load', 'Recommendations could not start']) await page.getByText(title, {exact: true}).waitFor();
+  assert.equal(await page.getByText('Recommendations could not start', {exact: true}).evaluate(node => {
+    const report = document.querySelector('article');
+    return Boolean(report && (node.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }), true, 'A failed new request stays before the retained report.');
   assert.equal(await page.locator('article').count(), 4); assert.equal(await button('Run recommendations').isDisabled(), true);
   await reset(); await patch({source: null}); await page.getByText('Current answer source unavailable', {exact: true}).waitFor(); assert.equal(await page.locator('article').count(), 4); assert.equal(await button('Run recommendations').isDisabled(), true);
   await reset(); await patch({source: {...initialSource, availability: 'insufficient-evidence'}}); await page.getByText('No eligible retained answers', {exact: true}).waitFor(); assert.equal(await page.locator('article').count(), 4);

@@ -31,6 +31,7 @@ function RecommendationsController(props: AIRecommendationsPanelProps) {
   const prefix = useId(), base = `/api/projects/${props.projectId}/ai-opportunities`;
   const [history, setHistory] = useState<OpportunitiesListDto | null>(null), [detail, setDetail] = useState<OpportunitiesDetailDto | null>(null), [source, setSource] = useState<OpportunitiesSourceDto | null>(null);
   const [catalog, setCatalog] = useState<OpenRouterCatalog | null>(null), [connectionId, setConnectionId] = useState(''), [models, setModels] = useState<string[]>([]);
+  const [setupOpen, setSetupOpen] = useState(!props.selectedRunId), [setupFocus, setSetupFocus] = useState(0);
   const [errors, setErrors] = useState(emptyErrors), [loading, setLoading] = useState(emptyLoading), [attempt, setAttempt] = useState<Attempt | null>(null), [revoked, setRevoked] = useState(false), [refresh, setRefresh] = useState(0), [pages, setPages] = useState<(string | null)[]>([null]);
   const refs = useRef(props); refs.current = props;
   const state = useRef({mounted: false, revoked: false, locked: false, role: null as OpportunitiesListDto['role'] | null, requests: new Map<string, AbortController>(), attempt: null as Attempt | null, scope: '', epoch: 0});
@@ -104,6 +105,11 @@ function RecommendationsController(props: AIRecommendationsPanelProps) {
     return () => {s.mounted = false; for (const controller of s.requests.values()) controller.abort();};
   }, []);
   useEffect(() => {
+    if (!setupFocus) return;
+    const connection = document.getElementById(prefix + 'connection');
+    connection?.focus(); connection?.scrollIntoView({block: 'center'});
+  }, [setupFocus, prefix]);
+  useEffect(() => {
     const s = state.current;
     for (const controller of s.requests.values()) controller.abort();
     s.locked = false; setLoading(emptyLoading); setSource(null);
@@ -169,10 +175,10 @@ function RecommendationsController(props: AIRecommendationsPanelProps) {
     if (state.current.attempt || !detail || detail.run.id !== id || (kind === 'cancel' ? detail.run.status !== 'queued' : !detail.run.canRecover)) return;
     void mutate({kind, path: base + '/runs/' + id + '/' + kind, runId: id, body: opportunitiesActionInputSchema.parse({requestId: crypto.randomUUID()})});
   }
+  const actionFeedback = attempt && <Alert tone="warning" title="Unconfirmed request"><Text>The original request is retained. A retry uses the same request identity.</Text><Button variant="secondary" disabled={loading.action || revoked} onClick={() => {if (state.current.attempt) void mutate(state.current.attempt);}}>Retry same request</Button></Alert>;
   const setup = <>
     {errors.models && <Alert tone="warning" title="Model metadata unavailable">{errors.models}</Alert>}
-    {attempt && <Alert tone="warning" title="Unconfirmed request"><Text>The original request is retained. A retry uses the same request identity.</Text><Button variant="secondary" disabled={loading.action || revoked} onClick={() => {if (state.current.attempt) void mutate(state.current.attempt);}}>Retry same request</Button></Alert>}
-    {history?.canPrepare && <Disclosure summary="Recommendation model and connection" variant="plain" defaultOpen={!props.selectedRunId}>
+    {history?.canPrepare && <Disclosure summary="Recommendation model and connection" variant="plain" open={setupOpen} onOpenChange={setSetupOpen}>
       <Field label="OpenRouter connection" htmlFor={prefix + 'connection'}><Select id={prefix + 'connection'} value={connectionId} disabled={loading.action || !!attempt} options={[{value: '', label: 'Choose a checked connection'}, ...history.connections.map(item => ({value: item.id, label: item.name + (item.checkStatus === 'ok' ? '' : ' — check required')}))]} onChange={event => {if (!state.current.locked && !state.current.attempt) setConnectionId(event.target.value);}}/></Field>
       {props.onOpenConnections ? <Button variant="ghost" onClick={props.onOpenConnections}>Settings › Connections</Button> : <Link href={'/?' + new URLSearchParams({workspace: props.workspaceId, project: props.projectId, view: 'providers', provider: 'openrouter'})}>Settings › Connections</Link>}
       <OpenRouterModelPicker catalog={catalog} selected={models} maximum={1} structured disabled={loading.action || !!attempt} refreshing={loading.models} canRefresh={!revoked && history.canPrepare} onChange={value => {if (!state.current.locked && !state.current.attempt) setModels(value);}} onRefresh={() => {if (!loading.models && !state.current.locked && !state.current.attempt) void read('models', true);}}/>
@@ -180,7 +186,8 @@ function RecommendationsController(props: AIRecommendationsPanelProps) {
   </>;
   return <AIRecommendationsView prefix={prefix} history={revoked ? null : history} detail={revoked ? null : detail} source={revoked ? null : source} selectedRunId={props.selectedRunId} category={props.category}
     readingHistory={loading.history} readingDetail={loading.detail} readingSource={loading.source} running={loading.action} actionBusy={loading.action || !!attempt} canRun={!!ready}
-    historyError={errors.history} detailError={errors.detail} sourceError={errors.source} runError={errors.action} setupControls={setup}
+    historyError={errors.history} detailError={errors.detail} sourceError={errors.source} runError={errors.action} setupControls={setup} actionFeedback={actionFeedback}
+    onOpenSetup={() => {if (!state.current.locked && !state.current.attempt && !state.current.revoked) {setSetupOpen(true); setSetupFocus(value => value + 1);}}}
     onRun={run} onSelectRun={runId => {if (!state.current.revoked) refs.current.onSelectionChange({runId, category: refs.current.category});}} onCategoryChange={category => {if (!state.current.revoked) refs.current.onSelectionChange({runId: refs.current.selectedRunId, category});}}
     onReload={() => {if (!state.current.locked && !state.current.revoked) setRefresh(value => value + 1);}}
     onMoreHistory={history?.nextCursor ? () => {if (!loading.history) setPages(value => [...value, history.nextCursor]);} : undefined}
