@@ -1222,7 +1222,7 @@ try {
   stage='actual current CLI populated0075 to current registered schema';
   const tables75=(await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(r=>r.tablename);
   const versions76=['keyword_quote','prompt_execution_quote','rank_run','ai_suggestion_quote','ai_search_quote','ai_content_support_quote','domain_research_quote','saved_keyword_refresh_plan'],evidence76=['rank_task','rank_dispatch','ai_content_support_run'];
-  const addedCurrentTables=['workspace_provider_control','context_persona','site_analysis_run','site_audit_schedule','site_audit_occurrence','site_audit_access','ai_opportunity_preparation','ai_opportunity_run'];
+  const addedCurrentTables=['workspace_provider_control','context_persona','site_analysis_run','site_audit_schedule','site_audit_occurrence','site_audit_access','ai_opportunity_preparation','ai_opportunity_run','cloudflare_connection'];
   const purposeTables=['ai_suggestion_quote','ai_suggestion_run'];
   const addedCurrent=(table:string)=>[...(versions76.includes(table)?['request_version']:[]),...(evidence76.includes(table)?['request_evidence']:[]),...(purposeTables.includes(table)?['purpose']:[]),...(['ai_search_quote','ai_content_support_quote','ai_suggestion_quote'].includes(table)?['business_input_hash']:[])];
   const every75:Record<string,unknown[]>={};for(const table of tables75)every75[table]=(await pool.query('SELECT to_jsonb(t) AS row FROM '+pg.escapeIdentifier(table)+' t ORDER BY to_jsonb(t)::text')).rows.map(r=>r.row);
