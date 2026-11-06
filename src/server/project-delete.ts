@@ -29,13 +29,13 @@ export async function deleteProject(workspaceId:string,projectId:string,userId:s
   const prior=(await client.query("SELECT actor_id,project_id,input_hash,applied_revision,to_char(deleted_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS at FROM project_deletion_request WHERE workspace_id=$1 AND request_id=$2",[workspaceId,input.requestId])).rows[0];
   if(prior){if(prior.actor_id!==userId||prior.project_id!==projectId||prior.input_hash!==inputHash)throw changed();return projectDeleteResult.parse({workspaceId,role,ack:{workspaceId,projectId,requestId:input.requestId,appliedRevision:prior.applied_revision,deletedAt:prior.at},deleted:true,replayed:true});}
   const target=(await client.query('SELECT analytics_revision AS revision FROM project WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[projectId,workspaceId])).rows[0];if(!target)throw missing();if(target.revision!==input.revision)throw changed();
-  // These seven existing FK families own every charged project request. Saved-keyword
-  // refreshes use keyword runs; backlinks use domain runs; cached views create no ledger.
+  // Every feature request must be settled before its project-owned recovery state can disappear.
+  // Saved-keyword refreshes use keyword runs; backlinks use domain runs.
   const active=await client.query(`WITH ids AS(
    SELECT id FROM keyword_research_run WHERE project_id=$1 UNION ALL SELECT e.id FROM prompt_execution e JOIN prompt_comparison c ON c.id=e.comparison_id WHERE c.project_id=$1
    UNION ALL SELECT d.id FROM rank_dispatch d JOIN rank_run r ON r.id=d.run_id WHERE r.project_id=$1 UNION ALL SELECT id FROM ai_suggestion_run WHERE project_id=$1
    UNION ALL SELECT id FROM ai_search_run WHERE project_id=$1 UNION ALL SELECT id FROM ai_content_support_run WHERE project_id=$1
-   UNION ALL SELECT id FROM domain_research_run WHERE project_id=$1)
+   UNION ALL SELECT id FROM domain_research_run WHERE project_id=$1 UNION ALL SELECT id FROM ai_opportunity_run WHERE project_id=$1)
    SELECT 1 FROM provider_request p JOIN ids ON ids.id=p.id WHERE p.workspace_id=$2 AND p.status IN('reserved','dispatched','uncertain') LIMIT 1`,[projectId,workspaceId]);
   if(active.rowCount)throw new FoundationError(409,'Finish or cancel pending work and check uncertain provider requests before deleting this website.');
   // Same W gate serializes all reserve/dispatch/settle paths. No financial row is modified: each paid-work row of the

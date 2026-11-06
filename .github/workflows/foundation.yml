@@ -115,6 +115,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_prompt_citations_ci');
             await client.query('CREATE DATABASE ten98_prompt_citation_specializations_ci');
             await client.query('CREATE DATABASE ten98_ai_suggestions_ci');
+            for (const kind of ['source', 'preparation', 'admission', 'dispatch', 'retention', 'http', 'recovery']) await client.query('CREATE DATABASE ten98_opportunities_' + kind + '_ci');
             await client.query('CREATE DATABASE ten98_ai_search_ci');
             await client.query('CREATE DATABASE ten98_ai_search_boundaries_ci');
             await client.query('CREATE DATABASE ten98_ai_queries_ci');
@@ -251,6 +252,7 @@ jobs:
               ['ten98_content_coverage_ci', [['tests/ai-content-coverage-integration.ts']], { TEN98_CONTENT_COVERAGE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_project_content_ci', [['tests/ai-project-content-coverage-integration.ts']], { TEN98_PROJECT_CONTENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_content_support_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-content-support-integration.ts']], { TEN98_CONTENT_SUPPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ...['source', 'preparation', 'admission', 'dispatch', 'retention', 'http', 'recovery'].map(kind => ['ten98_opportunities_' + kind + '_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-opportunities-' + kind + '-integration.ts']], { ['TEN98_OPPORTUNITIES_' + kind.toUpperCase() + '_TEST']: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }]),
               ['ten98_dynamic_models_ci', [['src/server/cli.ts', 'migrate'], ['tests/openrouter-models-integration.ts']], { TEN98_MODELS_DYNAMIC_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111' }],
               ['ten98_environment_ci', [['src/server/cli.ts', 'migrate'], ['tests/analytics-environment-integration.ts']], { TEN98_ENVIRONMENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_geography_query_ci', [['tests/analytics-geography-query-integration.ts']], { TEN98_GEOGRAPHY_QUERY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
@@ -414,6 +416,20 @@ jobs:
         run: |
           timeout 120s node tests/ai-insights-view-browser.mjs
           timeout 120s node tests/ai-insights-browser.mjs
+      - name: Verify evidence-linked recommendations
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          TEN98_AI_RECOMMENDATIONS_VIEW_BROWSER: '1'
+          TEN98_AI_RECOMMENDATIONS_BROWSER: '1'
+        run: |
+          timeout 120s node tests/ai-recommendations-view-browser.ts
+          timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=races timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=read-failures timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-retry timeout 120s node tests/ai-recommendations-browser.ts
+          TEN98_AI_RECOMMENDATIONS_SCENARIO=parent-default-retry timeout 120s node tests/ai-recommendations-browser.ts
       - name: Verify notes and Explore recovery
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash

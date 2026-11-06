@@ -167,7 +167,7 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
         )}
        </div>
        <button type="submit" className="btn" disabled={!canPreview} aria-describedby={idPrefix + 'preview-hint'}>Preview occurrences</button>
-       <p className="hint" id={idPrefix + 'preview-hint'}>Preview is free and creates no job.</p>
+       <p className="hint" id={idPrefix + 'preview-hint'}>Preview shows the next scheduled dates without starting a check.</p>
    {preview && (
     <section aria-labelledby={idPrefix + 'preview-heading'}>
      <h3 id={idPrefix + 'preview-heading'}>Next five occurrences</h3>

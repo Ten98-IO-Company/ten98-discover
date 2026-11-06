@@ -358,7 +358,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
           <div className="card">
             <h2>Connections</h2>
             <p>Connect DataForSEO for search research and OpenRouter for AI answers.</p>
-            <Tooltip content="Save credentials, then run an account check. Each feature runs when you choose Run. Provider billing is managed in OpenRouter and DataForSEO."><button type="button" className="btn ghost" aria-label="Connection setup help">Connection help</button></Tooltip>
+            <Tooltip content="Save credentials, then run an account check. Each feature runs when you choose Run."><button type="button" className="btn ghost" aria-label="Connection setup help">Connection help</button></Tooltip>
             {data.requestControls.paused&&<p role="status">Provider requests are paused. You can enable them in Advanced connection controls.</p>}
             {data.connections.length === 0 ? (
               <div className="empty">
@@ -520,7 +520,7 @@ function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: Pr
                 </table>
               </div>
             )}
-            <p className="hint">Request activity records status and timing. Manage provider billing in OpenRouter or DataForSEO.</p>
+            <p className="hint">Request activity records status and timing.</p>
           </div>
         </>
       )}
