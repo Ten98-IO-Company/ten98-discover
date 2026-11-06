@@ -36,7 +36,7 @@ try{
   const selected=rows.filter(r=>{if(outcome==='all')return true;if(outcome==='eligible')return r.eligibility==='eligible';if(outcome==='unavailable')return r.eligibility!=='eligible';const m=r.matches?.find(m=>m.id===entityId);return !!m&&(outcome==='mentioned'?m.mentioned:outcome==='not_mentioned'?!m.mentioned:m.cited);}),offset=params.has('cursor')?50:0;
   return {role:currentRole,modelOptions,filters:{from,to,timeZone,model,promptId:prompt,tag,matcher},drilldown:{entityId,outcome},asOf:to+'T23:59:59.000001Z',contextRevision:1,profileHash:'b'.repeat(64),matcherVersion:matcher,selectionRevision:revision,label:'Recomputed from retained answers using current project context',warnings:[],subjects,coverage,metrics:metrics(rows),daily,evidenceStates:rows.map(({id,eligibility})=>({id,eligibility})),executions:selected.slice(offset,offset+50),totalRows:selected.length,nextCursor:selected.length>offset+50?'page-two':null};
  };
- await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url()),path=url.pathname,method=request.method();if(url.origin!==origin){outbound.push(method+' '+url.origin);return route.abort();}if(!path.startsWith('/api/'))return method==='GET'?route.continue():route.abort();const body=method==='POST'?request.postDataJSON():null;assert.ok(++requestTotal<=400,'Synthetic API request cap exceeded');calls.push({path,method,query:Object.fromEntries(url.searchParams),body});
+ await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url()),path=url.pathname,method=request.method();if(url.origin!==origin){outbound.push(method+' '+url.origin);return route.abort();}if(!path.startsWith('/api/'))return method==='GET'?route.continue():route.abort();const body=method==='POST'?request.postDataJSON():null;assert.ok(++requestTotal<=450,'Synthetic API request cap exceeded');calls.push({path,method,query:Object.fromEntries(url.searchParams),body});
   if(path.includes(otherPid))return json(route,{error:'Synthetic current project denial'},403);
   if(path===base+'/ai-opportunities'&&method==='GET')return json(route,{projectId:pid,role:'viewer',canPrepare:false,connections:[],runs:[],nextCursor:null});
   if(path===base+'/ai-opportunities/source'&&method==='POST')return json(route,{error:'Synthetic current recommendations source failure'},500);
@@ -71,6 +71,58 @@ try{
  const idle=async()=>{await region('Entity metrics').or(page.getByRole('heading',{name:/^(No answer attempts match these filters|No eligible retained answers)$/})).waitFor();await until(()=>button('Reload insights').isEnabled());};
  const release=async()=>{const item=held;assert.ok(item);held=null;if(item.response)await item.route.fulfill(item.response).catch(()=>{});else await json(item.route,item.body,item.status);};
  const fresh=async()=>{await page?.close();assert.equal(held,null);currentRole='viewer';readMode=null;promptMode=null;exportMode=null;comparisonMode='deny';revision='a'.repeat(64);expired=false;receiptMode='normal';calls.length=0;downloads.length=0;page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('download',d=>downloads.push(d));await page.goto(origin);await idle();};
+
+ stage='compact report navigation geometry';await fresh();await mkdir(evidence,{recursive:true});
+ const navigationLabels=['Answer analysis','Compare periods','Analyze citations','Specialized citation reports','Recommendations'];
+ const mobileNavigation=()=>page.getByRole('navigation',{name:'API model reports'}),navigationEvidence=[];
+ const assertCompactNavigation=async(label,phase)=>{
+  await page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(()=>done()))));
+  const geometry=await mobileNavigation().evaluate(nav=>{
+   const list=nav.querySelector('ul'),row=list.getBoundingClientRect(),current=list.querySelector('[aria-current="page"]'),selected=current?.getBoundingClientRect();
+   return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,row:{left:row.left,right:row.right,height:row.height},scrollLeft:list.scrollLeft,
+    entries:[...list.children].map(entry=>{const box=entry.getBoundingClientRect(),visible=entry.cloneNode(true);visible.querySelectorAll('.t98-visually-hidden').forEach(hidden=>hidden.remove());return {label:visible.textContent.trim(),top:box.top,height:box.height};}),
+    selected:current?{label:current.textContent.trim(),left:selected.left,right:selected.right}:null};
+  });
+  navigationEvidence.push({phase,...geometry});await writeFile(resolve(evidence,'mobile-navigation.json'),JSON.stringify(navigationEvidence,null,2));
+  assert.deepEqual(geometry.entries.map(entry=>entry.label),navigationLabels,'All five report choices remain available');
+  assert.equal(geometry.row.height,45,'Report choices occupy one 45px navigation row');
+  assert.ok(geometry.documentWidth<=geometry.viewport,'Navigation must not overflow the document');
+  assert.ok(Math.max(...geometry.entries.map(entry=>entry.top))-Math.min(...geometry.entries.map(entry=>entry.top))<=1,'All five report choices occupy one navigation row');
+  assert.equal(geometry.selected?.label,label,'The current report is identified');
+  assert.ok(geometry.selected.left>=geometry.row.left-1&&geometry.selected.right<=geometry.row.right+1,`Current report stays inside the navigation viewport: ${phase}`);
+  return geometry;
+ };
+ const desktopNavigation=await assertCompactNavigation('Answer analysis','initial desktop');
+ await setViewport(page,{width:320,height:1000});await page.screenshot({path:resolve(evidence,'navigation-320.png')});
+ await assertCompactNavigation('Answer analysis','initial 320px');
+ stage='all five compact report choices by keyboard';
+ for(const[index,label]of navigationLabels.entries()){
+  await mobileNavigation().getByRole('link',{name:navigationLabels[0],exact:true}).focus();
+  for(let tab=0;tab<index;tab++)await page.keyboard.press('Tab');
+  assert.equal(await mobileNavigation().getByRole('link',{name:label,exact:true}).evaluate(el=>el===document.activeElement),true,'Tab reaches '+label);
+  await page.keyboard.press('Enter');
+  if(index===0)await idle();else if(index===4)await page.getByText('No saved reports yet. Run recommendations when retained answers are available.',{exact:true}).waitFor();else await page.getByRole('alert').waitFor();
+  await assertCompactNavigation(label,'keyboard '+label);
+ }
+ stage='compact report history and reload';
+ const specializedHref=await mobileNavigation().getByRole('link',{name:'Specialized citation reports',exact:true}).getAttribute('href');
+ await page.goBack();await page.getByRole('alert').waitFor();await assertCompactNavigation('Specialized citation reports','browser Back');
+ await page.goForward();await page.getByText('No saved reports yet. Run recommendations when retained answers are available.',{exact:true}).waitFor();await assertCompactNavigation('Recommendations','browser Forward');
+ await page.reload();await page.getByText('No saved reports yet. Run recommendations when retained answers are available.',{exact:true}).waitFor();await assertCompactNavigation('Recommendations','Recommendations reload');
+ stage='compact selected report after asynchronous history enable';
+ readMode='hold';await page.goBack();assert.equal(page.url(),new URL(specializedHref,origin).href);await until(()=>held!==null);
+ await page.evaluate(async()=>{await document.fonts.ready;});
+ assert.equal(await mobileNavigation().locator('[aria-disabled="true"]').filter({hasText:'Specialized citation reports'}).count(),1,'History-restored report waits for its validated scope');
+ await release();await page.getByRole('alert').waitFor();await assertCompactNavigation('Specialized citation reports','asynchronous history enable');
+ stage='compact selected report survives desktop to phone resize';
+ await setViewport(page,{width:1440,height:1000});await assertCompactNavigation('Specialized citation reports','expanded desktop');
+ await setViewport(page,{width:320,height:1000});await assertCompactNavigation('Specialized citation reports','resized 320px');
+ await mobileNavigation().getByRole('link',{name:'Answer analysis',exact:true}).click();await idle();await setViewport(page,{width:1440,height:1000});
+ const restoredDesktop=await assertCompactNavigation('Answer analysis','restored desktop');assert.equal(restoredDesktop.row.height,desktopNavigation.row.height,'Desktop navigation height is unchanged');
+ for(const target of [page.getByRole('heading',{name:'Answer coverage',exact:true}),disclosure('Selection details'),region('Daily observations')])await before(region('Entity metrics'),target);
+ assert.deepEqual(calls.filter(call=>call.method!=='GET'&&call.path!==base+'/ai-opportunities/source'),[],'Navigation never starts provider work');
+ assert.deepEqual(errors,[]);assert.deepEqual(outbound,[]);
+ console.log('PASS one-row 320px navigation, all five keyboard choices, current-item visibility after history/reload/async enable/resize, and unchanged desktop result order.');
 
  stage='population, dates and exact numerator drilldown';await fresh();assert.equal(await disclosure('Advanced filters').evaluate(el=>el.open),false);assert.equal(await disclosure('Selection details').evaluate(el=>el.open),false);assert.equal(await button('Export report CSV').count(),1);await before(button('Export report CSV'),disclosure('Advanced filters'));for(const target of [page.getByRole('heading',{name:'Answer coverage',exact:true}),disclosure('Selection details'),region('Daily observations')])await before(region('Entity metrics'),target);await expand('Selection details');assert.equal(await region('Entity metrics').locator('tbody tr').count(),3);let all=await page.locator('main').innerText();for(const value of [hostile,'30 / 60 (50%)','30 / 50 (60%)','20 / 60 (33.3%)','0 / 60 (0%)','Unavailable','web search off','requested day'])assert.ok(all.includes(value),value);assert.equal(await page.locator('main img,main iframe').count(),0);assert.equal(await region('Execution evidence').locator('tbody tr').count(),50);await button('Next executions').click();await idle();assert.equal(await region('Execution evidence').locator('tbody tr').count(),14);await button('Previous executions').click();await idle();await button('Show mentions for '+hostile).click();await idle();assert.equal(await region('Execution evidence').locator('tbody tr').count(),30);assert.equal(calls.findLast(call=>call.path===endpoint).query.entityId,'brand');assert.equal(calls.findLast(call=>call.path===endpoint).query.outcome,'mentioned');await button('Show non-mentions for '+hostile).click();await idle();assert.equal(await region('Execution evidence').locator('tbody tr').count(),30);await button('Show citations for '+hostile).click();await idle();assert.equal(await region('Execution evidence').locator('tbody tr').count(),20);await button('Unavailable answers').click();await idle();assert.equal(await region('Execution evidence').locator('tbody tr').count(),4);assert.equal(calls.filter(c=>c.method==='POST').length,0);
  console.log('PASS viewer reads, exact numerator drilldowns, separate citations, request-day gaps, zero/null and inert identities.');
@@ -190,6 +242,6 @@ try{
  const beforeReload=calls.filter(call=>call.path===endpoint).length;await page.reload();await page.getByRole('heading',{name:'Recommendations',exact:true}).waitFor();await page.getByText('No saved reports yet. Run recommendations when retained answers are available.',{exact:true}).waitFor();assert.equal(calls.filter(call=>call.path===endpoint).length,beforeReload);
  assert.equal(calls.filter(call=>call.path.startsWith(base+'/ai-opportunities')&&call.method==='POST'&&!call.path.endsWith('/source')).length,0);
  console.log('PASS recommendations navigation and direct reload retain independent history when current answer analysis and source fail, without provider mutations.');
- assert.ok(browser.contexts().length<=24,'Browser context cap exceeded');console.log(`Controller resources: ${requestTotal} synthetic loopback API requests; ${browser.contexts().length} browser context; ${outbound.length} external requests.`);
+ assert.equal(browser.contexts().length,1,'Browser context cap exceeded');console.log(`Controller resources: ${requestTotal} synthetic loopback API requests; ${browser.contexts().length} browser context; ${outbound.length} external requests.`);
 
 }catch(error){await mkdir(evidence,{recursive:true});await writeFile(resolve(evidence,'failure.txt'),stage+'\n'+(error?.stack??String(error)));if(page&&!page.isClosed()){await writeFile(resolve(evidence,'failure.html'),await page.content().catch(()=>''));await page.screenshot({path:resolve(evidence,'failure.png'),fullPage:true}).catch(()=>{});}console.error('FAIL AI insights controller: '+stage);throw error;}finally{await browser?.close();await server.close();}
