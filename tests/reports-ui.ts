@@ -82,18 +82,38 @@ try {
   await page.getByLabel('Report title',{exact:true}).fill('Quarterly review');
   const source='<html><head><title>Quarterly review</title></head><body><h1>Public snapshot one</h1><script>window.reportExecuted=true</script></body></html>';
   await page.getByLabel('HTML source',{exact:true}).fill(source);
+  let failSavedList=true;
+  const savedListPattern=`**/api/projects/${project.id}/reports`;
+  await page.route(savedListPattern,async(route:any)=>{
+    if(route.request().method()==='GET'&&failSavedList){failSavedList=false;await route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Synthetic report list refresh failure'})});}
+    else await route.continue();
+  });
   await page.getByRole('button',{name:'Save report',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Synthetic report list refresh failure'}).waitFor();
+  assert.ok(new URLSearchParams(new URL(page.url()).searchParams.get('reportQuery')!).get('id'),'A successful save commits selection before auxiliary refreshes.');
+  assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),source);
+  await page.unroute(savedListPattern);
+  await page.getByRole('button',{name:'Retry loading',exact:true}).click();
   await page.getByRole('button',{name:'Preview saved report',exact:true}).click();
   const frame=page.frameLocator('iframe[title]');
   await frame.getByRole('heading',{name:'Public snapshot one'}).waitFor();
   assert.equal(await frame.locator('script').count(),0);
   const saved=(await request(`/api/projects/${project.id}/reports`)).reports.find((row:any)=>row.title==='Quarterly review');
   assert.ok(saved);assert.equal((await request(`/api/projects/${project.id}/reports/${saved.id}`)).report.html,source);
+  const selectedUrl=page.url(),selectedQuery=new URLSearchParams(new URL(selectedUrl).searchParams.get('reportQuery')!);
+  assert.equal(selectedQuery.get('id'),saved.id);assert.equal(selectedQuery.get('revision'),'1');assert.equal(selectedQuery.get('preview'),'1');
   await page.reload({waitUntil:'networkidle'});
-  await selectProject('UI report project');
-  await section('Reports','Saved reports');
-  await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
+  await frame.getByRole('heading',{name:'Public snapshot one'}).waitFor();
   assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),source);
+  await page.getByRole('button',{name:'Hide preview',exact:true}).click();await page.goBack();await frame.getByRole('heading',{name:'Public snapshot one'}).waitFor();await page.goForward();await page.getByRole('button',{name:'Preview saved report',exact:true}).waitFor();
+  let detailReads=0;const countDetail=(req:any)=>{if(new URL(req.url()).pathname===`/api/projects/${project.id}/reports/${saved.id}`&&req.method()==='GET')detailReads++;};page.on('request',countDetail);
+  await page.getByLabel('HTML source',{exact:true}).fill('Protected draft');
+  assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'Protected draft');
+  await page.getByRole('button',{name:'Preview saved report',exact:true}).click();await frame.getByRole('heading',{name:'Public snapshot one'}).waitFor();
+  assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'Protected draft');assert.equal(detailReads,0);page.off('request',countDetail);
+  const dirtyUrl=page.url(),boards=page.getByRole('navigation',{name:'Reports pages',exact:true}).getByRole('link',{name:'Boards',exact:true});
+  await boards.click();await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(page.url(),dirtyUrl);assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'Protected draft');
+  await boards.click();await page.getByRole('dialog').getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>new URL(location.href).searchParams.get('view')==='boards');await page.goBack();await page.getByLabel('HTML source',{exact:true}).waitFor();assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),source);
   // A competing saved revision must never overwrite a typed draft silently.
   await page.getByLabel('HTML source',{exact:true}).fill('<h1>My unsaved draft</h1>');
   await request(`/api/projects/${project.id}/reports/${saved.id}`,{title:'Quarterly review',html:'<h1>Concurrent version</h1>',revision:1});
@@ -102,9 +122,49 @@ try {
   assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'<h1>My unsaved draft</h1>');
   await page.getByRole('button',{name:'Reload saved version',exact:true}).click();
   await page.waitForFunction(()=>Array.from(document.querySelectorAll('textarea')).some(input=>input.value==='<h1>Concurrent version</h1>'));
+  await page.goto(selectedUrl);await page.getByRole('alert').filter({hasText:'The saved item changed.'}).waitFor();assert.equal(await page.getByLabel('HTML source',{exact:true}).count(),0);assert.equal(await page.locator('iframe').count(),0);
+  await page.getByRole('button',{name:'Reload saved version',exact:true}).click();await page.getByLabel('HTML source',{exact:true}).waitFor();assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'<h1>Concurrent version</h1>');
+  const restoredReportUrl=page.url();
+  for(const suffix of ['&reportQuery=kind%3Dreport','&view=reports']){let reads=0;const count=(req:any)=>{if(new URL(req.url()).pathname.includes(`/api/projects/${project.id}/reports`))reads++;};page.on('request',count);await page.goto(restoredReportUrl+suffix);await page.getByRole('alert').filter({hasText:'This report link is invalid.'}).waitFor();assert.equal(reads,0);page.off('request',count);}
+  await page.goto(restoredReportUrl);await page.getByLabel('HTML source',{exact:true}).waitFor();
+  // An old response cannot replace the draft after leaving and returning to the same target.
+  await boards.click();await section('Reports','Saved reports');
+  let detailReceived!:()=>void,releaseDetail!:()=>void,detailFinished!:()=>void;
+  const detailIntercepted=new Promise<void>(resolve=>{detailReceived=resolve;}),detailReleased=new Promise<void>(resolve=>{releaseDetail=resolve;}),detailComplete=new Promise<void>(resolve=>{detailFinished=resolve;});
+  const detailPath=`**/api/projects/${project.id}/reports/${saved.id}`;
+  let firstDetail=true;
+  await page.route(detailPath,async(route:any)=>{
+    if(!firstDetail){await route.fallback();return;}firstDetail=false;
+    const response=await route.fetch();detailReceived();await detailReleased;
+    try{await route.fulfill({response});}catch{/* Leaving the target aborts the old read. */}finally{detailFinished();}
+  });
+  await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
+  await Promise.race([detailIntercepted,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Report detail was not intercepted.')),10000))]);
+  await page.goBack();
+  await page.getByRole('button',{name:'Quarterly review',exact:true}).waitFor();
+  assert.equal(new URLSearchParams(new URL(page.url()).searchParams.get('reportQuery')??'').get('id'),null);assert.equal(await page.getByLabel('HTML source',{exact:true}).count(),0);
+  await page.goForward();await page.getByLabel('HTML source',{exact:true}).waitFor();assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'<h1>Concurrent version</h1>');
+  await page.getByLabel('HTML source',{exact:true}).fill('Protected returning draft');
+  releaseDetail();await detailComplete;await page.unroute(detailPath);
+  assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),'Protected returning draft');
+  await page.getByLabel('HTML source',{exact:true}).fill('<h1>Concurrent version</h1>');
   console.log('PASS report UI: real save/reload, preserved private source, isolated preview and optimistic-conflict draft preservation');
 
   const panel=page.getByRole('region',{name:'Reports and sharing',exact:true});
+  // The same history round trip must also reject an old empty share list.
+  await boards.click();await section('Reports','Saved reports');
+  let shareReceived!:()=>void,releaseShares!:()=>void,shareFinished!:()=>void,firstShares=true;
+  const sharesIntercepted=new Promise<void>(resolve=>{shareReceived=resolve;}),sharesReleased=new Promise<void>(resolve=>{releaseShares=resolve;}),sharesComplete=new Promise<void>(resolve=>{shareFinished=resolve;});
+  const sharesPath=`**/api/projects/${project.id}/reports/${saved.id}/shares`;
+  await page.route(sharesPath,async(route:any)=>{
+    if(route.request().method()!=='GET'||!firstShares){await route.fallback();return;}firstShares=false;
+    const response=await route.fetch();shareReceived();await sharesReleased;
+    try{await route.fulfill({response});}catch{/* The departed read may already have been aborted. */}finally{shareFinished();}
+  });
+  await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
+  await Promise.race([sharesIntercepted,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Share history was not intercepted.')),10000))]);
+  await page.goBack();await page.getByRole('button',{name:'Quarterly review',exact:true}).waitFor();await page.goForward();
+  await page.getByLabel('Link label',{exact:true}).waitFor();
   await page.evaluate(()=>{
     Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Fixture clipboard denial');}}});
     document.execCommand=()=>false;
@@ -115,6 +175,9 @@ try {
   await page.getByRole('button',{name:'Create public link',exact:true}).evaluate((button:HTMLButtonElement)=>{button.click();button.click();});
   const oneTime=page.getByLabel('One-time share URL',{exact:true});
   await oneTime.waitFor();const firstUrl=await oneTime.inputValue();
+  await page.getByText('Link created. Copy it now; the full URL is shown only once.',{exact:true}).waitFor();
+  releaseShares();await sharesComplete;await page.unroute(sharesPath);
+  await page.getByText('Client alpha',{exact:true}).waitFor();assert.equal(await oneTime.inputValue(),firstUrl);
   let links=await request(`/api/projects/${project.id}/reports/${saved.id}/shares`);
   assert.equal(links.shares.length,1);assert.equal(JSON.stringify(links).includes(firstUrl),false);
   const publicSnapshot=await context.request.get(firstUrl);assert.equal(publicSnapshot.status(),200);assert.match(await publicSnapshot.text(),/Concurrent version/);
@@ -264,6 +327,7 @@ try {
   await page.getByRole('button',{name:'Create public link',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Your current role cannot perform this report action.'}).waitFor();
   assert.equal(await page.getByLabel('HTML source',{exact:true}).count(),0);assert.equal(await page.getByRole('region',{name:'Public report links',exact:true}).count(),0);assert.equal(await oneTime.count(),0);
+  assert.equal(await page.locator('iframe').count(),0,'Authorization loss must purge the saved preview as well as the editor.');
   await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
   assert.equal(await page.getByLabel('HTML source',{exact:true}).isEditable(),true);
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspaceId,me.user.id]);

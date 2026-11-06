@@ -290,7 +290,8 @@
     },
     "P13": {
       "migrations": [
-        "0042_ai_search"
+        "0042_ai_search",
+        "0081_ai_search_request_isolation"
       ]
     },
     "P14": {
