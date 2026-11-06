@@ -364,7 +364,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
                 <option value="">Choose a market…</option>
                 {markets.map(m=><option key={m.locationCode+'|'+m.languageCode} value={m.locationCode+'|'+m.languageCode}>{m.locationName} / {m.languageName} ({m.languageCode})</option>)}
               </select>
-              <p className="hint">{markets.length===0?'No markets loaded. Refresh markets to fetch the catalog (a free provider request).':'Catalog updated '+dt(st.catalog.updatedAt)+'.'}</p>
+              <p className="hint">{markets.length===0?'No markets loaded. Refresh markets to fetch the catalog from DataForSEO.':'Catalog updated '+dt(st.catalog.updatedAt)+'.'}</p>
             </div>
             {mode==='ideas'&&<div>
               <label htmlFor={uid+'-limit'}>Max ideas</label>
@@ -382,7 +382,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
         <div className="row">
           <button type="submit" className="btn primary" disabled={writing||st.requestsPaused||!st.vaultConfigured}>Run</button>
         </div>
-        <Disclosure summary="How research runs" variant="plain"><p>Run sends the selected keywords and market to DataForSEO. Results and request activity are saved. Provider billing is managed in DataForSEO.</p></Disclosure>
+        <Disclosure summary="How research runs" variant="plain"><p>Run sends the selected keywords and market to DataForSEO. Results and request activity are saved.</p></Disclosure>
       </fieldset></form></details>
     )}
 
@@ -399,7 +399,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       {canResearch&&selected.canCancel&&<div className="row"><button type="button" className="btn" onClick={cancelRun} disabled={writing}>Cancel run</button></div>}
       {isOwner&&selected.status==='uncertain'&&selected.requestStatus==='uncertain'&&<Disclosure summary="Check original request (owner)" variant="plain">
         <div className="stack">
-          <p className="hint">Runs a free metadata check against the provider account; the server validates that the connection matches. This does not rerun research and cannot recover a missing live result.</p>
+          <p className="hint">Checks the original request metadata against the provider account; the server validates that the connection matches. This does not rerun research and cannot recover a missing live result.</p>
           <div>
             <label htmlFor={uid+'-recon'}>Connection to check</label>
             <select id={uid+'-recon'} value={reconConn} onChange={e=>setReconConn(e.target.value)}>

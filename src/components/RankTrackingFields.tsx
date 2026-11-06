@@ -386,7 +386,7 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
         </div>
 
         <p className="hint" id={id('closing-hint')}>
-          Saving these settings does not start a paid check.
+          Save these settings, then run a rank check when ready.
         </p>
       </div>
     </fieldset>
