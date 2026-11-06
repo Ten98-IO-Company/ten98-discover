@@ -21,8 +21,8 @@ importers:
         specifier: file:vendor/ten98-runtime-0.22.0.tgz
         version: file:vendor/ten98-runtime-0.22.0.tgz(better-auth@1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       '@ten98/ui':
-        specifier: file:vendor/ten98-ui-0.36.3.tgz
-        version: file:vendor/ten98-ui-0.36.3.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: file:vendor/ten98-ui-0.36.5.tgz
+        version: file:vendor/ten98-ui-0.36.5.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -543,9 +543,9 @@ packages:
       better-auth:
         optional: true
 
-  '@ten98/ui@file:vendor/ten98-ui-0.36.3.tgz':
-    resolution: {integrity: sha512-qxVO1GkU123a0j7HK1V4x2Fyu/Q5XY9F1p5mL4eT8v0GRyCzBD5O1TgxCCjA70q3PJeSf7KRVngkE1AHhLJ0Cg==, tarball: file:vendor/ten98-ui-0.36.3.tgz}
-    version: 0.36.3
+  '@ten98/ui@file:vendor/ten98-ui-0.36.5.tgz':
+    resolution: {integrity: sha512-17Z/K4V9V9yOVrUtzPZz4m5Gg3a9JKiMpmG4EEUO9jnkEYx86URY98sPGZ2y2wY014bi/napOwlzSg9/jbCvUA==, tarball: file:vendor/ten98-ui-0.36.5.tgz}
+    version: 0.36.5
     engines: {node: '>=24.22.1 <25'}
     peerDependencies:
       react: ^18.3.0 || ^19.0.0
@@ -1972,7 +1972,7 @@ snapshots:
     optionalDependencies:
       better-auth: 1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
 
-  '@ten98/ui@file:vendor/ten98-ui-0.36.3.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@ten98/ui@file:vendor/ten98-ui-0.36.5.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
