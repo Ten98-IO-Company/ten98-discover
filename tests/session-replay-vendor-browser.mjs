@@ -15,7 +15,7 @@ const {readReplayChunk,reassembleReplay,replayLimits}=await import(pathToFileURL
 mkdirSync(out,{recursive:true});const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const assets=['public/tracker.js','public/destinations.js','public/replay.js','public/vendor/rrweb-LICENSE.txt','src/lib/session-replay.ts','tests/session-replay-vendor-browser.mjs'];
 const pins=()=>Object.fromEntries(assets.map(file=>[file,hash(resolve(root,file))])),before=pins();
-assert.equal(before['public/replay.js'],'79378dcbba722ff01b9e02eb1663df6318ae55036ec16ec1f6a6eebe5e0fa703');
+assert.equal(before['public/replay.js'],'5aaa6c2979022392c1571145b2e4ce3cebe5b6006a4f2e0a10517872a40eadc8');
 const site='55000000-0000-4000-8000-000000000001',secondSite='55000000-0000-4000-8000-000000000002',epoch='55000000-0000-4000-8000-000000000003';
 const recording='55000000-0000-4000-8000-000000000004',nonce='ten98-replay-real-vendor-smoke',path='/replay-vendor/record',playerPath='/replay-vendor/player';
 const token='c3ludGhldGljLXJlcGxheS1jYXBhYmlsaXR5.'+'a'.repeat(64);
@@ -74,7 +74,7 @@ async function fresh(mode){
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url());
   if(url.origin!==origin&&!(mode.startsWith('builtin-')&&url.origin===assetOrigin)){evidence.external.push({method:request.method(),origin:url.origin,path:url.pathname});save();return route.abort();}
-  const entry={method:request.method(),path:url.pathname,hasQuery:!!url.search};record.requests.push(entry);assert.ok(record.requests.length<=60);assert.ok(evidence.contexts.reduce((n,r)=>n+r.requests.length,0)<=240);save();
+  const entry={method:request.method(),path:url.pathname,hasQuery:!!url.search};record.requests.push(entry);assert.ok(record.requests.length<=60);assert.ok(evidence.contexts.reduce((n,r)=>n+r.requests.length,0)<=100);save();
   if(url.pathname==='/api/tracking-config'){
    const body=JSON.parse(request.postData());assert.deepEqual(Object.keys(body).sort(),['environment','siteKey']);assert.ok([site,...(mode==='owner'?[secondSite]:[])].includes(body.siteKey));assert.equal(body.environment,'live');assert.equal(request.method(),'POST');const headers=await request.allHeaders();assert.equal(headers.cookie,undefined);assert.equal(headers.referer,undefined);return route.fulfill({status:200,contentType:'application/json',headers:{'cache-control':'no-store','access-control-allow-origin':'*'},body:JSON.stringify(config(mode,body.siteKey))});
   }
@@ -284,7 +284,7 @@ export async function runReplayTextGeometryBrowser(hoverRule='font-size:30px'){
    if(req.url==='/upload'){let raw='';req.on('data',b=>raw+=b);req.on('end',()=>{assert.ok(!raw.includes('W'.repeat(20)));assert.ok(!raw.includes('PRIVATE_INLINE'));res.end('{}');});return;}res.end('<!doctype html><html><body></body></html>');});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
   browser=await launchChromium();context=await browser.newContext({viewport:{width:1265,height:720}});evidence.contexts++;context.setDefaultTimeout(8000);
-  await context.route('**/*',route=>{evidence.requests++;assert.ok(evidence.requests<=150);if(new URL(route.request().url()).origin!==origin){evidence.external.push(route.request().url());return route.abort();}return route.continue();});
+  await context.route('**/*',route=>{evidence.requests++;assert.ok(evidence.requests<=100);if(new URL(route.request().url()).origin!==origin){evidence.external.push(route.request().url());return route.abort();}return route.continue();});
   const page=await context.newPage();await page.goto(origin+'/record');await page.evaluate(()=>{window.stop=window.__ten98FoundationHub.startReplayRecorder({maskLevel:'strict',blockSelector:''},e=>window.events.push(e));});
   const settle=async()=>{await page.waitForTimeout(80);};
   async function sample(name,supported=true){await settle();const v=await page.evaluate(()=>{const r=document.querySelector('#target').getBoundingClientRect();return{events:window.events.length,time:window.events.at(-1).timestamp,top:r.top+scrollY,left:r.left+scrollX,scroll:scrollY,width:innerWidth,height:innerHeight};});evidence.samples.push({name,supported,...v});save();}
