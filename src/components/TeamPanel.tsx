@@ -256,8 +256,10 @@ function TeamPanelContent(props: TeamPanelProps) {
     runInviteAction(action);
   }
 
-  function changeRole(m: Member, role: Role) {
+  async function changeRole(m: Member, role: Role) {
     if (role === m.role) return;
+    // A role change alters who may do what, so it is confirmed like removal; the select stays on the saved role until then.
+    if (!await confirm({ title: `Change ${m.name}'s role to ${roleLabel(role)}?`, description: `${m.name} (${m.email}) is ${roleLabel(m.role)} now. The new role applies immediately.`, confirmLabel: `Make ${roleLabel(role)}` })) return;
     void runMutation(`Could not change the role of ${m.name}`, async signal => {
       await api<unknown>(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(m.userId)}/role`,
@@ -348,7 +350,7 @@ function TeamPanelContent(props: TeamPanelProps) {
           value={m.role}
           disabled={busy}
           width='auto'
-          onChange={e => changeRole(m, e.target.value as Role)}
+          onChange={e => void changeRole(m, e.target.value as Role)}
           options={roleOptions.map(r => ({ value: r, label: roleLabel(r) }))}
         />
       ) : roleLabel(m.role),
