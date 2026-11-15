@@ -52,14 +52,11 @@ td { padding-block:16px; border-block-end:1px solid var(--color-border); vertica
 .connection-callout { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:20px; background:var(--color-accent-subtle); border:1px solid var(--color-border); border-radius:9px; }
 .dialog,dialog { border:1px solid var(--color-border); border-radius:13px; background:var(--color-surface); color:var(--color-text); padding:25px 28px; max-inline-size:calc(100% - 32px); max-block-size:90dvh; overflow:auto; overscroll-behavior:contain; box-shadow:var(--shadow-dialog); }
 dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
-/* @ten98/ui auth.css places the orbit with physical `right` and has no phone grid rows; both belong in the library. */
-[dir='rtl'] .auth-orbit { right:auto; inset-inline-end:-240px; }
-/* @ten98/ui gives pointer: coarse its 44px floor for .btn/.button/.icon-button, fields and .t98-button; native nav items and disclosures still need it. */
-@media (pointer: coarse) { :is(.nav-item,summary) { min-block-size:44px; } }
+/* Raw <details> summaries still need the coarse-pointer 44px floor until they become Disclosure (@ten98/ui covers .nav-item and its own controls). */
+@media (pointer: coarse) { summary { min-block-size:44px; } }
 @media(max-width:760px) {
  .card { padding:18px; }
- .auth-shell { grid-template-rows:auto 1fr; }
- [dir='rtl'] .auth-orbit { inset-inline-end:-130px; }
+ .auth-shell { grid-template-rows:auto 1fr; } /* @ten98/ui auth.css has no phone grid rows; belongs in the library. */
  .connection-callout { flex-wrap:wrap; }
 }
 @media(forced-colors:active) { :focus-visible,input:focus,select:focus,textarea:focus { outline-color:Highlight; } :is(input,select,textarea,.btn,.button) { border-color:ButtonBorder; } }
@@ -102,5 +99,3 @@ th { font-size:12px; }
 
 .ai-search > section[aria-label="Capture a ChatGPT answer with web search"] { inline-size:100%; max-inline-size:var(--form-max); }
 
-/* ponytail: @ten98/ui 0.17.0 still wraps only chart summaries and notes; captions and legends cannot break long words (time zones, series names); at 320px and 200% zoom they overflow the card. */
-.t98-chart { overflow-wrap: anywhere; }

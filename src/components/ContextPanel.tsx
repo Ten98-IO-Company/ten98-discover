@@ -67,7 +67,7 @@ function ContextPanelInner({workspaceId,projectId,userId,headerBottom,onUnauthor
   }
   async function discard() {
     if(retry&&!await confirm({title:'Discard the local attempt and reload the saved data?',description:'This save may already have succeeded.',confirmLabel:'Discard and reload'})) return false;
-    if(editor&&!retry&&!await confirm({title:'Discard the unsaved form and reload saved data?',description:'Your edits in this form have not been saved.',confirmLabel:'Reload saved data',danger:false})) return false;
+    if(editor&&!retry&&!await confirm({title:'Discard the unsaved form and reload saved data?',description:'Your edits in this form have not been saved.',confirmLabel:'Reload saved data',danger:false,initialFocus:'cancel'})) return false;
     return true;
   }
   async function load(ask=false) {
@@ -103,7 +103,7 @@ function ContextPanelInner({workspaceId,projectId,userId,headerBottom,onUnauthor
   useEffect(()=>{if(editor){formRef.current?.scrollIntoView({block:'nearest'});formRef.current?.querySelector<HTMLElement>('input:not([readonly]),textarea,select')?.focus();}},[editor?.kind]);
   async function open(value:Editor) {
     if(locked.current||retry||conflict)return;
-    if(editor&&(!await confirm({title:'Discard the unsaved form and edit another item?',description:'Your edits in this form have not been saved.',confirmLabel:'Discard and edit',danger:false})||locked.current))return;
+    if(editor&&(!await confirm({title:'Discard the unsaved form and edit another item?',description:'Your edits in this form have not been saved.',confirmLabel:'Discard and edit',danger:false,initialFocus:'cancel'})||locked.current))return;
     setEditor(value);setError('');setNotice('');formRef.current?.scrollIntoView({block:'nearest'});
   }
   async function closeEditor() {
