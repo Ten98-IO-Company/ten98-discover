@@ -1,5 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
-import {ToastProvider} from '@ten98/ui';
+import {createThemeScript,ToastProvider} from '@ten98/ui';
 import { getConfig } from '../server/config.ts';
 import stylesheet from '../styles.css?url';
 
@@ -7,6 +7,9 @@ export const Route = createRootRoute({
   head: () => ({
     meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }, { title: 'ten98 Discover' }],
     links: [{ rel: 'stylesheet', href: stylesheet }, { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    // Paints the theme this browser cached (useTheme in the app shell writes it) before the first frame. The router adds
+    // ssr.nonce to head scripts, so the script-src policy below admits it without a hash or 'unsafe-inline'.
+    scripts: [{ children: createThemeScript() }],
   }),
   // Server-rendered documents only: the nonce exists in production SSR (src/router.tsx), server routes answer with
   // their own Response, and the client build deletes this option together with the getConfig import.
@@ -20,5 +23,6 @@ export const Route = createRootRoute({
     // ponytail: no includeSubDomains/preload because setup admits apex APP_URLs that may own plain-HTTP subdomains; adding them is an owner decision.
     ...(getConfig().appUrl.startsWith('https:') ? { 'strict-transport-security': 'max-age=31536000' } : {}),
   } : {},
-  component: () => <html lang="en"><head><HeadContent /></head><body><ToastProvider><Outlet /></ToastProvider><Scripts /></body></html>,
+  // The theme script sets data-theme on <html> before hydration, which React would otherwise report as a mismatch.
+  component: () => <html lang="en" suppressHydrationWarning><head><HeadContent /></head><body><ToastProvider><Outlet /></ToastProvider><Scripts /></body></html>,
 });

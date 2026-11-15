@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, AuthFrameProvider, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, AuthFrameProvider, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions, useTheme } from '@ten98/ui'
 import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -313,11 +313,9 @@ function App() {
     preferencesEntry.current=view==='preferences'
     if(entering&&phase==='app')void loadAccountPreferences()
   },[view,phase])
-  useEffect(()=>{
-    // Without an applied account preference (sign-in, recovery, state screens, unavailable preferences) the browser's own light or dark setting applies.
-    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'system'
-    return()=>{document.documentElement.dataset.theme='system'}
-  },[phase,me?.user.id,accountPreferences.data])
+  // The account's saved theme wins once this user's preferences are loaded; another user's are never passed. Until then
+  // (sign-in, recovery, state screens, unavailable preferences) the hook applies the theme this browser cached, else the device setting.
+  useTheme({value:phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:null})
   useEffect(()=>()=>{preferencesGeneration.current++;preferencesRequest.current?.abort()},[])
 
   function enterApp(m: Me, destination?: NavigationSearch) {
