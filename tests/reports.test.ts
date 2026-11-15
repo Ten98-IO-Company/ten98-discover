@@ -60,7 +60,7 @@ const alternate=(name:string)=>[...name].map((char,index)=>index%2 ? char.toUppe
 // Each spelling a browser may resolve to the same identifier, plus a raw control character.
 const spellings=(name:string)=>({
   plain:name, upper:name.toUpperCase(), mixed:alternate(name),
-  escapedSpace:`\\${hex(name[0])} ${name.slice(1)}`, escapedHex:`${name.slice(0,-1)}\\${hex(name.at(-1)!)}`, escapedZeroPadded:`\\00${hex(name[0])}${name.slice(1)}`,
+  escapedSpace:`\\${hex(name[0])} ${name.slice(1)}`, escapedHex:`${name.slice(0,-1)}\\${hex(name.at(-1)!)}`, escapedZeroPadded:`\\${hex(name[0]).padStart(6,'0')}${name.slice(1)}`,
   comment:`${name[0]}/**/${name.slice(1)}`, control:`${name[0]}\u0001${name.slice(1)}`,
 });
 const loaders:Array<[string,(name:string)=>string]>=[
@@ -116,22 +116,24 @@ test('report stylesheets drop @import, @font-face, @namespace and other unlisted
   assert.equal(styleOf('<style>p{color:red}@font-face{font-family:Brand;src:url(https://external.invalid/a.woff2)}</style>').sheet,'p{color:red}');
 });
 
-test('report styles refuse escapes and unbalanced text, and keep only same-document SVG paint references',()=>{
-  assert.equal(styleOf(`<p style='color:red;content:"\\201C";width:calc(1px'>x</p>`).inline,'color:red');
-  assert.equal(styleOf(`<style>.md\\:flex{display:flex}p{color:red}a){color:blue}</style>`).sheet,'p{color:red}');
+test('report styles read escapes as CSS does, drop unbalanced text, and keep only same-document SVG paint references',()=>{
+  assert.equal(styleOf(`<p style='color:red;content:"\\201C";width:calc(1px'>x</p>`).inline,'color:red;content:"\u201C"','A string is written back from its value.');
+  assert.equal(styleOf(`<style>.md\\:flex{display:flex}p{color:red}a){color:blue}</style>`).sheet,'.md\\:flex{display:flex}p{color:red}');
   assert.equal(styleOf(`<style>p{color:red}q{color:blue</style>`).sheet,'p{color:red}');
   assert.equal(styleOf(`<style>p{color:red;q{color:blue}}</style>`).sheet,'p{color:red}','Nested rules are dropped.');
-  assert.equal(styleOf(`<style>p{color:red}/* note */ q{color:blue /* x */}</style>`).sheet,'p{color:red}  q{color:blue  }','Comments become token-separating spaces.');
-  const svg=elements(sanitizeReportHtml('<svg><linearGradient id="g"/><rect fill="url(#g)" stroke="URL(https://external.invalid/a.svg#g)"/><rect fill="blue" clip-path="u\\72l(#g)"/><path fill="url(#g) red" stroke="none"/></svg>'))
+  assert.equal(styleOf(`<style>p{color:red}/* note */ q{color:blue /* x */}</style>`).sheet,'p{color:red} q{color:blue }','Comments beside whitespace are dropped.');
+  assert.equal(styleOf(`<style>p{margin:1px/* x */2px}</style>`).sheet,'p{margin:1px/**/2px}','A comment between two tokens stays an empty comment.');
+  const svg=elements(sanitizeReportHtml('<svg><linearGradient id="g"/><rect fill="url(#g)" stroke="URL(https://external.invalid/a.svg#g)"/><rect fill="blue" clip-path="u\\72l(#g)"/><path fill="url(#g) red" stroke="none"/><rect fill=\'url("#g")\' stroke="url(#g) url(https://external.invalid/b.svg)"/></svg>'))
     .filter(node=>['rect','path'].includes(node.tagName)).map(node=>Object.fromEntries(node.attrs.map(attr=>[attr.name,attr.value])));
-  assert.deepEqual(svg,[{fill:'url(#g)'},{fill:'blue'},{fill:'url(#g) red',stroke:'none'}]);
+  assert.deepEqual(svg,[{fill:'url(#g)'},{fill:'blue','clip-path':'u\\72l(#g)'},{fill:'url(#g) red',stroke:'none'},{fill:'url("#g")'}]);
 });
 
-test('report styles read strings as text, not functions, and still drop escaped strings',()=>{
+test('report styles read strings as text, not functions',()=>{
   const kept='content:"Total (EUR)";font-family:"Foo (Bar)", \'Baz (Qux)\', serif;quotes:"(" ")"';
   assert.equal(styleOf(`<p style="${kept.replaceAll('"','&quot;')}">x</p>`).inline,kept);
   assert.equal(styleOf(`<style>p{${kept}}</style>`).sheet,`p{${kept}}`);
-  for(const dropped of ['content:"a" url(https://external.invalid/a.png)','background:url("https://external.invalid/a.png")','content:"\\28 x"','content:"(" image-set("a.png" 1x)'])
+  assert.equal(styleOf(`<style>p{content:"\\28 x"}</style>`).sheet,'p{content:"(x"}');
+  for(const dropped of ['content:"a" url(https://external.invalid/a.png)','background:url("https://external.invalid/a.png")','content:"(" image-set("a.png" 1x)','background:url ("https://external.invalid/a.png")'])
     assert.equal(styleOf(`<style>p{color:red;${dropped}}</style>`).sheet,'p{color:red}',dropped);
 });
 

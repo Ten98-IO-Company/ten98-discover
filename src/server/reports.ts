@@ -13,7 +13,7 @@ import {getConfig} from './config.ts';
 import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
 import {cleanText,text,revision as revisionInput} from './context-input.ts';
-import {safeSvgPaint,sanitizeDeclarations,sanitizeStylesheet} from './report-style.ts';
+import {reportCssPolicy,sanitizeDeclarations,sanitizePresentationValue,sanitizeStylesheet} from './report-style.ts';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
@@ -68,11 +68,11 @@ export function sanitizeReportHtml(source:string):string {
       if (!(svg ? svgTags.has(child.tagName) : child.namespaceURI===htmlNamespace && htmlTags.has(child.tagName))) return false;
       child.attrs=child.attrs.filter(attr=>{
         if (attr.namespace || attr.prefix || !(commonAttrs.has(attr.name) || (svg ? svgAttrs.has(attr.name) : structuralAttrs[child.tagName]?.has(attr.name)))) return false;
-        if (attr.name==='style') { attr.value=sanitizeDeclarations(attr.value); return !!attr.value.trim(); }
-        if (svg && svgPaintAttrs.has(attr.name)) return safeSvgPaint(attr.value);
+        if (attr.name==='style') { attr.value=sanitizeDeclarations(attr.value,reportCssPolicy); return !!attr.value.trim(); }
+        if (svg && svgPaintAttrs.has(attr.name)) { const value=sanitizePresentationValue(attr.name,attr.value,reportCssPolicy); if (value===undefined) return false; attr.value=value; return true; }
         return attr.name!=='src' || (child.tagName==='img' && rasterData(attr.value));
       });
-      if (!svg && child.tagName==='style') for (const node of child.childNodes) if (node.nodeName==='#text') (node as Html.TextNode).value=sanitizeStylesheet((node as Html.TextNode).value);
+      if (!svg && child.tagName==='style') for (const node of child.childNodes) if (node.nodeName==='#text') (node as Html.TextNode).value=sanitizeStylesheet((node as Html.TextNode).value,reportCssPolicy);
       pending.push({node:child,depth:depth+1});
       return true;
     });
