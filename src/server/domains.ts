@@ -9,7 +9,8 @@ import { getDatabase } from './db.ts';
 import { withContentProject } from './project-context.ts';
 
 const DOMAIN_LIMIT = 50;
-const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa'];
+// Reserved or special-use names (RFC 2606/6761/6762/8375, ICANN .internal) plus undelegated private-network conventions.
+const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa', 'lan', 'corp', 'intranet', 'private'];
 
 /** Accept a DNS host, never a URL, address, wildcard or DNS-provider record-name shortcut. */
 export function normalizePublicHostname(input: unknown): string {
@@ -204,7 +205,14 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
     if (!row.challenge_hash || !row.challenge_expires_at || row.challenge_expires_at.getTime() <= Date.now()) {
       throw new FoundationError(409, 'Create a new DNS proof before verifying.');
     }
-    return { hostname: row.hostname, hash: row.challenge_hash };
+    // Rows stored before a suffix was refused are re-checked, so the proof lookup only queries public DNS names.
+    // The canonical domain cannot be removed, so its message points at the website address instead.
+    let hostname: string | null = null;
+    try { hostname = normalizeDomainHost(row.hostname); } catch { /* Refused below. */ }
+    if (hostname !== row.hostname) throw new FoundationError(400, row.role === 'canonical'
+      ? 'This website’s address is not a public hostname. A website’s address cannot be changed, so add the website again with a public hostname.'
+      : 'This hostname is not a public DNS name. Remove it and add a public hostname.');
+    return { hostname, hash: row.challenge_hash };
   });
   // Never hold a workspace transaction open across an external DNS request.
   let matched = false, unavailable = false;

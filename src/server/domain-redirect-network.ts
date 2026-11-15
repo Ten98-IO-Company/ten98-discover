@@ -3,9 +3,10 @@ import https from 'node:https';
 import {isIP} from 'node:net';
 import {performance} from 'node:perf_hooks';
 import {toUSVString} from 'node:util';
-import {addressKey,publicNetworkAddress,pinnedNetworkPeer as pinnedPeer,resolveNetworkHost as resolveRedirectHost,type NetworkAddress as Address} from '@ten98/runtime';
+import {addressKey,pinnedNetworkPeer as pinnedPeer,resolveNetworkHost as resolveRedirectHost,type NetworkAddress as Address} from '@ten98/runtime';
 export {pinnedPeer,resolveRedirectHost};
 import {normalizePublicHostname} from './domains.ts';
+import {publicTargetAddress} from './public-target-address.ts';
 
 const URL_LIMIT=2048, HEADER_LIMIT=16384, HOP_MS=5000, TOTAL_MS=30000;
 const redirects=new Set([301,302,303,307,308]);
@@ -34,7 +35,7 @@ export function redirectUrl(raw:string,base?:URL):URL {
     }catch{throw new RedirectFailure('blocked');}
   }else if(/^[a-z][a-z0-9+.-]*:/i.test(raw))throw new RedirectFailure('blocked');
   const hostname=url.hostname.replace(/^\[|\]$/g,'');
-  if(isIP(hostname)){if(!publicNetworkAddress(hostname))throw new RedirectFailure('blocked');}
+  if(isIP(hostname)){if(!publicTargetAddress(hostname))throw new RedirectFailure('blocked');}
   else {try{if(normalizePublicHostname(hostname)!==hostname)throw new Error();}catch{throw new RedirectFailure('blocked');}}
   url.hash='';
   return url;
@@ -44,7 +45,7 @@ function cleanUrl(url:URL){return `${url.origin}${url.pathname}`;}
 /** No global agent or environment proxy; each request resolves through the vetted, pinned address only. */
 export async function requestRedirectHeaders(url:URL,address:Address,signal:AbortSignal):Promise<{status:number;location:string|null}> {
   redirectUrl(url.href);
-  if(isIP(address.address)!==address.family||!publicNetworkAddress(address.address))throw new RedirectFailure('blocked');
+  if(isIP(address.address)!==address.family||!publicTargetAddress(address.address))throw new RedirectFailure('blocked');
   const client=url.protocol==='https:'?https:http;
   const agent=url.protocol==='https:'?new https.Agent({keepAlive:false,proxyEnv:{}}):new http.Agent({keepAlive:false,proxyEnv:{}});
   return new Promise((resolve,reject)=>{
@@ -90,7 +91,7 @@ export async function observeDomainRedirect(hostname:string,expectedHostname:str
       const hopStarted=performance.now(),signal=AbortSignal.any([controller.signal,AbortSignal.timeout(HOP_MS)]);
       const host=current.hostname.replace(/^\[|\]$/g,''),addresses=await transport.resolve(host,signal);
       signal.throwIfAborted();
-      if(!Array.isArray(addresses)||addresses.length<1||addresses.length>32||addresses.some(a=>!a||isIP(a.address)!==a.family||!publicNetworkAddress(a.address)))return finish('blocked');
+      if(!Array.isArray(addresses)||addresses.length<1||addresses.length>32||addresses.some(a=>!a||isIP(a.address)!==a.family||!publicTargetAddress(a.address)))return finish('blocked');
       const response=await transport.request(current,addresses[0],signal);
       signal.throwIfAborted();
       const hop:RedirectHop={url:cleanUrl(current),status:response.status,durationMs:Math.round(performance.now()-hopStarted),location:null};hops.push(hop);

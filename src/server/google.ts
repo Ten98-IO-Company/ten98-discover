@@ -6,7 +6,7 @@ import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { credentialKeys, decryptCredentials, encryptCredentials } from './credential-vault.ts';
-import { isInstanceOperator, requireInstanceOperator } from './instance-operators.ts';
+import { requireInstanceOperator } from './instance-operators.ts';
 import { googleInput, googleScopes, safeGoogleString, type GoogleProvider } from './google-reports.ts';
 import { googleRequest, GoogleRequestError } from './google-http.ts';
 import { requireWorkspaceFactor } from './teams.ts';
@@ -103,10 +103,15 @@ export async function refreshGoogleConnection(projectId: string, userId: string,
   if (failure) throw failure;
 }
 
+/**
+ * Instance operators only: the settings panel is their sole reader. Members who can connect Google read the
+ * configured/enabled/testing flags from their project's connection listing instead.
+ */
 export async function getGoogleApp(userId: string) {
-  const [operator, result] = await Promise.all([isInstanceOperator(userId), getDatabase().pool.query<App>("SELECT * FROM google_app WHERE id='instance'")]);
-  const app = result.rows[0];
-  return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator, revision: app?.revision ?? 0, ...(operator && app ? { clientId: app.client_id } : {}) };
+  const { pool } = getDatabase();
+  await requireInstanceOperator(pool, userId);
+  const app = (await pool.query<App>("SELECT * FROM google_app WHERE id='instance'")).rows[0];
+  return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator: true, revision: app?.revision ?? 0, ...(app ? { clientId: app.client_id } : {}) };
 }
 export async function saveGoogleApp(userId: string, value: unknown) {
   const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), value);

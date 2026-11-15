@@ -5,7 +5,8 @@ import { request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import { oidcEndpoint, readResponseText } from '@ten98/runtime';
-import { addressKey, publicNetworkAddress } from '@ten98/runtime';
+import { addressKey } from '@ten98/runtime';
+import { publicTargetAddress } from './public-target-address.ts';
 import { clientRateLimit } from './client-rate-limit.ts';
 import { authorizationCodeRequest, createAuthorizationURL, verifyProviderIdToken } from 'better-auth/oauth2';
 import { z } from 'zod';
@@ -54,7 +55,7 @@ export function permittedOidcAddress(address: string, explicitlyAllowed: readonl
   const canonical = addressKey(address);
   if (!canonical) return false;
   if (explicitlyAllowed.some((allowed) => addressKey(allowed) === canonical)) return true;
-  return publicNetworkAddress(address);
+  return publicTargetAddress(address);
 }
 
 function endpoint(raw: string, settings: OidcSettings): URL {
