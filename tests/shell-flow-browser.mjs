@@ -159,7 +159,7 @@ try {
       const workspaceBox = workspace.getBoundingClientRect();
       // line-height: normal computes to a keyword, so fall back to the font size times a typical ratio.
       const lineHeight = element => { const style = getComputedStyle(element), value = parseFloat(style.lineHeight); return Number.isFinite(value) ? value : parseFloat(style.fontSize) * 1.4; };
-      return {height:bounds.height, workspaceLines:workspaceBox.height / lineHeight(workspace), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
+      return {height:bounds.height, workspaceLines:workspaceBox.height / lineHeight(workspace), contained:[bar.querySelector('.t98-app-topbar__breadcrumb')].every(element => {
         const box = element.getBoundingClientRect(); return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
       })};
     });
@@ -201,7 +201,7 @@ try {
   assert.equal(await main.getByText('Events currently retained', {exact:true}).count(), 0);
   assert.equal(await main.locator('.t98-page-header p.dim').count(), 0);
   assert.equal(await main.locator('.t98-page-header .t98-page-description').innerText(), '⁨Shell fixture project⁩ · ⁨' + website + '⁩');
-  assert.equal(await page.getByText('Development preview', {exact:true}).count(), 1);
+  assert.equal(await page.getByText('Development preview', {exact:true}).count(), 0); // Owner decision 2026-11-15: no preview badge in any app.
   assert.equal(await page.locator('.app-footer').count(), 0);
   await count(0); await capture('events-empty-1440');
   console.log('PASS shell: keyboard skip/hash preservation, one header/empty message and truthful preview status.');
@@ -373,7 +373,7 @@ try {
   for (const width of [320,768,1440]) {
     await setViewport(page,{width,height:900}); await open('events'); await eventRegion().waitFor(); await fit('Long scope names ' + width); await compactScope('Long scope names ' + width);
     await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL long scope names ' + width); await compactScope('RTL long scope names ' + width);
-    assert.equal(await page.getByText('Development preview', {exact:true}).isVisible(), width > 760); // The shared top bar hides the preview badge at 760px and below.
+    assert.equal(await page.getByText('Development preview', {exact:true}).count(), 0);
     await capture('events-long-scope-rtl-' + width);
   }
   longNames = false; await setViewport(page,{width:1440,height:900}); await open('installation'); await snippetRegion().waitFor();
