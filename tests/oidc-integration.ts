@@ -275,8 +275,12 @@ export async function runOidcChecks(options: Options): Promise<void> {
     await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: replacementProof, action: 'replace-recovery' }, 400);
     const replacement = await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: replacementProof, action: 'replace-recovery', backupCode: oidcEnroll.backupCodes[0] });
     assert.equal(replacement.backupCodes.length, 10);
-    const disableProof = await accountProof();
-    await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: disableProof, action: 'disable-two-factor', backupCode: replacement.backupCodes[0] });
+    const disableProof = await accountProof(), disable = { proofId: disableProof, action: 'disable-two-factor', backupCode: replacement.backupCodes[0] };
+    // #562: refused while the required workspace still requires it; the proof and recovery code roll back with the refusal.
+    assert.equal((await call('/api/account/oidc/reauth/confirm', newBrowser, disable, 409)).error, 'Two-factor authentication is required by OIDC two-factor required fixture. An owner must turn off that requirement first.');
+    assert.equal((await call('/api/account/security', newBrowser)).user.twoFactorEnabled, true);
+    await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
+    await call('/api/account/oidc/reauth/confirm', newBrowser, disable);
     assert.equal((await call('/api/account/security', newBrowser)).user.twoFactorEnabled, false);
     const nextEnroll = await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: await accountProof(), action: 'enable-two-factor' });
     await call('/api/account/two-factor/verify', newBrowser, { code: authenticatorCode(new URL(nextEnroll.totpURI).searchParams.get('secret')!) });

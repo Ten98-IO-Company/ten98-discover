@@ -5,7 +5,8 @@ import { api, ApiError, errMsg } from '../lib/api'
 import { authorizationRedirect } from '../lib/oidc-authorization'
 import { closureAcknowledgements, closurePrivacyNotice } from './AccountClosurePanel'
 
-type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean }
+// twoFactorRequirement is present while a workspace this user belongs to requires two-factor, so turning it off is refused.
+type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean; twoFactorRequirement: { message: string; workspaces: { id: string; name: string; owner: boolean }[] } | null }
 type Identity = { id: string; providerName: string; enabled: boolean }
 type Proof = { id: string; purpose: string; providerName: string; issuer: string; subject: string; expiresAt: string }
 type Action = 'set-password' | 'enable-two-factor' | 'disable-two-factor' | 'replace-recovery' | 'close-account'
@@ -74,7 +75,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
       if (data.user.id !== userId) { clearSecrets(); callbacks.current.onUnauthorized(); return }
       setSecurity(data)
       setAction(previous => data.user.twoFactorEnabled
-        ? previous === 'enable-two-factor' ? 'set-password' : previous
+        ? previous === 'enable-two-factor' || (previous === 'disable-two-factor' && data.twoFactorRequirement) ? 'set-password' : previous
         : previous === 'disable-two-factor' || previous === 'replace-recovery' ? 'set-password' : previous)
       if (data.hasPassword) { setProof(null); setIdentities([]); return }
       const connected = await api<{ identities: Identity[] }>('/api/account/oidc/identities', { signal: controller.signal })
@@ -126,6 +127,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
   function confirm(event: FormEvent) {
     event.preventDefault()
     if (!proof || !security) return
+    if (action === 'disable-two-factor' && security.twoFactorRequirement) return
     if (action === 'set-password' && password !== repeat) { setError('The new passwords do not match. Enter them again.'); return }
     const body = { proofId: proof.id, action, ...(action === 'set-password' ? { newPassword: password } : {}),
       ...(security.user.twoFactorEnabled ? recovery ? { backupCode: factor.trim() } : { code: factor.trim() } : {}) }
@@ -142,6 +144,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
     })
   }
   if (loading && !security) return <Text tone='muted' role='status'>Loading identity recovery settings…</Text>
+  const requirement = security?.user.twoFactorEnabled ? security.twoFactorRequirement ?? null : null
   if (security?.hasPassword && !notice && !enrollment) return null
   return <Card as='section' headingLevel={2} aria-label='Identity account security' aria-busy={busy || loading}
     title={<><AppIcon name='shield' size={18} />{' '}Identity account security</>} description='Recovery for accounts connected to an identity provider'>
@@ -151,6 +154,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
       {notice && <Text role='status'>{notice}</Text>}
       {security && !security.hasPassword && <>
         <Text>Sign in again with your linked provider to change security settings. Adding a local recovery password is optional.</Text>
+        {requirement && <Alert id='oidc-disable-required' tone='info' variant='inline' title='Two-factor authentication is required'>{requirement.message}</Alert>}
         {!proof && !enrollment && <Inline>
           {identities.map(identity => <Button variant='secondary' type='button' disabled={busy || loading} key={identity.id} onClick={() => start(identity.id)}>Verify with {identity.providerName}</Button>)}
           {!identities.length && <Text>No enabled identity provider is available. Ask the installation operator to restore access to your provider.</Text>}
@@ -159,8 +163,8 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
           <Text>Verified with <Text as='strong' weight='semibold'>{proof.providerName}</Text>. This proof expires {new Date(proof.expiresAt).toLocaleString()} and can be used once.</Text>
           <Text mono>{proof.issuer} · {proof.subject}</Text>
           <Stack as='fieldset' disabled={busy || loading}>
-            <Field label='Security change' htmlFor='oidc-security-action'><Select id='oidc-security-action' value={action} onChange={event => { setAction(event.target.value as Action); setPassword(''); setRepeat(''); setFactor('') }}>
-              {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <Option key={value} value={value}>{label}</Option>)}
+            <Field label='Security change' htmlFor='oidc-security-action'><Select id='oidc-security-action' aria-describedby={requirement ? 'oidc-disable-required' : undefined} value={action} onChange={event => { setAction(event.target.value as Action); setPassword(''); setRepeat(''); setFactor('') }}>
+              {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <Option key={value} value={value} disabled={value === 'disable-two-factor' && requirement !== null}>{label}</Option>)}
             </Select></Field>
             {action === 'close-account' && <Text role='note'>Closing is permanent. You are signed out everywhere, every API key you issued is revoked, and your linked identities, authenticator, preferences and memberships are removed. You cannot close the account while you are the only owner of a workspace or the only instance operator.</Text>}
             {action === 'close-account' && <Text>{closurePrivacyNotice}</Text>}
@@ -170,7 +174,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
             {security.user.twoFactorEnabled && <><Field label='Existing second factor' htmlFor='oidc-factor-type'><Select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><Option value='totp'>Authenticator code</Option><Option value='recovery'>Recovery code</Option></Select></Field>
               <Field label={recovery ? 'Recovery code' : 'Authenticator code'} htmlFor='oidc-existing-factor'><Input id='oidc-existing-factor' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 21 : 6} required value={factor} onChange={event => setFactor(event.target.value)} /></Field></>}
             <Inline>
-              <Button variant='primary' type='submit'>{action === 'close-account' ? 'Close account permanently' : 'Apply security change'}</Button>
+              <Button variant='primary' type='submit' disabled={action === 'disable-two-factor' && requirement !== null}>{action === 'close-account' ? 'Close account permanently' : 'Apply security change'}</Button>
               <Button variant='ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</Button>
             </Inline>
           </Stack>
