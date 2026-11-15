@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import { Combobox } from '@ten98/ui';
+import { Button, Combobox, Disclosure, Field, Fieldset, Inline, Input, Option, Select, Stack, Text } from '@ten98/ui';
 
 export type MatchDraft = {
   type: 'path' | 'event';
@@ -29,11 +29,9 @@ export function MatchFields(props: {
   const actionId = `${idPrefix}-action`;
   const matchId = `${idPrefix}-match`;
   return (
-    <fieldset className="field conversion-match" disabled={disabled}>
-      <legend>Match criteria</legend>
-      <div className="row">
-        <label htmlFor={actionId}>Action</label>
-        <select
+    <Fieldset legend="Match criteria" disabled={disabled}>
+      <Field label="Action" htmlFor={actionId}>
+        <Select
           id={actionId}
           value={value.type}
           disabled={disabled}
@@ -41,13 +39,12 @@ export function MatchFields(props: {
             onChange({ ...value, type: event.target.value as MatchDraft['type'] })
           }
         >
-          <option value="path">{pathLabel}</option>
-          <option value="event">Custom event</option>
-        </select>
-      </div>
-      <div className="row">
-        <label htmlFor={matchId}>Match</label>
-        <select
+          <Option value="path">{pathLabel}</Option>
+          <Option value="event">Custom event</Option>
+        </Select>
+      </Field>
+      <Field label="Match" htmlFor={matchId}>
+        <Select
           id={matchId}
           value={value.match}
           disabled={disabled}
@@ -55,12 +52,12 @@ export function MatchFields(props: {
             onChange({ ...value, match: event.target.value as MatchDraft['match'] })
           }
         >
-          <option value="exact">Exactly matches</option>
-          <option value="prefix">Starts with</option>
-          <option value="suffix">Ends with</option>
-          <option value="contains">Contains</option>
-        </select>
-      </div>
+          <Option value="exact">Exactly matches</Option>
+          <Option value="prefix">Starts with</Option>
+          <Option value="suffix">Ends with</Option>
+          <Option value="contains">Contains</Option>
+        </Select>
+      </Field>
       <Combobox
         label={value.type === 'path' ? 'Page path' : 'Event name'}
         options={suggestions?.[value.type] ?? []}
@@ -72,7 +69,7 @@ export function MatchFields(props: {
         description={suggestions ? 'Pick one seen in the last 30 days, or type your own. Text is matched literally.' : 'Text is matched literally; wildcards are not expanded.'}
         emptyMessage="Nothing like this seen yet. You can still use what you typed."
       />
-    </fieldset>
+    </Fieldset>
   );
 }
 
@@ -87,119 +84,119 @@ export function PropertyFields(props: {
     onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
   return (
-    <details className="field">
-      <summary>Property filters ({items.length})</summary>
-      <p className="hint">All filters must match. A missing property only matches Is missing.</p>
-      {items.map((item, index) => {
-        const row = index + 1;
-        const keyId = `${idPrefix}-prop-${row}-key`;
-        const operatorId = `${idPrefix}-prop-${row}-operator`;
-        const typeId = `${idPrefix}-prop-${row}-type`;
-        const valueId = `${idPrefix}-prop-${row}-value`;
-        const valueHintId = `${idPrefix}-prop-${row}-value-hint`;
-        const isMissing = item.operator === 'missing';
-        const isContains = item.operator === 'contains' || item.operator === 'not_contains';
-        const isNull = item.type === 'null';
-        return (
-          <fieldset key={index} className="field conversion-property" disabled={disabled}>
-            <legend>Property filter {row}</legend>
-            <div className="row">
-              <label htmlFor={keyId}>Property key</label>
-              <input
-                id={keyId}
-                type="text"
-                value={item.key}
-                minLength={1}
-                maxLength={320}
-                disabled={disabled}
-                onChange={(event) => update(index, { key: event.target.value })}
-              />
-            </div>
-            <div className="row">
-              <label htmlFor={operatorId}>Operator</label>
-              <select
-                id={operatorId}
-                value={item.operator}
-                disabled={disabled}
-                onChange={(event) => {
-                  const operator = event.target.value as PropertyDraft['operator'];
-                  update(
-                    index,
-                    operator === 'contains' || operator === 'not_contains'
-                      ? { operator, type: 'string' }
-                      : { operator },
-                  );
-                }}
-              >
-                <option value="missing">Is missing</option>
-                <option value="eq">Equals</option>
-                <option value="neq">Does not equal</option>
-                <option value="contains">Contains</option>
-                <option value="not_contains">Does not contain</option>
-              </select>
-            </div>
-            {!isMissing && (
-              <div className="row">
-                <label htmlFor={typeId}>Type</label>
-                <select
-                  id={typeId}
-                  value={item.type}
-                  disabled={disabled || isContains}
+    <Disclosure summary={`Property filters (${items.length})`}>
+      <Stack gap={3}>
+        <Text as="p" tone="muted" size="sm">All filters must match. A missing property only matches Is missing.</Text>
+        {items.map((item, index) => {
+          const row = index + 1;
+          const keyId = `${idPrefix}-prop-${row}-key`;
+          const operatorId = `${idPrefix}-prop-${row}-operator`;
+          const typeId = `${idPrefix}-prop-${row}-type`;
+          const valueId = `${idPrefix}-prop-${row}-value`;
+          const valueHintId = `${idPrefix}-prop-${row}-value-hint`;
+          const isMissing = item.operator === 'missing';
+          const isContains = item.operator === 'contains' || item.operator === 'not_contains';
+          const isNull = item.type === 'null';
+          return (
+            <Fieldset key={index} legend={`Property filter ${row}`} disabled={disabled}>
+              <Field label="Property key" htmlFor={keyId}>
+                <Input
+                  id={keyId}
+                  type="text"
+                  value={item.key}
+                  minLength={1}
+                  maxLength={320}
+                  disabled={disabled}
+                  onChange={(event) => update(index, { key: event.target.value })}
+                />
+              </Field>
+              <Field label="Operator" htmlFor={operatorId}>
+                <Select
+                  id={operatorId}
+                  value={item.operator}
+                  disabled={disabled}
                   onChange={(event) => {
-                    const type = event.target.value as PropertyDraft['type'];
-                    update(index, type === 'null' ? { type, valueText: 'null' } : { type });
+                    const operator = event.target.value as PropertyDraft['operator'];
+                    update(
+                      index,
+                      operator === 'contains' || operator === 'not_contains'
+                        ? { operator, type: 'string' }
+                        : { operator },
+                    );
                   }}
                 >
-                  <option value="string">String</option>
-                  <option value="number">Number</option>
-                  <option value="boolean">Boolean</option>
-                  <option value="null">Null</option>
-                  <option value="date">Date</option>
-                  <option value="array">Array</option>
-                </select>
-              </div>
-            )}
-            {!isMissing && !isNull && (
-              <>
-                <div className="row">
-                  <label htmlFor={valueId}>JSON value</label>
-                  <input
-                    id={valueId}
-                    type="text"
-                    value={item.valueText}
-                    disabled={disabled}
-                    aria-describedby={valueHintId}
-                    onChange={(event) => update(index, { valueText: event.target.value })}
-                  />
-                </div>
-                <p className="hint" id={valueHintId}>
-                  Enter a JSON value; strings need quotes.
-                </p>
-              </>
-            )}
-            {!isMissing && isNull && <p className="hint">Null is a stored value, distinct from a missing property.</p>}
-            <button
-              type="button"
-              className="btn"
-              aria-label={`Remove property filter ${row}`}
-              disabled={disabled}
-              onClick={() => onChange(items.filter((_, i) => i !== index))}
-            >
-              Remove
-            </button>
-          </fieldset>
-        );
-      })}
-      <button
-        type="button"
-        className="btn"
-        disabled={disabled || items.length >= MAX_PROPERTY_FILTERS}
-        onClick={() =>
-          onChange([...items, { key: '', operator: 'eq', type: 'string', valueText: '""' }])
-        }
-      >
-        Add property filter
-      </button>
-    </details>
+                  <Option value="missing">Is missing</Option>
+                  <Option value="eq">Equals</Option>
+                  <Option value="neq">Does not equal</Option>
+                  <Option value="contains">Contains</Option>
+                  <Option value="not_contains">Does not contain</Option>
+                </Select>
+              </Field>
+              {!isMissing && (
+                <Field label="Type" htmlFor={typeId}>
+                  <Select
+                    id={typeId}
+                    value={item.type}
+                    disabled={disabled || isContains}
+                    onChange={(event) => {
+                      const type = event.target.value as PropertyDraft['type'];
+                      update(index, type === 'null' ? { type, valueText: 'null' } : { type });
+                    }}
+                  >
+                    <Option value="string">String</Option>
+                    <Option value="number">Number</Option>
+                    <Option value="boolean">Boolean</Option>
+                    <Option value="null">Null</Option>
+                    <Option value="date">Date</Option>
+                    <Option value="array">Array</Option>
+                  </Select>
+                </Field>
+              )}
+              {!isMissing && !isNull && (
+                <>
+                  <Field label="JSON value" htmlFor={valueId}>
+                    <Input
+                      id={valueId}
+                      type="text"
+                      value={item.valueText}
+                      disabled={disabled}
+                      aria-describedby={valueHintId}
+                      onChange={(event) => update(index, { valueText: event.target.value })}
+                    />
+                  </Field>
+                  <Text as="p" tone="muted" size="sm" id={valueHintId}>
+                    Enter a JSON value; strings need quotes.
+                  </Text>
+                </>
+              )}
+              {!isMissing && isNull && <Text as="p" tone="muted" size="sm">Null is a stored value, distinct from a missing property.</Text>}
+              <Inline>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={`Remove property filter ${row}`}
+                  disabled={disabled}
+                  onClick={() => onChange(items.filter((_, i) => i !== index))}
+                >
+                  Remove
+                </Button>
+              </Inline>
+            </Fieldset>
+          );
+        })}
+        <Inline>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={disabled || items.length >= MAX_PROPERTY_FILTERS}
+            onClick={() =>
+              onChange([...items, { key: '', operator: 'eq', type: 'string', valueText: '""' }])
+            }
+          >
+            Add property filter
+          </Button>
+        </Inline>
+      </Stack>
+    </Disclosure>
   );
 }
