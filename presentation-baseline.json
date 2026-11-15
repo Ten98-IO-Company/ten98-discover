@@ -35,10 +35,6 @@
     "element": 146,
     "styling": 120
   },
-  "src/components/AnalysisCriteriaFields.tsx": {
-    "element": 46,
-    "styling": 14
-  },
   "src/components/AnalyticsPanel.tsx": {
     "stylesheet": 1,
     "element": 311,
