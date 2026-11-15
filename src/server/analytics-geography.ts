@@ -47,7 +47,7 @@ export async function loadGeographyDatabase(path?:string):Promise<GeographyReade
 }
 
 type Runtime={active:GeographyReader;initializing?:Promise<void>};
-const key=Symbol.for('ten98-monitor.analytics-geography'),shared=globalThis as typeof globalThis&{[key]?:Runtime};
+const key=Symbol.for('ten98-discover.analytics-geography'),shared=globalThis as typeof globalThis&{[key]?:Runtime};
 // Nitro startup and TanStack SSR are separate bundles, as in resource-cleanup.ts.
 function runtime(){return shared[key]??={active:{database:{status:'unavailable',reason:'not-configured'},lookup:()=>null}};}
 /** Web startup only: collection never opens a file or initiates retries. Restart to replace a database. */

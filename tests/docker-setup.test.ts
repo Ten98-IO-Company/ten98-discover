@@ -88,7 +88,7 @@ test('createSetup writes a private env with well-formed secrets', () => {
   assert.ok(env.DATABASE_URL === `postgresql://ten98:${env.POSTGRES_PASSWORD}@postgres:5432/ten98`);
   assert.ok(env.DEPLOYMENT_MODE === GOOD.mode && env.APP_URL === GOOD.url);
   assert.ok(env.APP_PORT === GOOD.port && env.COMPOSE_PROJECT_NAME === GOOD.project);
-  assert.ok(env.TEN98_IMAGE === `ten98-monitor:${GOOD.project}`);
+  assert.ok(env.TEN98_IMAGE === `ten98-discover:${GOOD.project}`);
   if (process.platform !== 'win32') {
     assert.ok((lstatSync(join(d, '.env')).mode & 0o777) === 0o600);
   }

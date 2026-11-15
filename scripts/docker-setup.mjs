@@ -78,7 +78,7 @@ export function createSetup(directory, options) {
   const content = [
     `DEPLOYMENT_MODE=${v.mode}`,
     `COMPOSE_PROJECT_NAME=${v.project}`,
-    `TEN98_IMAGE=ten98-monitor:${v.project}`,
+    `TEN98_IMAGE=ten98-discover:${v.project}`,
     `APP_URL=${v.url}`,
     `APP_PORT=${v.port}`,
     `POSTGRES_PASSWORD=${postgres}`,
@@ -118,7 +118,7 @@ export function readSetup(directory) {
       port: env.APP_PORT,
       project: env.COMPOSE_PROJECT_NAME,
     });
-    if (env.TEN98_IMAGE !== `ten98-monitor:${v.project}`) fail('bad image selection');
+    if (env.TEN98_IMAGE !== `ten98-discover:${v.project}`) fail('bad image selection');
     // An older file's BOOTSTRAP_TOKEN is ignored: the first account created in the app becomes the owner.
     const secrets = [env.POSTGRES_PASSWORD, env.AUTH_SECRET];
     if (secrets.some((s) => typeof s !== 'string' || !SECRET_RE.test(s)) || new Set(secrets).size !== 2) {

@@ -146,7 +146,7 @@ function sendInvitationEmail(to: string, role: string, inviteUrl: string) {
 export const collectorLimits = { client: 1200, site: { collector: 3000, heatmap: 3000, replay: 3000, 'tracking-config': 600 }, global: 60000 } as const;
 
 // Once per process: the Nitro entry (collector middleware) and the TanStack Start bundle each have a copy of this module.
-const collectorClientLimitNotice = Symbol.for('ten98-monitor.collector-client-limit-notice');
+const collectorClientLimitNotice = Symbol.for('ten98-discover.collector-client-limit-notice');
 const noticed = globalThis as typeof globalThis & { [collectorClientLimitNotice]?: true };
 
 /** The project a public site key names when the request origin is allowed for it, or null. */

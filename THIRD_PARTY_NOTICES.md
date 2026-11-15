@@ -2,7 +2,7 @@
 
 ## Browser performance measurements
 
-`public/performance.js` wraps the unmodified browser IIFE from [GoogleChrome/web-vitals 6.2.3](https://github.com/GoogleChrome/web-vitals) in a private scope and connects its five metric callbacks to the native tracker's collection policy. The upstream 8,991-byte asset has SHA-256 `1e5e9b9af6b8d71cfef508e5a869c53b4cf2bbccad8c9b5ac664c34e93f6151a`; it came from the versioned npm registry archive, whose integrity was verified before copying. The wrapper is a ten98-monitor modification. This optional asset is served locally and starts observers only after the project opts into performance collection and the tracker permits collection. It uses no external CDN or additional Node dependency. The upstream code is Apache-2.0, with its full license distributed at `public/vendor/web-vitals-LICENSE.txt`; the application's MIT license does not relicense that code.
+`public/performance.js` wraps the unmodified browser IIFE from [GoogleChrome/web-vitals 6.2.3](https://github.com/GoogleChrome/web-vitals) in a private scope and connects its five metric callbacks to the native tracker's collection policy. The upstream 8,991-byte asset has SHA-256 `1e5e9b9af6b8d71cfef508e5a869c53b4cf2bbccad8c9b5ac664c34e93f6151a`; it came from the versioned npm registry archive, whose integrity was verified before copying. The wrapper is a ten98-discover (formerly ten98-monitor) modification; its header comment keeps the old name because the tracker adapter check pins the script's leading bytes. This optional asset is served locally and starts observers only after the project opts into performance collection and the tracker permits collection. It uses no external CDN or additional Node dependency. The upstream code is Apache-2.0, with its full license distributed at `public/vendor/web-vitals-LICENSE.txt`; the application's MIT license does not relicense that code.
 
 The application includes the attributed Elmo and OpenSEO adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
 
@@ -164,7 +164,7 @@ Optional deployment component: the official `caddy:2.11.7-alpine` image, pinned 
 
 Audit date: 2026-10-12. Scope: `0.0.0-foundation`, `pnpm@11.19.0`, Node 24, lockfile SHA-256 `6c6777f9d139f3f592bd4a2e1430ebf406b7e9642bc14be8b8ff755f2777b30e`.
 
-The foundation is original application code using library dependencies and the documented architectural patterns above. It does not copy Elmo, Umami or OpenSEO branding or datasets; application code ported since 2026-10-21 is listed in the upstream import ledger above. The upstream application import ledger remains empty. Library dependencies below are separate from that ledger and retain their own licenses; MIT is the license of ten98-monitor's original code.
+The foundation is original application code using library dependencies and the documented architectural patterns above. It does not copy Elmo, Umami or OpenSEO branding or datasets; application code ported since 2026-10-21 is listed in the upstream import ledger above. The upstream application import ledger remains empty. Library dependencies below are separate from that ledger and retain their own licenses; MIT is the license of ten98-discover's original code.
 
 ### Exact direct dependencies
 
@@ -488,7 +488,7 @@ SOFTWARE.
 
 The report renderer adds direct dependency `parse5@8.0.1` (MIT) and its resolved transitive dependency `entities@8.1.0` (BSD-2-Clause). The foundation graph and lockfile hash above are a historical audit; this addition is recorded separately rather than relabeling that earlier inventory. Exact current integrity hashes are in `pnpm-lock.yaml`. Both installed package license files were inspected. No upstream application source or assets were copied.
 
-Primary package records: [parse5 8.0.1](https://registry.npmjs.org/parse5/8.0.1), [entities 8.1.0](https://registry.npmjs.org/entities/8.1.0). The parser [upstream release](https://github.com/inikulin/parse5/releases/tag/v8.0.1) identifies commit `0d56627fc924d40f560fd260ade0e1a935e2369c`, matching its npm gitHead. An npm provenance attestation was not present in the inspected parse5 metadata; no attestation is claimed. The parser produces an HTML5 tree; ten98-monitor's original allowlist and HTTP sandbox policy determine what renders.
+Primary package records: [parse5 8.0.1](https://registry.npmjs.org/parse5/8.0.1), [entities 8.1.0](https://registry.npmjs.org/entities/8.1.0). The parser [upstream release](https://github.com/inikulin/parse5/releases/tag/v8.0.1) identifies commit `0d56627fc924d40f560fd260ade0e1a935e2369c`, matching its npm gitHead. An npm provenance attestation was not present in the inspected parse5 metadata; no attestation is claimed. The parser produces an HTML5 tree; ten98-discover's original allowlist and HTTP sandbox policy determine what renders.
 
 ### parse5 8.0.1 — MIT license
 

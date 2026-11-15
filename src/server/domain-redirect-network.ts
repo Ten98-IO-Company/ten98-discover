@@ -54,7 +54,7 @@ export async function requestRedirectHeaders(url:URL,address:Address,signal:Abor
       method:'GET',agent,signal,maxHeaderSize:HEADER_LIMIT,insecureHTTPParser:false,
       family:address.family,
       ...(url.protocol==='https:'?{servername:isIP(url.hostname.replace(/^\[|\]$/g,''))?'':url.hostname,rejectUnauthorized:true}:{}),
-      headers:{accept:'*/*','user-agent':'ten98-monitor/redirect-check','connection':'close'},
+      headers:{accept:'*/*','user-agent':'ten98-discover/redirect-check','connection':'close'},
       lookup:(hostname,options,callback)=>{
         if(hostname!==url.hostname.replace(/^\[|\]$/g,'')){callback(new Error('Pinned hostname mismatch.'),'',0);return;}
         if(options.all)callback(null,[address]);else callback(null,address.address,address.family);

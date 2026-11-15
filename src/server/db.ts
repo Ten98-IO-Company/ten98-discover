@@ -9,7 +9,7 @@ import { registerResourceCleanup } from './resource-cleanup.ts';
 type Database = { pool: pg.Pool; db: ReturnType<typeof drizzle<typeof schema>> };
 // Nitro's entry and TanStack Start's SSR routes are separate bundles, each with its own copy of this module.
 // The process-wide slot keeps one pool per process instead of one per bundle.
-const key = Symbol.for('ten98-monitor.database');
+const key = Symbol.for('ten98-discover.database');
 const shared = globalThis as typeof globalThis & { [key]?: Database };
 export function getDatabase() {
   if (!shared[key]) {
