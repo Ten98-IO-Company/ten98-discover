@@ -28,9 +28,6 @@
 .annotation-dates{ direction: ltr; }
 .annotation-dates{ display: flex; gap: var(--space-2); overflow-x: auto; padding-block: var(--space-2); margin-block-end: var(--space-4); }
 .annotation-date{ min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; display: grid; gap: var(--space-1); flex-shrink: 0; text-align: center; }
-.annotation-day{ min-inline-size: 0; max-inline-size: 100%; min-block-size: var(--control-touch); white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.annotations, .annotations .stack{ display: grid; gap: var(--space-3); min-width: 0; }
-.annotations p, .annotations h3, .annotations h4{ margin: 0; }
 .cohort-controls{ min-width: 0; overflow-wrap: anywhere; }
 .cohort-controls input:not([type='checkbox']), .cohort-controls select{ width: 100%; min-width: 0; }
 .cohort-field{ flex: 1 1 220px; min-width: 0; }
@@ -117,23 +114,10 @@
 .saved-keyword-tag.tag-sky{ color: #075985; background: #e0f2fe; }
 .saved-keyword-tag.tag-violet{ color: #5b21b6; background: #ede9fe; }
 .saved-keyword-tag.tag-fuchsia{ color: #86198f; background: #fae8ff; }
-.saved-keyword-refresh-child{ border-top: 1px solid var(--line); padding-top: 14px; }
-.saved-keyword-refresh-list{ list-style: none; padding: 0; }
-.saved-keyword-refresh-list li{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .conversion-tabs{ margin-bottom: 20px; }
 .conversion-fields, .conversions fieldset.field{ border: 0; padding: 0; margin: 0; min-width: 0; }
 .conversion-step{ min-width: 0; margin: 16px 0; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-md); }
 .conversion-step legend{ padding: 0 6px; font-weight: 600; }
-.conversion-match, .conversion-property{ display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; }
-.conversion-match > .row, .conversion-property > .row{ display: block; min-width: 0; }
-.conversion-match > .hint, .conversion-property > .hint, .conversion-property > .btn{ grid-column: 1 / -1; }
-.conversion-property > .btn{ justify-self: start; }
-.conversions fieldset.conversion-property{ margin: 12px 0; }
-.conversion-match legend, .conversion-property legend{ margin-bottom: 8px; }
-@media (min-width:1000px){
-.conversion-match{ grid-template-columns: 1fr 1fr 1.6fr; }
-.conversion-property{ grid-template-columns: 1.2fr 1fr .8fr 1.4fr; }
-}
 .conversions table{ min-width: 720px; }
 .conversions td:not(:first-child){ overflow-wrap: normal; }
 .conversion-witness{ padding: 14px 0; border-top: 1px solid var(--line); }
