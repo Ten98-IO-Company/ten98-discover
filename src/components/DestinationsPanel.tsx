@@ -350,7 +350,6 @@ function DestinationsInner({
         description: 'A new revision with a fresh consent epoch is created — every visitor must grant consent again before any vendor tag runs.',
         confirmLabel: `Publish to ${target}`,
         danger: false,
-        initialFocus: 'cancel',
       })
     )
       return;
