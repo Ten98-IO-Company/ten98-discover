@@ -52,8 +52,9 @@ export async function listWebsiteShares(projectId:unknown,userId:unknown,query:s
  });
 }
 export async function createWebsiteShare(projectId:unknown,userId:unknown,raw:unknown){
- const input=parse(websiteShareCreate,raw);if(!canonicalShareToken(input.token))throw new FoundationError(400,'Generate a fresh share token.');const tokenHash=digest(input.token);
  return manage(projectId,userId,async(client,project,_role,actor)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the input.
+  const input=parse(websiteShareCreate,raw);if(!canonicalShareToken(input.token))throw new FoundationError(400,'Generate a fresh share token.');const tokenHash=digest(input.token);
   const receipt=await contentReceipt(client,project,input.requestId,'website.share.create.v1',{actor,label:input.label,sections:input.sections,expiresAt:input.expiresAt,tokenHash});
   if(receipt.replayed)return writeResult(client,project,receipt.result,true);
   const now=(await client.query<{now:Date}>('SELECT clock_timestamp() AS now')).rows[0].now,lifetime=Date.parse(input.expiresAt)-now.getTime();
@@ -65,8 +66,8 @@ export async function createWebsiteShare(projectId:unknown,userId:unknown,raw:un
  });
 }
 export async function revokeWebsiteShare(projectId:unknown,userId:unknown,shareId:unknown,raw:unknown){
- const sid=z.uuid().safeParse(shareId);if(!sid.success)throw missing();const input=parse(websiteShareRevoke,raw),share=sid.data.toLowerCase();
  return manage(projectId,userId,async(client,project,_role,actor)=>{
+  const sid=z.uuid().safeParse(shareId);if(!sid.success)throw missing();const input=parse(websiteShareRevoke,raw),share=sid.data.toLowerCase();
   const receipt=await contentReceipt(client,project,input.requestId,'website.share.revoke.v1',{actor,shareId:share});
   if(receipt.replayed)return writeResult(client,project,receipt.result,true);
   // Public readers never lock the grant row, so revocation never waits behind them; it is irreversible and idempotent.

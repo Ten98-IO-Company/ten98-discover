@@ -38,8 +38,9 @@ export async function listAnnotations(projectId:unknown,userId:unknown,params:UR
   },apiToken,false,'annotations:read').catch(handleError);
 }
 export async function annotationTimeline(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
-  const {range}=annotationQuery(params,true);
   return withContentProject(projectId,userId,false,async(client,p)=>{
+    // Read inside the membership check, so a non-member gets the same answer whatever the parameters.
+    const {range}=annotationQuery(params,true);
     await prepare(client,range!.timeZone);
     const {rows}=await client.query<{day:string;count:string;previews:Row[]}>(`${calendarPrefix}, ${population}, ranked AS (
       SELECT *,to_char(date AT TIME ZONE $5,'YYYY-MM-DD') AS day,row_number() OVER(PARTITION BY (date AT TIME ZONE $5)::date ORDER BY date DESC,id DESC) AS n FROM selected)

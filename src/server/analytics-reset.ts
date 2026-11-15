@@ -39,8 +39,9 @@ async function gate<T>(projectId:string,userId:string,write:boolean,work:(client
 }
 export async function getAnalyticsReset(projectId:string,userId:string){return gate(projectId,userId,false,client=>state(client,projectId,userId));}
 export async function resetAnalytics(projectId:string,userId:string,raw:unknown){
- const parsed=analyticsResetInput.safeParse(raw);if(!parsed.success)throw new FoundationError(400,'Type RESET exactly and reload the current project revision.');const input=parsed.data;
  return gate(projectId,userId,true,async client=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the input.
+  const parsed=analyticsResetInput.safeParse(raw);if(!parsed.success)throw new FoundationError(400,'Type RESET exactly and reload the current project revision.');const input=parsed.data;
   const receipt=await contentReceipt(client,projectId,input.requestId,'analytics.reset.v1',{actor:userId,...input});
   if(receipt.replayed)return analyticsResetResult.parse({state:await state(client,projectId,userId),ack:receipt.result,replayed:true});
   const current=await state(client,projectId,userId);if(current.revision!==input.revision)throw new FoundationError(409,'Collection settings or analytics changed. Reload before confirming a new reset.');
