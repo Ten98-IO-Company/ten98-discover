@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
-import {Alert,Button,Card,Checkbox,Field,Fieldset,Grid,Inline,Input,Option,Select,Stack,Text} from '@ten98/ui';
+import {Alert,Button,Card,Checkbox,Field,Fieldset,Grid,Heading,Inline,Input,Option,Select,Stack,Text} from '@ten98/ui';
 import {ApiError,errMsg} from '../lib/api';
 import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,type PromptTracker} from '../lib/prompt-recurring';
 import {modelApi,ModelResponseError} from './OpenRouterModelPicker';
@@ -59,7 +59,7 @@ export function PromptRecurringPanel({projectId,userId,role,preparation,onUnauth
   <Inline align="end"><Field label="Tracker collection"><Select value={status} disabled={busy} onChange={event=>{const filter=event.target.value as typeof status;setStatus(filter);setCursor(null);setData(null);setPoint(null);void request(pageUrl(filter,null));}}><Option value="active">Active and paused</Option><Option value="archived">Archived</Option><Option value="all">All trackers</Option></Select></Field><Button variant="secondary" type="button" disabled={busy} onClick={()=>void request()}>Refresh recurring status</Button></Inline>
   <Text size="sm" tone="muted">Showing up to 20 trackers per page. Archiving keeps earlier runs and request outcomes.</Text>
   {busy&&<Text role="status">Reading or saving recurring status…</Text>}{error&&<Alert tone="danger" role="alert">{error}</Alert>}
-  {attempt&&<Alert variant="banner"><Stack><Text>Keep this exact request until its result is known. Refreshing status does not start new work.</Text><Inline><Button type="button" variant="secondary" disabled={busy} onClick={()=>void request(attempt.path===base?pageUrl():attempt.path.replace(/\/(approve|pause|run|archive|restore)$/,''))}>Inspect saved tracker</Button><Button type="button" variant="secondary" disabled={busy||!owner} onClick={()=>void request(attempt.path,attempt.body)}>Retry same recurring request</Button></Inline></Stack></Alert>}
+  {attempt&&<Stack><Alert variant="banner">Keep this exact request until its result is known. Refreshing status does not start new work.</Alert><Inline><Button type="button" variant="secondary" disabled={busy} onClick={()=>void request(attempt.path===base?pageUrl():attempt.path.replace(/\/(approve|pause|run|archive|restore)$/,''))}>Inspect saved tracker</Button><Button type="button" variant="secondary" disabled={busy||!owner} onClick={()=>void request(attempt.path,attempt.body)}>Retry same recurring request</Button></Inline></Stack>}
   {owner&&<Stack as="form" onSubmit={create}>
    <Fieldset legend="Recurring setup" disabled={busy||!!attempt}>
     {!fresh&&<Text>Choose models and select Schedule above to configure a tracker.</Text>}
@@ -75,7 +75,7 @@ export function PromptRecurringPanel({projectId,userId,role,preparation,onUnauth
     <Button variant="primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save paused tracker'}</Button>
    </Fieldset>
   </Stack>}
-  {(shown||shownPoint)&&<Stack><Text as="strong" weight="semibold">{shown?.items.length??0} trackers on this page</Text>{shownPoint&&!items.some(item=>item.id===shownPoint.item.id)&&<Text>Selected tracker outside this page</Text>}{visible.map(item=><Card as="article" headingLevel={4} title={item.name} key={item.id}>
+  {(shown||shownPoint)&&<Stack><Heading level={3}>{shown?.items.length??0} trackers on this page</Heading>{shownPoint&&!items.some(item=>item.id===shownPoint.item.id)&&<Text>Selected tracker outside this page</Text>}{visible.map(item=><Card as="article" headingLevel={4} title={item.name} key={item.id}>
    <Stack><Text>{item.archivedAt?'Archived':item.enabled?'Enabled':'Paused'} · {item.calendar.interval==='monthly'?'month end':item.calendar.interval} · Next {nextDue(item.nextDueAt,item.calendar.timezone)}</Text>
    <Text>{item.definition.models.join(' + ')} · Prompt version <bdi>{item.definition.versionId}</bdi></Text>{item.lastStatus&&<Text role="status">{item.lastStatus}</Text>}
    {owner&&!item.archivedAt&&<Inline><Button type="button" variant="secondary" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/pause',{requestId:crypto.randomUUID(),revision:item.revision})}>Pause {item.name}</Button><Button type="button" variant="secondary" disabled={busy||!!attempt||!fresh||!same(item)||!consent} onClick={()=>approve(item)}>Approve and resume {item.name}</Button><Button type="button" variant="secondary" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/run',{requestId:crypto.randomUUID(),revision:item.revision})}>Run now {item.name}</Button></Inline>}

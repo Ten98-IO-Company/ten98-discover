@@ -234,21 +234,6 @@
 .installation-panel .installation-help > summary{ cursor: pointer; min-height: var(--control-touch); display: list-item; padding-block: var(--space-2); }
 .diagnostics summary{ min-height: var(--control-touch); }
 .events-panel th:first-child, .events-panel td:first-child{ white-space: nowrap; }
-.utm-report, .utm-report .stack{ grid-template-columns: minmax(0,1fr); overflow-wrap: anywhere; }
-.utm-report :is(details,.row,label){ min-inline-size: 0; max-inline-size: 100%; }
-.utm-report .btn{ max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
-.utm-report input:not([type="checkbox"]){ inline-size: 100%; }
-.utm-panels{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); }
-.utm-panel{ min-inline-size: 0; }
-.utm-toolbar{ grid-template-columns: repeat(3,minmax(0,1fr)); }
-.utm-panel .table-wrap{ max-block-size: 24rem; overflow: auto; }
-.utm-panel thead th{ position: sticky; inset-block-start: 0; background: var(--color-surface); z-index: 1; }
-@media (max-width:1100px){
-.utm-panels{ grid-template-columns: minmax(0,1fr); }
-}
-@media (max-width:560px){
-.utm-toolbar{ grid-template-columns: minmax(0,1fr); }
-}
 .explorer-applied-bar{ display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); overflow-wrap: anywhere; }
 .explorer-applied-bar p{ margin-block: var(--space-1) 0; }
 .explorer-filter-dialog .explorer-toolbar{ grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); }
