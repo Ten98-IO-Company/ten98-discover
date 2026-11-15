@@ -125,10 +125,6 @@
     "element": 169,
     "styling": 101
   },
-  "src/components/OidcRecoveryPanel.tsx": {
-    "element": 55,
-    "styling": 26
-  },
   "src/components/OpenRouterModelPicker.tsx": {
     "element": 5,
     "styling": 1
