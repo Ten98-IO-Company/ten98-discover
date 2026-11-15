@@ -126,6 +126,41 @@ export function concretePath(route: string, targetId: string, fresh: () => strin
   });
 }
 
+/** Routes that name a record id after the workspace or website id: a second id slot. */
+export function recordRoutes(): string[] {
+  return workspaceRoutes().filter(route => route.split(routeTokens.uuid).length > 2);
+}
+
+/** The collection a record route belongs to, such as projects/reports: the segment after the workspace or website id. */
+export function recordCollection(route: string) {
+  const [, , scope, , collection] = route.split('/');
+  return `${scope}/${collection}`;
+}
+
+/**
+ * Record collections tests/record-scope-integration.ts does not build fixtures for, each with the reason. The sweep fails
+ * when a record route belongs to a collection that is neither covered there nor listed here.
+ */
+export const recordScopeGaps: Readonly<Record<string, string>> = {
+  'projects/ai-content-support': 'Preparations and runs come from a provider-request quote and a worker run.',
+  'projects/ai-opportunities': 'Sources, preparations and runs come from a provider-request quote and a worker run.',
+  'projects/ai-search': 'Catalog refreshes, preparations and runs come from a provider-request quote and a worker run.',
+  'projects/ai-suggestions': 'Preparations and runs come from a provider-request quote and a worker run.',
+  'projects/audits': 'Audits, pages and issues come from the crawl worker.',
+  'projects/domain-research': 'Catalogs, preparations and runs come from a provider-request quote and a worker run.',
+  'projects/domains': 'Adding a domain starts network verification and redirect checks.',
+  'projects/google': 'Imports need a connected Google account.',
+  'projects/keyword-research': 'Catalogs, preparations and runs come from a provider-request quote and a worker run.',
+  'projects/prompt-executions': 'Preparations, comparisons and runs come from a provider-request quote and a worker run.',
+  'projects/prompt-trackers': 'Trackers need an approved provider-request schedule.',
+  'projects/rank-checks': 'Rank checks come from a rank provider quote and a worker run.',
+  'projects/rank-trackers': 'Trackers need a rank provider connection and keyword catalog.',
+  'projects/replays': 'Recordings come from the public collector with replay enabled.',
+  'projects/saved-keywords': 'Saved keyword lists and jobs come from keyword research results.',
+  'projects/site-analysis': 'Runs come from a provider-request quote and a worker run.',
+  'workspaces/providers': 'A connection stores an encrypted provider credential and its check calls the provider.',
+};
+
 // Handled by the shared @ten98/runtime team controller, which reads input before access; tracked upstream.
 export const sharedControllerRoutes: ReadonlySet<string> = new Set([
   'POST /api/workspaces/{uuid}/invitations', 'POST /api/workspaces/{uuid}/members/{uuid}/role',

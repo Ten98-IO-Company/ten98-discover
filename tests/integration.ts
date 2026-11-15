@@ -30,6 +30,7 @@ import { runPaidWorkArchiveChecks } from './paid-work-archive-integration.ts';
 import { runContentSupportListChecks } from './content-support-list-integration.ts';
 import { runStartupMigrateChecks } from './startup-migrate-integration.ts';
 import { runAccessOrderChecks } from './access-order-integration.ts';
+import { runRecordScopeChecks } from './record-scope-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -270,6 +271,9 @@ try {
   await pool.query('INSERT INTO workspace(id,name) VALUES($1,$2)', [outsiderWorkspace, 'Access order workspace']);
   const outsider = await createIdentity(outsiderWorkspace, 'owner');
   await runAccessOrderChecks({ baseUrl: base.href, appUrl: config.appUrl, memberCookie: ownerCookie, outsiderCookie: outsider.cookie, outsiderId: outsider.id, workspaceId: workspaceA, projectId: projectA.id });
+
+  stage = 'record routes refuse records in another workspace';
+  await runRecordScopeChecks({ baseUrl: base.href, appUrl: config.appUrl, createIdentity });
 
   stage = 'documented GET operations without paywalls';
   // Free, fully featured: every GET the served OpenAPI document lists must answer a viewer
