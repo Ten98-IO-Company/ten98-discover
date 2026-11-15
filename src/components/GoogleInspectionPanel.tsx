@@ -1,5 +1,5 @@
 import {readResponseText} from '@ten98/runtime/browser';
-import {Disclosure} from '@ten98/ui';
+import {Alert,Button,Disclosure,Heading,Inline,Link,Stack,StatusLine,Text} from '@ten98/ui';
 import {useId,useState} from 'react';
 import {AppField} from '@ten98/ui/app';
 import {ApiError,errMsg} from '../lib/api';
@@ -29,8 +29,8 @@ async function inspect(path:string,body:unknown,signal:AbortSignal):Promise<unkn
 
 const labels:Record<string,string>={verdict:'Google verdict',coverageState:'Coverage',robotsTxtState:'robots.txt',indexingState:'Indexing state',lastCrawlTime:'Last crawl',pageFetchState:'Page fetch',googleCanonical:'Google canonical',userCanonical:'Declared canonical',crawledAs:'Crawler',sitemap:'Known sitemaps',referringUrls:'Referring URLs',ampUrl:'AMP URL',ampIndexStatusVerdict:'AMP index verdict',issues:'Issues',issueMessage:'Issue',severity:'Severity',issueType:'Issue type',message:'Message',detectedItems:'Detected types',richResultType:'Type',items:'Items',name:'Name'};
 function Fields({value}:{value:unknown}){
- if(Array.isArray(value))return value.length?<ul>{value.map((item,i)=><li key={i}><Fields value={item}/></li>)}</ul>:<span>None reported</span>;
- if(value&&typeof value==='object')return Object.keys(value).length?<dl>{Object.entries(value).map(([key,item])=><div key={key}><dt>{labels[key]??key}</dt><dd style={{marginInlineStart:0,overflowWrap:'anywhere'}}><Fields value={item}/></dd></div>)}</dl>:<span>Details unavailable</span>;
+ if(Array.isArray(value))return value.length?<Stack as="ul">{value.map((item,i)=><Stack as="li" key={i}><Fields value={item}/></Stack>)}</Stack>:<Text as="span">None reported</Text>;
+ if(value&&typeof value==='object')return Object.keys(value).length?<Stack as="dl">{Object.entries(value).map(([key,item])=><Stack gap={1} key={key}><Text as="dt">{labels[key]??key}</Text><Text as="dd"><Fields value={item}/></Text></Stack>)}</Stack>:<Text as="span">Details unavailable</Text>;
  return <bdi>{String(value)}</bdi>;
 }
 export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:string;connection:{id:string;revision:number;propertyId:string};ops:GoogleReportOps}){
@@ -51,20 +51,20 @@ export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:stri
    if(ops.alive(op.serial,op.controller))setError(errMsg(e));
   }finally{ops.end(op.serial);}
  };
- return <div style={{minWidth:0}}><Disclosure summary="Inspect indexed URLs" variant="plain"><div className="stack">
-  <p className="hint">Read Google’s indexed version for this saved property. This does not fetch the live page or request indexing. Only workspace owners can make this external request.</p>
+ return <Stack><Disclosure summary="Inspect indexed URLs" variant="plain"><Stack>
+  <Text as="p" tone="muted">Read Google’s indexed version for this saved property. This does not fetch the live page or request indexing. Only workspace owners can make this external request.</Text>
   <AppField label="URLs — one per line, up to 10" multiline id={`${uid}-urls`} dir="ltr" rows={4} maxLength={40970} disabled={ops.busy} value={urls} onChange={e=>setUrls(e.target.value)} />
-  <div><AppField label="Result language (optional)" id={`${uid}-language`} dir="ltr" maxLength={80} placeholder="en-US" disabled={ops.busy} value={language} onChange={e=>setLanguage(e.target.value)} aria-describedby={`${uid}-language-help`}/><p id={`${uid}-language-help`} className="hint">Use a language tag such as ar or en-GB. The default is en-US.</p></div>
-  <button type="button" className="btn primary" style={{minHeight:44}} disabled={ops.busy||!urls.trim()} onClick={()=>void submit()}>Inspect URLs</button>
-  {ops.busy&&<p role="status">A Google action is in progress…</p>}{error&&<p role="alert" className="alert">{error}</p>}
-  {result&&<section aria-label="Last URL inspection" className="stack" style={{overflowWrap:'anywhere'}}>
-   <h3>Last requested indexed versions</h3><p className="dim">Property: <bdi dir="ltr">{result.propertyId}</bdi> · Checked <bdi dir="ltr">{result.checkedAt}</bdi> · Language: <bdi>{result.languageCode}</bdi>. Results below belong to those submitted URLs; editing the form does not update them.</p>
-   {result.results.map(row=><article key={row.url} className="stack"><h4 style={{overflowWrap:'anywhere'}}><bdi dir="ltr">{row.url}</bdi></h4>{row.result===null?<p role="status" className="alert">{row.attempted?'Attempted — ':'Not attempted — '}{row.error}</p>:<>
-    <p>Google verdict: {row.result.indexStatusResult?.verdict??'Unavailable'} · Coverage: {row.result.indexStatusResult?.coverageState??'Unavailable'}</p>
-    <p>Google canonical: <bdi dir="ltr">{row.result.indexStatusResult?.googleCanonical??'Unavailable'}</bdi></p><p>Last crawl: <bdi dir="ltr">{row.result.indexStatusResult?.lastCrawlTime??'Unavailable'}</bdi></p>
-    {row.result.inspectionResultLink&&<a href={row.result.inspectionResultLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',minHeight:44}}>Open this inspection in Search Console</a>}
-    <Disclosure summary="Full Google inspection details" variant="plain">{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><section key={key}><h5>{label}</h5>{row.result?.[key]?<Fields value={row.result[key]}/>:<p>Not provided by Google. This does not establish a pass or failure.</p>}</section>)}</Disclosure>
-   </>}</article>)}
-  </section>}
- </div></Disclosure></div>;
+  <Stack><AppField label="Result language (optional)" id={`${uid}-language`} dir="ltr" maxLength={80} placeholder="en-US" disabled={ops.busy} value={language} onChange={e=>setLanguage(e.target.value)} aria-describedby={`${uid}-language-help`}/><Text as="p" tone="muted" id={`${uid}-language-help`}>Use a language tag such as ar or en-GB. The default is en-US.</Text></Stack>
+  <Inline><Button type="button" variant="primary" disabled={ops.busy||!urls.trim()} onClick={()=>void submit()}>Inspect URLs</Button></Inline>
+  {ops.busy&&<StatusLine busy>A Google action is in progress…</StatusLine>}{error&&<Alert tone="danger" role="alert">{error}</Alert>}
+  {result&&<Stack as="section" aria-label="Last URL inspection">
+   <Heading level={3}>Last requested indexed versions</Heading><Text as="p" tone="muted">Property: <bdi dir="ltr">{result.propertyId}</bdi> · Checked <bdi dir="ltr">{result.checkedAt}</bdi> · Language: <bdi>{result.languageCode}</bdi>. Results below belong to those submitted URLs; editing the form does not update them.</Text>
+   {result.results.map(row=><Stack as="article" key={row.url}><Heading level={4}><bdi dir="ltr">{row.url}</bdi></Heading>{row.result===null?<Alert tone="danger" role="status">{row.attempted?'Attempted — ':'Not attempted — '}{row.error}</Alert>:<>
+    <Text as="p">Google verdict: {row.result.indexStatusResult?.verdict??'Unavailable'} · Coverage: {row.result.indexStatusResult?.coverageState??'Unavailable'}</Text>
+    <Text as="p">Google canonical: <bdi dir="ltr">{row.result.indexStatusResult?.googleCanonical??'Unavailable'}</bdi></Text><Text as="p">Last crawl: <bdi dir="ltr">{row.result.indexStatusResult?.lastCrawlTime??'Unavailable'}</bdi></Text>
+    {row.result.inspectionResultLink&&<Link href={row.result.inspectionResultLink} target="_blank" rel="noopener noreferrer" variant="standalone">Open this inspection in Search Console</Link>}
+    <Disclosure summary="Full Google inspection details" variant="plain"><Stack>{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><Stack as="section" key={key}><Heading level={5}>{label}</Heading>{row.result?.[key]?<Fields value={row.result[key]}/>:<Text as="p">Not provided by Google. This does not establish a pass or failure.</Text>}</Stack>)}</Stack></Disclosure>
+   </>}</Stack>)}
+  </Stack>}
+ </Stack></Disclosure></Stack>;
 }
