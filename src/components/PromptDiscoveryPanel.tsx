@@ -75,7 +75,8 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
     // Project changes remount the keyed panel and discard its scoped state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
+  // Alert takes no ref yet (design-system issue), so focus moves to the alert element itself through its wrapper.
+  useEffect(() => { if (error) errorFocus.current?.querySelector<HTMLElement>('[role="alert"]')?.focus(); }, [error]);
 
   async function build(event: FormEvent) {
     event.preventDefault();
@@ -111,7 +112,7 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
             <Field label="Question intent" htmlFor={id + '-intent'}><Select id={id + '-intent'} value={intent} onChange={event => setIntent(event.target.value as PromptDiscoveryIntent)}>{promptDiscoveryIntents.map(value => <Option key={value} value={value}>{intentNames[value]}</Option>)}</Select></Field>
           </Grid>
           {context && <Disclosure summary="Optional saved context" variant="plain"><Stack><Checkbox checked={includeBrand} onChange={event => setIncludeBrand(event.target.checked)} label={`Include saved brand: ${context.profile.name}`}/>{!!context.competitors.length && <Field label="Competitor (optional)" htmlFor={id + '-competitor'}><Select id={id + '-competitor'} value={competitorId} onChange={event => setCompetitorId(event.target.value)}><Option value="">No competitor</Option>{context.competitors.map(value => <Option key={value.id} value={value.id}>{value.name || value.primaryDomain}</Option>)}</Select></Field>}<Text tone="muted" size="sm">Selected names are added to the questions.</Text></Stack></Disclosure>}
-          {error && <Stack ref={errorFocus} tabIndex={-1}><Alert tone="danger">{error}</Alert></Stack>}
+          {error && <Stack ref={errorFocus}><Alert tone="danger" tabIndex={-1}>{error}</Alert></Stack>}
           <Inline><Button type="submit" variant="primary">Build starter questions</Button></Inline>
         </Stack>
         {generated && <Card aria-label="Starter questions">

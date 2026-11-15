@@ -42,7 +42,6 @@
 .identity-details { display: grid; grid-template-columns: minmax(0,auto) minmax(0,1fr); gap: 8px 12px; font-size: 12px; line-height: 1.7; padding-block: 14px 18px; border-block: 1px solid var(--line); margin: 18px 0 0; }
 .identity-details dt { color: var(--muted); }
 .identity-details dd { margin: 0; min-inline-size: 0; }
-.identity-recovery { margin-block-end: 22px; }
 .account-access { min-inline-size: 0; overflow-wrap: anywhere; }
 .account-access .button { min-block-size: 44px; max-inline-size: 100%; white-space: normal; }
 .account-access .full { inline-size: 100%; }
