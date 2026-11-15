@@ -79,7 +79,7 @@ export function UtmPanel({projectId,userId,onUnauthorized}:{projectId:string;use
       return <Card key={field} as="section" title={label} headingLevel={3} aria-busy={panel.phase==='loading'}><Stack>
         {panel.phase==='idle'&&<Text tone="muted" size="sm">Choose dates and apply reports to view this campaign field.</Text>}
         {panel.phase==='loading'&&<Text role="status">Loading {label.toLowerCase()}…</Text>}
-        {panel.phase==='error'&&<><Alert tone="danger" role="alert">{panel.error}</Alert><Button type="button" disabled={busy||denied} onClick={()=>void load([field],applied)}>Retry {label.toLowerCase()}</Button></>}
+        {panel.phase==='error'&&<><Alert tone="danger" role="alert">{panel.error}</Alert><Button type="button" variant="secondary" disabled={busy||denied} onClick={()=>void load([field],applied)}>Retry {label.toLowerCase()}</Button></>}
         {panel.phase==='ready'&&result&&<>
           <Text weight="semibold">{total===null?'Unavailable':total} {total===null?'':'tagged pageviews'}</Text>
           {result.coverage.status!=='complete'&&<Alert tone="warning" variant="banner" role="status">{result.coverage.status==='unavailable'?'This history is no longer retained. Unavailable is not zero; choose a more recent range.':'Partial retained history. Counts and shares describe only observed tagged pageviews, not the missing history.'}</Alert>}
@@ -89,7 +89,7 @@ export function UtmPanel({projectId,userId,onUnauthorized}:{projectId:string;use
             <Text tone="muted" size="sm">Showing all {rows.length} returned values of {result.breakdown.totalGroups}. {result.breakdown.truncated?`${total-result.breakdown.returnedGroupEvents!} tagged pageviews across ${result.breakdown.totalGroups!-rows.length} other values are omitted from the exact table and CSV breakdown.`:'No matching values were omitted.'} The ring combines smaller returned values; the exact table below does not.</Text>
             <DataTable stickyHeader ariaLabel={`${label} exact values`} searchable={false} sortable={false} pagination={false} rows={rows} rowKey={row=>row.value as string} columns={[{key:'value',header:label,wrap:true,render:row=><bdi>{row.value as string}</bdi>},{key:'events',header:'Tagged pageviews',numeric:true},{key:'share',header:'Share of tagged pageviews',numeric:true,render:row=>`${(row.events/total*100).toFixed(1)}%`}]}/>
           </>}
-          <Button type="button" onClick={()=>download(field,panel)}>Download {label.toLowerCase()} CSV</Button>
+          <Button type="button" variant="secondary" onClick={()=>download(field,panel)}>Download {label.toLowerCase()} CSV</Button>
           <Text tone="muted" size="sm">Includes the applied dates, filters, daily rows and returned campaign values.</Text>
         </>}
       </Stack></Card>;
