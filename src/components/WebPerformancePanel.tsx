@@ -82,7 +82,7 @@ export function WebPerformancePanel({projectId,userId,query='',onNavigate,onUnau
   const ratingTone={good:'success','needs-improvement':'warning',poor:'danger',unavailable:'muted'} as const;
   return <Stack as="section" gap={4} aria-label="Web performance" aria-busy={busy}>
     <Stack as="header" gap={1}><Heading level={2}>Web performance</Heading><Text tone="muted">Real page-load measurements from this project. Choose a metric to inspect its daily trend and recorded environment.</Text></Stack>
-    {parsed.error?<Card><Stack gap={3}><Alert tone="danger">{parsed.error}</Alert><Button type="button" onClick={()=>onNavigate(performanceQuery(initial()))}>Reset performance view</Button></Stack></Card>:<Stack as="form" gap={3} aria-label="Performance date and filters" onSubmit={apply}>
+    {parsed.error?<Card><Stack gap={3}><Alert tone="danger">{parsed.error}</Alert><Button type="button" variant="secondary" onClick={()=>onNavigate(performanceQuery(initial()))}>Reset performance view</Button></Stack></Card>:<Stack as="form" gap={3} aria-label="Performance date and filters" onSubmit={apply}>
       <ReportToolbar label="Performance report controls" controls={<>
         <Field label="From (UTC)" htmlFor={`${uid}-from`}><Input id={`${uid}-from`} type="date" required value={draft.from} max={draft.to} onChange={event=>setDraft(old=>({...old,from:event.target.value}))}/></Field>
         <Field label="To (UTC)" htmlFor={`${uid}-to`}><Input id={`${uid}-to`} type="date" required value={draft.to} min={draft.from} onChange={event=>setDraft(old=>({...old,to:event.target.value}))}/></Field>
