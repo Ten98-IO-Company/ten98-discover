@@ -420,7 +420,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if(analyticsExportRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
       if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Analytics exports do not accept query parameters or fragments.');
-      await limit('analytics-export:'+user.id,6);return await exportAnalytics(analyticsExportRoute[1],user.id,await readJson(request,analyticsExportLimits.bodyBytes),request.signal);
+      await limit('analytics-export:'+user.id,6);await projectAccess(analyticsExportRoute[1],user.id);return await exportAnalytics(analyticsExportRoute[1],user.id,await readJson(request,analyticsExportLimits.bodyBytes),request.signal);
     }
     const trackedResponse=await handleTrackedAssets(request,user.id,limit);
     if(trackedResponse)return trackedResponse;
@@ -493,6 +493,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if(request.method==='POST'&&target!=='timeline'&&(!target||action==='update'||action==='delete')){
         if(url.search)throw new FoundationError(400,'Annotation writes have no query parameters.');
+        await projectAccess(pid,user.id);
         const body=await readJson(request,8192);
         return json(action==='delete'?await deleteAnnotation(pid,user.id,target,body):await saveAnnotation(pid,user.id,body,target));
       }
@@ -530,6 +531,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Cohort changes do not accept query parameters.');
+        await projectAccess(projectId,user.id);
         const input=await readJson(request,32768);
         if(!cohortId)return json(await saveCohort(projectId,user.id,input));
         if(action==='update')return json(await saveCohort(projectId,user.id,input,cohortId));
@@ -547,6 +549,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Saved filter changes do not accept query parameters.');
+        await projectAccess(projectId,user.id);
         const input=await readJson(request,32768);
         if(!segmentId)return json(await saveSegment(projectId,user.id,input));
         if(action==='update')return json(await saveSegment(projectId,user.id,input,segmentId));
@@ -561,10 +564,11 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'){
         if(!analysisId)return json(await listAnalyses(projectId,user.id,kind,url.searchParams));
         if(!action){if(url.search)throw new FoundationError(400,'Analysis details do not accept query parameters.');return json(await getAnalysis(projectId,user.id,kind,analysisId));}
-        if(action==='result'||action==='witnesses')return json(await runAnalysis(projectId,user.id,kind,analysisId,url.searchParams,action==='witnesses'));
+        if(action==='result'||action==='witnesses'){await projectAccess(projectId,user.id);return json(await runAnalysis(projectId,user.id,kind,analysisId,url.searchParams,action==='witnesses'));}
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Analysis changes do not accept query parameters.');
+        await projectAccess(projectId,user.id);
         const input=await readJson(request,65536);
         if(!analysisId)return json(await saveAnalysis(projectId,user.id,kind,input));
         if(action==='update')return json(await saveAnalysis(projectId,user.id,kind,input,analysisId));
@@ -1049,6 +1053,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2],apiToken??undefined));
       if(request.method==='POST'){
         await limit(`domain-redirect:${user.id}:write`,10);
+        await projectAccess(redirectRoute[1],user.id);
         return json(await startDomainRedirectCheck(redirectRoute[1],user.id,redirectRoute[2],await readJson(request,4096)),202);
       }
       return json({error:'Method not allowed.'},405);
@@ -1059,6 +1064,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`domain-settings:${user.id}`, 60);
       if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id, apiToken ?? undefined));
       if (request.method === 'POST') {
+        await projectAccess(domainRoute[1], user.id);
         const input = await readJson(request, 4096);
         if (!domainRoute[2]) return json(await addDomain(domainRoute[1], user.id, input), 201);
         const args = [domainRoute[1], user.id, domainRoute[2], input] as const;
@@ -1079,6 +1085,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&!contextRoute[2]&&!url.search) return json(await getProjectContext(contextRoute[1],user.id,apiToken??undefined));
       if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) {
+        await projectAccess(contextRoute[1],user.id);
         // A bearer caller gets the bounded receipt; context:write does not imply context:read at the data level either.
         const saved=await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144),apiToken??undefined);
         return json(apiToken?{revision:saved.revision,replayed:saved.replayed===true}:saved);
@@ -1093,6 +1100,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId,apiToken??undefined));
       if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&!url.search) {
+        await projectAccess(pid,user.id);
         const input=await readJson(request,262144);
         if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input,apiToken??undefined),201);
         if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input,apiToken??undefined));
@@ -1120,7 +1128,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (analyticsSettingsRoute) {
       await limit(`analytics-settings:${user.id}`, 60);
       if (request.method === 'GET') return json(await analyticsSettings(analyticsSettingsRoute[1], user.id));
-      if (request.method === 'POST') return json(await saveAnalyticsSettings(analyticsSettingsRoute[1], user.id, await readJson(request, 65536)));
+      if (request.method === 'POST') { await projectAccess(analyticsSettingsRoute[1], user.id); return json(await saveAnalyticsSettings(analyticsSettingsRoute[1], user.id, await readJson(request, 65536))); }
     }
     const destinationRoute = path.match(new RegExp(`^/api/projects/(${id})/destinations(?:/(draft|preview|publish|rollback))?$`, 'i'));
     if (destinationRoute) {
@@ -1142,6 +1150,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`retention:${user.id}`, 20);
       if (request.method === 'GET' && !retentionRoute[2]) return json(await getRetention(retentionRoute[1], user.id));
       if (request.method === 'POST' && retentionRoute[2]) {
+        await workspaceAccess(retentionRoute[1], user.id);
         const input = await readJson(request);
         return json(await (retentionRoute[2] === 'preview' ? previewRetention : saveRetention)(retentionRoute[1], user.id, input));
       }
@@ -1154,6 +1163,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && management[2] === 'api-keys') return json(await listApiKeys(workspaceId, user.id));
       if (request.method === 'GET' && management[2] === 'providers') return json(await listProviders(workspaceId, user.id));
       if (request.method === 'POST') {
+        await workspaceAccess(workspaceId, user.id);
         const input = await readJson(request);
         if (management[2] === 'api-keys') return json(await createApiKey(workspaceId, user.id, input), 201);
         if (management[2] === 'providers') return json(await saveProvider(workspaceId, user.id, input), 201);
@@ -1163,6 +1173,7 @@ export async function handleApi(request: Request): Promise<Response> {
     management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers)/(${id})/(revoke|update|check)$`, 'i'));
     if (management && request.method === 'POST') {
       await limit(`settings:${user.id}`, 60);
+      await workspaceAccess(management[1], user.id);
       const input = await readJson(request);
       if (management[2] === 'providers' && management[4] === 'update') return json(await saveProvider(management[1], user.id, input, management[3]));
       z.object({}).strict().parse(input);
@@ -1194,7 +1205,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
-        if (match[2] === 'transfer-ownership') return json(await transferOwnership(match[1], user.id, await readJson(request)));
+        if (match[2] === 'transfer-ownership') { await workspaceAccess(match[1], user.id); return json(await transferOwnership(match[1], user.id, await readJson(request))); }
         if (match[2] === 'two-factor') return json(await setTwoFactorRequirement(match[1], user.id, await readJson(request)));
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
         if (match[2] === 'invitations') {
@@ -1248,6 +1259,7 @@ export async function handleApi(request: Request): Promise<Response> {
         return json({ projects: rows.map(row => ({ ...row, eventCount: Number(row.eventCount) })) });
       }
       if (request.method === 'POST') {
+        await workspaceAccess(match[1], user.id);
         const input = projectInput.parse(await readJson(request));
         const client = await getDatabase().pool.connect();
         try {

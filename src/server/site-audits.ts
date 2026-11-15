@@ -175,9 +175,10 @@ export async function queueSiteAuditInTransaction(locked:AuditLock,userId:string
   return {created:true,role:role!,run:auditRunDto(result.rows[0],role)};
 }
 export async function startSiteAudit(projectId:string,userId:string,raw:unknown){
- const input=parseSiteAuditStart(raw),target={projectId,actor:{userId,permission:'manage' as const}};
+ const target={projectId,actor:{userId,permission:'manage' as const}};let input!:ReturnType<typeof parseSiteAuditStart>;
  // Replays and denied roles do not initialize the queue. The insertion rechecks everything after startup.
- const prior=await withAuditLock(target,({client,role})=>priorStart(client,projectId,userId,input,role));if(prior)return prior;
+ // Read after the access check, so a caller without access gets the same 404 whatever the input.
+ const prior=await withAuditLock(target,({client,role})=>{input=parseSiteAuditStart(raw);return priorStart(client,projectId,userId,input,role);});if(prior)return prior;
  const boss=await getBoss();
  return withAuditLock(target,async({client,project,role})=>{
   const replay=await priorStart(client,project.id,userId,input,role);if(replay)return replay;
@@ -390,13 +391,15 @@ function pagesCsvResponse(parts:Buffer[],length:number,rowCount:number,selection
  }catch(error){finish();throw error;}
 }
 export async function exportSiteAuditPages(projectId:string,userId:string,runId:string,raw:unknown,signal?:AbortSignal):Promise<Response>{
- const {expectedSelectionRevision,...query}=parseSiteAuditPagesExport(raw);exportAborted(signal);
+ exportAborted(signal);
  if(pageExportActive)throw new FoundationError(503,'Another audit export is still downloading. Try again shortly.');
  pageExportActive=true;let transferred=false,released=false;
  const release=()=>{if(!released){released=true;pageExportActive=false;}};
  try{
   const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
    if(!saved||saved.deleted_at)throw missing();const run=saved;
+   // Read after the access check, so a caller without access gets the same 404 whatever the input.
+   const {expectedSelectionRevision,...query}=parseSiteAuditPagesExport(raw);
    if(run.data_expired_at)return {exportError:'derived_expired' as const};
    if(active.includes(run.status))throw new FoundationError(409,'Finish or cancel this audit before exporting pages.');
    const scope=pageSelectionScope(projectId,runId,query),selection=await selectAuditPages(client,run,query,scope);

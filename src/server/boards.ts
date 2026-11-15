@@ -89,8 +89,9 @@ export async function listBoards(workspaceId:unknown,userId:unknown,rawQuery='')
 }
 export async function getBoard(workspaceId:unknown,userId:unknown,boardId:unknown){const id=parse(uuid,boardId);return withBoardWorkspace(workspaceId,userId,false,async(client,wid,_uid,role)=>{const row=await find(client,wid,id);if(!row)throw missing();return{workspaceId:wid,role,item:dto(row)};});}
 export async function saveBoard(workspaceId:unknown,userId:unknown,raw:unknown,boardId?:unknown):Promise<BoardWriteResult>{
- const id=boardId===undefined?null:parse(uuid,boardId),input=parse(id?z.object({...request,revision:boardRevision,definition:z.unknown()}).strict():z.object({...request,definition:z.unknown()}).strict(),raw),definition=parseBoardDefinition(input.definition),operation=id?'update':'create';
  return withBoardWorkspace(workspaceId,userId,true,async(client,wid,uid,role)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the input.
+  const id=boardId===undefined?null:parse(uuid,boardId),input=parse(id?z.object({...request,revision:boardRevision,definition:z.unknown()}).strict():z.object({...request,definition:z.unknown()}).strict(),raw),definition=parseBoardDefinition(input.definition),operation=id?'update':'create';
   const accepted=await receipt(client,wid,uid,input.requestId,operation,{id,...input,definition});
   if(accepted.prior)return acknowledged(client,wid,role,{requestId:input.requestId,operation,boardId:accepted.prior.board_id,appliedRevision:accepted.prior.applied_revision},true);
   const old=id?await find(client,wid,id):undefined;if(id&&!old)throw missing();if(old&&(old.revision!==('revision'in input?input.revision:null)||old.revision===2147483647))throw conflict();
@@ -100,8 +101,8 @@ export async function saveBoard(workspaceId:unknown,userId:unknown,raw:unknown,b
  });
 }
 export async function cloneBoard(workspaceId:unknown,userId:unknown,boardId:unknown,raw:unknown):Promise<BoardWriteResult>{
- const id=parse(uuid,boardId),input=parse(z.object({...request,revision:boardRevision,name:boardDefinition.shape.name}).strict(),raw);
  return withBoardWorkspace(workspaceId,userId,true,async(client,wid,uid,role)=>{
+  const id=parse(uuid,boardId),input=parse(z.object({...request,revision:boardRevision,name:boardDefinition.shape.name}).strict(),raw);
   const accepted=await receipt(client,wid,uid,input.requestId,'clone',{id,...input});
   if(accepted.prior)return acknowledged(client,wid,role,{requestId:input.requestId,operation:'clone',boardId:accepted.prior.board_id,appliedRevision:accepted.prior.applied_revision},true);
   const old=await find(client,wid,id);if(!old)throw missing();if(old.revision!==input.revision)throw conflict();
@@ -111,8 +112,8 @@ export async function cloneBoard(workspaceId:unknown,userId:unknown,boardId:unkn
  });
 }
 export async function deleteBoard(workspaceId:unknown,userId:unknown,boardId:unknown,raw:unknown):Promise<BoardWriteResult>{
- const id=parse(uuid,boardId),input=parse(z.object({...request,revision:boardRevision}).strict(),raw);
  return withBoardWorkspace(workspaceId,userId,true,async(client,wid,uid,role)=>{
+  const id=parse(uuid,boardId),input=parse(z.object({...request,revision:boardRevision}).strict(),raw);
   const accepted=await receipt(client,wid,uid,input.requestId,'delete',{id,...input});
   if(accepted.prior)return acknowledged(client,wid,role,{requestId:input.requestId,operation:'delete',boardId:accepted.prior.board_id,appliedRevision:accepted.prior.applied_revision},true);
   const old=await find(client,wid,id);if(!old)throw missing();if(old.revision!==input.revision)throw conflict();await client.query('DELETE FROM custom_board WHERE workspace_id=$1 AND id=$2',[wid,id]);
@@ -140,18 +141,20 @@ export function boardAssetQuery(card:BoardCard,scope:ReturnType<typeof boardScop
 }
 type CardAdmission<T>={base:T;card:BoardCard;ref:BoardEntity|null;scope:ReturnType<typeof boardScope>;uid:string;wid:string;live:boolean;binding:CardBinding;borrowed?:{client:PoolClient;context:BoardShareReadContext}};
 export async function previewBoardCard(workspaceId:unknown,userId:unknown,raw:unknown):Promise<BoardPreviewResult>{
- const input=parseBoardPreview(raw),admitted=await withBoardWorkspace(workspaceId,userId,false,async(client,wid,uid,role)=>{
-  const card=input.card,ref=card.type==='TextBlock'?null:card.entity??input.defaultEntity,scope=boardScope(input.scope),live=card.type.startsWith('Realtime');
+ const admitted=await withBoardWorkspace(workspaceId,userId,false,async(client,wid,uid,role)=>{
+  const input=parseBoardPreview(raw),card=input.card,ref=card.type==='TextBlock'?null:card.entity??input.defaultEntity,scope=boardScope(input.scope),live=card.type.startsWith('Realtime');
   const base:PreviewBase={workspaceId:wid,previewId:input.previewId,request:input,cardId:card.id,cardType:card.type,entity:ref,role,scope:scope.scope,effectiveWindow:card.type==='TextBlock'?'none':live?'fixed-live':'historical'};
   return{base,card,ref,scope,uid,wid,live,binding:await readCardBinding(client,wid,ref)};
  });
  return bounded(await dispatchBoardCard(admitted));
 }
 export async function readBoardCard(workspaceId:unknown,userId:unknown,boardId:unknown,cardId:unknown,rawQuery:string):Promise<BoardCardResult>{
- const id=parse(uuid,boardId),cid=parse(uuid,cardId),params=boardParams(rawQuery);
- if([...params.keys()].some(k=>!['revision','scope'].includes(k))||[...params.keys()].some(k=>params.getAll(k).length!==1)||! /^[1-9][0-9]{0,9}$/.test(params.get('revision')??''))throw new FoundationError(400,'Choose the saved board revision and one optional applied scope.');
- const revision=parse(boardRevision,Number(params.get('revision'))),override=params.has('scope')?boardScope(params.get('scope')!):null;
+ let id='',cid='',revision=0,override:ReturnType<typeof boardScope>|null=null;
  const admitted=await withBoardWorkspace(workspaceId,userId,false,async(client,wid,uid,role)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the input.
+  id=parse(uuid,boardId);cid=parse(uuid,cardId);const params=boardParams(rawQuery);
+  if([...params.keys()].some(k=>!['revision','scope'].includes(k))||[...params.keys()].some(k=>params.getAll(k).length!==1)||! /^[1-9][0-9]{0,9}$/.test(params.get('revision')??''))throw new FoundationError(400,'Choose the saved board revision and one optional applied scope.');
+  revision=parse(boardRevision,Number(params.get('revision')));override=params.has('scope')?boardScope(params.get('scope')!):null;
   const row=await find(client,wid,id);if(!row)throw missing();if(row.revision!==revision)throw conflict();const card=cards(row.definition).find(c=>c.id===cid);if(!card)throw missing();
   const ref=entity(row.definition,card),scope=override??boardScope(row.definition.scope),live=card.type.startsWith('Realtime');
   const base:CardBase={workspaceId:wid,boardId:id,boardRevision:revision,cardId:cid,cardType:card.type,entity:ref,role,scope:scope.scope,effectiveWindow:card.type==='TextBlock'?'none':live?'fixed-live':'historical'};
@@ -242,9 +245,9 @@ export async function listBoardShares(workspaceId:unknown,userId:unknown,boardId
 }
 export async function getBoardShare(workspaceId:unknown,userId:unknown,boardId:unknown,shareId:unknown){const bid=parse(uuid,boardId),sid=parse(uuid,shareId);return withBoardWorkspace(workspaceId,userId,false,async(c,wid,_uid,role)=>{shareManager(role);const row=await shareRow(c,wid,bid,sid);if(!row)throw missing();return{workspaceId:wid,boardId:bid,role,item:shareItem(row)};});}
 export async function createBoardShare(workspaceId:unknown,userId:unknown,boardId:unknown,raw:unknown):Promise<BoardShareWriteResult>{
- const bid=parse(uuid,boardId),input=parse(boardShareCreate,raw);if(Buffer.from(input.token,'base64url').toString('base64url')!==input.token)throw new FoundationError(400,'Generate a canonical share token.');
- const{token:_secret,...safe}=input,tokenHash=shareHash(input.token),scope=boardScope(input.scope).scope;
- return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'create',{boardId:bid,...safe,scope,tokenHash});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
+ return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{
+  const bid=parse(uuid,boardId),input=parse(boardShareCreate,raw);if(Buffer.from(input.token,'base64url').toString('base64url')!==input.token)throw new FoundationError(400,'Generate a canonical share token.');
+  const{token:_secret,...safe}=input,tokenHash=shareHash(input.token),scope=boardScope(input.scope).scope;shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'create',{boardId:bid,...safe,scope,tokenHash});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
   const board=await find(c,wid,bid);if(!board)throw missing();if(board.revision!==input.boardRevision)throw conflict();await validateShareSelection(c,wid,board,{...input,scope});
   const now=(await c.query<{now:Date}>('SELECT clock_timestamp()AS now')).rows[0].now.getTime(),ttl=Date.parse(input.expiresAt)-now;if(ttl<3600000||ttl>365*86400000)throw new FoundationError(400,'Choose an expiry from one hour to365days.');
   const id=randomUUID(),slug=board.definition.name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48).replace(/-$/,'')||'board';
@@ -253,8 +256,8 @@ export async function createBoardShare(workspaceId:unknown,userId:unknown,boardI
  });
 }
 export async function publishBoardShare(workspaceId:unknown,userId:unknown,boardId:unknown,shareId:unknown,raw:unknown):Promise<BoardShareWriteResult>{
- const bid=parse(uuid,boardId),sid=parse(uuid,shareId),input=parse(boardSharePublish,raw),scope=boardScope(input.scope).scope;
- return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'publish',{boardId:bid,shareId:sid,...input,scope});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
+ return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{
+  const bid=parse(uuid,boardId),sid=parse(uuid,shareId),input=parse(boardSharePublish,raw),scope=boardScope(input.scope).scope;shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'publish',{boardId:bid,shareId:sid,...input,scope});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
   const board=await find(c,wid,bid);if(!board)throw missing();if(board.revision!==input.boardRevision)throw conflict();await validateShareSelection(c,wid,board,{...input,scope});const old=(await c.query<ShareRow>('SELECT * FROM board_share WHERE board_id=$1 AND id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE',[bid,sid])).rows[0];if(!old)throw missing();if(old.revision!==input.revision||old.revision===2147483647||board.revision!==input.boardRevision)throw conflict();
   const now=(await c.query<{now:Date}>('SELECT clock_timestamp()AS now')).rows[0].now.getTime(),ttl=Date.parse(input.expiresAt)-now;if(ttl<3600000||ttl>365*86400000)throw new FoundationError(400,'Choose an expiry from one hour to365days.');
   const changed=await c.query('UPDATE board_share SET label=$3,theme=$4,board_revision=$5,selected_card_ids=$6,scope=$7,allow_filter=$8,ongoing_live=$9,expires_at=$10,revision=revision+1,updated_at=clock_timestamp() WHERE board_id=$1 AND id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()',[bid,sid,input.label,input.theme,board.revision,input.selectedCardIds,scope,input.allowFilter,input.ongoingLive,input.expiresAt]);if(!changed.rowCount)throw missing();
@@ -262,8 +265,8 @@ export async function publishBoardShare(workspaceId:unknown,userId:unknown,board
  });
 }
 export async function revokeBoardShare(workspaceId:unknown,userId:unknown,boardId:unknown,shareId:unknown,raw:unknown):Promise<BoardShareWriteResult>{
- const bid=parse(uuid,boardId),sid=parse(uuid,shareId),input=parse(boardShareRevoke,raw);
- return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'revoke',{boardId:bid,shareId:sid,...input});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
+ return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{
+  const bid=parse(uuid,boardId),sid=parse(uuid,shareId),input=parse(boardShareRevoke,raw);shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'revoke',{boardId:bid,shareId:sid,...input});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
   const old=(await c.query<ShareRow>('SELECT * FROM board_share WHERE board_id=$1 AND id=$2 FOR UPDATE',[bid,sid])).rows[0];if(!old)throw missing();if(old.revision!==input.revision)throw conflict();const revision=old.revoked_at?old.revision:Math.min(2147483647,old.revision+1);
   await c.query('UPDATE board_share SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revision=$3,updated_at=clock_timestamp() WHERE board_id=$1 AND id=$2',[bid,sid,revision]);
   return shareAcknowledged(c,wid,bid,role,await receipt.save(sid,revision,old.board_revision),false);

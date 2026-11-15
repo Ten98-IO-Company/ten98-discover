@@ -23,8 +23,9 @@ export async function getProjectDeletion(workspaceId:string,projectId:string,use
  return projectDeleteState.parse({workspaceId,projectId,role,item:row??null});
  });}
 export async function deleteProject(workspaceId:string,projectId:string,userId:string,raw:unknown){
- const parsed=projectDeleteInput.safeParse(raw);if(!parsed.success)throw new FoundationError(400,'Type DELETE exactly and reload the current website revision.');const input=parsed.data;
  return workspace(workspaceId,projectId,userId,true,async(client,role)=>{
+  // Read after the owner/admin check, so a caller without that access gets the same 404 whatever the body.
+  const parsed=projectDeleteInput.safeParse(raw);if(!parsed.success)throw new FoundationError(400,'Type DELETE exactly and reload the current website revision.');const input=parsed.data;
   const inputHash=canonicalHash({operation:'project.delete.v1',workspaceId,projectId,actorId:userId,...input});
   const prior=(await client.query("SELECT actor_id,project_id,input_hash,applied_revision,to_char(deleted_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS at FROM project_deletion_request WHERE workspace_id=$1 AND request_id=$2",[workspaceId,input.requestId])).rows[0];
   if(prior){if(prior.actor_id!==userId||prior.project_id!==projectId||prior.input_hash!==inputHash)throw changed();return projectDeleteResult.parse({workspaceId,role,ack:{workspaceId,projectId,requestId:input.requestId,appliedRevision:prior.applied_revision,deletedAt:prior.at},deleted:true,replayed:true});}

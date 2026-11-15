@@ -310,7 +310,8 @@ async function withAuthorizedState<T>(
   userId: string,
   environment: Environment,
   operation: (client: PoolClient, project: LockedProject, state: StateRow) => Promise<T>,
-  expectedVersion?: number,
+  // Reads the request body after authorization, so a caller without access gets the same 404 whatever the body.
+  readExpectedVersion?: () => number | undefined,
 ): Promise<T> {
   const client = await getDatabase().pool.connect();
   try {
@@ -327,6 +328,7 @@ async function withAuthorizedState<T>(
     );
     const row = authorized.rows[0];
     if (!row || (row.role !== 'owner' && row.role !== 'admin')) throw new FoundationError(404, 'Not found');
+    const expectedVersion = readExpectedVersion?.();
     await client.query(
       `INSERT INTO tracking_state (project_id, environment) VALUES ($1, $2)
        ON CONFLICT (project_id, environment) DO NOTHING`,
@@ -444,7 +446,7 @@ export async function getDestinations(projectId: unknown, userId: unknown, envir
 
 export async function saveDestinationsDraft(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
   const [env, pid, uid] = ids(projectId, userId, environment);
-  const body = parseOr400(draftBodySchema, input, 'Invalid draft request');
+  let body!: z.output<typeof draftBodySchema>;
   return withAuthorizedState(pid, uid, env, async (client, project) => {
     const configuration = parseDestinationConfiguration(body.configuration);
     await client.query(
@@ -452,20 +454,19 @@ export async function saveDestinationsDraft(projectId: unknown, userId: unknown,
       [JSON.stringify(configuration), pid, env],
     );
     return managementDto(client, project, env);
-  }, body.expectedVersion);
+  }, () => (body = parseOr400(draftBodySchema, input, 'Invalid draft request')).expectedVersion);
 }
 
 export async function previewDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
   const [env, pid, uid] = ids(projectId, userId, environment);
-  const body = parseOr400(previewBodySchema, input, 'Invalid preview request');
+  let body!: z.output<typeof previewBodySchema>;
   return withAuthorizedState(pid, uid, env, async (_client, _project, state) => {
     return previewConfiguration(state.draft, body.event, body.consent);
-  }, body.expectedVersion);
+  }, () => (body = parseOr400(previewBodySchema, input, 'Invalid preview request')).expectedVersion);
 }
 
 export async function publishDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
   const [env, pid, uid] = ids(projectId, userId, environment);
-  const body = parseOr400(publishBodySchema, input, 'Invalid publish request');
   return withAuthorizedState(pid, uid, env, async (client, project, state) => {
     const configuration = parseDestinationConfiguration(state.draft);
     assertPublishable(configuration);
@@ -475,12 +476,12 @@ export async function publishDestinations(projectId: unknown, userId: unknown, e
       [revisionId, pid, env],
     );
     return managementDto(client, project, env);
-  }, body.expectedVersion);
+  }, () => parseOr400(publishBodySchema, input, 'Invalid publish request').expectedVersion);
 }
 
 export async function rollbackDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
   const [env, pid, uid] = ids(projectId, userId, environment);
-  const body = parseOr400(rollbackBodySchema, input, 'Invalid rollback request');
+  let body!: z.output<typeof rollbackBodySchema>;
   return withAuthorizedState(pid, uid, env, async (client, project) => {
     const historical = await client.query(
       'SELECT id, configuration FROM tracking_revision WHERE id = $1 AND project_id = $2 AND environment = $3',
@@ -495,7 +496,7 @@ export async function rollbackDestinations(projectId: unknown, userId: unknown, 
       [JSON.stringify(configuration), revisionId, pid, env],
     );
     return managementDto(client, project, env);
-  }, body.expectedVersion);
+  }, () => (body = parseOr400(rollbackBodySchema, input, 'Invalid rollback request')).expectedVersion);
 }
 
 export async function getPublicDestinations(siteKey: unknown, environment: unknown, origin: unknown) {
