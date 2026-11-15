@@ -102,10 +102,6 @@
     "element": 79,
     "styling": 43
   },
-  "src/components/GoogleAppPanel.tsx": {
-    "element": 39,
-    "styling": 29
-  },
   "src/components/GoogleInspectionPanel.tsx": {
     "element": 36,
     "styling": 15

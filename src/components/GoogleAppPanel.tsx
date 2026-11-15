@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Card, Checkbox, Field, Form, Inline, Input, List, ListItem, Stack, Text } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
-
-const BTN = { minHeight: 44 };
 
 interface AppDto {
   configured: boolean;
@@ -108,66 +107,65 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   };
 
-  if (!dto && err === '') return <p role="status" className="dim">Loading Google app settings…</p>;
+  if (!dto && err === '') return <Text role="status" tone="muted">Loading Google app settings…</Text>;
   if (!dto) {
     return (
-      <div className="card">
-        <p role="alert" className="alert">{err}</p>
-        <button type="button" className="btn ghost" style={BTN} onClick={() => setTick(t => t + 1)}>Reload settings</button>
-      </div>
+      <Card>
+        <Stack>
+          <Alert tone="danger">{err}</Alert>
+          <Inline><Button type="button" variant="ghost" onClick={() => setTick(t => t + 1)}>Reload settings</Button></Inline>
+        </Stack>
+      </Card>
     );
   }
+
+  const summary = <Text>Google app: {dto.configured ? 'configured' : 'not configured'} · {dto.enabled ? 'enabled' : 'disabled'}{dto.testing ? ' · testing mode' : ''}</Text>;
 
   if (!dto.operator) {
     return (
-      <div className="card stack">
-        <p>Google app: {dto.configured ? 'configured' : 'not configured'} · {dto.enabled ? 'enabled' : 'disabled'}{dto.testing ? ' · testing mode' : ''}</p>
-        <p className="hint">Only the instance operator can view or change the Google app setup.</p>
-      </div>
+      <Card>
+        <Stack>
+          {summary}
+          <Text tone="muted">Only the instance operator can view or change the Google app setup.</Text>
+        </Stack>
+      </Card>
     );
   }
 
+  const locked = pending || !dto.vaultConfigured;
+
   return (
-    <div className="card stack">
-      <p>Google app: {dto.configured ? 'configured' : 'not configured'} · {dto.enabled ? 'enabled' : 'disabled'}{dto.testing ? ' · testing mode' : ''}</p>
-      <div className="field">
-        <label htmlFor="g-callback">Callback URI — add this exact address to the Google OAuth client</label>
-        <input id="g-callback" type="text" readOnly value={dto.redirectUri} onFocus={e => e.currentTarget.select()} />
-      </div>
-      <ul className="hint">
-        <li>Create a Google web OAuth client in Google Cloud.</li>
-        <li>Enable the Search Console API, the Analytics Data API, and the Analytics Admin API.</li>
-        <li>Add the exact callback URI above as an authorized redirect URI.</li>
-        <li>Configure the consent screen and add test users.</li>
-      </ul>
-      <p className="hint">In testing mode, Google refresh tokens may expire after seven days. Publishing the consent app is not proof of verification.</p>
-      {!dto.vaultConfigured && <p role="alert" className="alert">The credential vault is not configured, so secrets cannot be stored yet.</p>}
-      <form className="stack" onSubmit={e => { e.preventDefault(); void save(); }}>
-        <fieldset className="stack" disabled={pending || !dto.vaultConfigured} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-        <div className="field">
-          <label htmlFor="g-client-id">Client ID</label>
-          <input id="g-client-id" type="text" autoComplete="off" maxLength={512} value={clientId} onChange={e => setClientId(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label htmlFor="g-client-secret">Client secret</label>
-          <input id="g-client-secret" type="password" autoComplete="new-password" maxLength={4096} value={secret} onChange={e => setSecret(e.target.value)} required />
-        </div>
-        <p className="hint">The secret is sent once and cleared immediately; enter it again for every change. It is never shown or retried automatically.</p>
-        {dto.configured && <p className="hint">Every save, including changing these flags, requires existing sources to reconnect and cancels pending connections. Imported snapshots remain available.</p>}
-        <label className="row" style={{ minHeight: 44 }}>
-          <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
-          <span>Enable Google connections</span>
-        </label>
-        <label className="row" style={{ minHeight: 44 }}>
-          <input type="checkbox" checked={testing} onChange={e => setTesting(e.target.checked)} />
-          <span>Google consent app is in testing mode</span>
-        </label>
-        <button type="submit" className="btn primary" style={BTN} disabled={pending}>{dto.configured ? 'Save Google app settings' : 'Create Google app settings'}</button>
-        </fieldset>
-      </form>
-      <button type="button" className="btn ghost" style={BTN} disabled={pending} onClick={() => { setSecret(''); setTick(t => t + 1); }}>Reload settings</button>
-      {notice !== '' && <p role="status" className="hint">{notice}</p>}
-      {err !== '' && <p role="alert" className="alert">{err}</p>}
-    </div>
+    <Card>
+      <Stack>
+        {summary}
+        <Field label="Callback URI — add this exact address to the Google OAuth client" htmlFor="g-callback">
+          <Input id="g-callback" type="text" readOnly value={dto.redirectUri} onFocus={e => e.currentTarget.select()} />
+        </Field>
+        <List>
+          <ListItem>Create a Google web OAuth client in Google Cloud.</ListItem>
+          <ListItem>Enable the Search Console API, the Analytics Data API, and the Analytics Admin API.</ListItem>
+          <ListItem>Add the exact callback URI above as an authorized redirect URI.</ListItem>
+          <ListItem>Configure the consent screen and add test users.</ListItem>
+        </List>
+        <Text tone="muted">In testing mode, Google refresh tokens may expire after seven days. Publishing the consent app is not proof of verification.</Text>
+        {!dto.vaultConfigured && <Alert tone="danger">The credential vault is not configured, so secrets cannot be stored yet.</Alert>}
+        <Form busy={pending} onSubmit={() => { void save(); }}>
+          <Field label="Client ID" htmlFor="g-client-id">
+            <Input id="g-client-id" type="text" autoComplete="off" maxLength={512} value={clientId} onChange={e => setClientId(e.target.value)} required disabled={locked} />
+          </Field>
+          <Field label="Client secret" htmlFor="g-client-secret">
+            <Input id="g-client-secret" type="password" autoComplete="new-password" maxLength={4096} value={secret} onChange={e => setSecret(e.target.value)} required disabled={locked} />
+          </Field>
+          <Text tone="muted">The secret is sent once and cleared immediately; enter it again for every change. It is never shown or retried automatically.</Text>
+          {dto.configured && <Text tone="muted">Every save, including changing these flags, requires existing sources to reconnect and cancels pending connections. Imported snapshots remain available.</Text>}
+          <Checkbox label="Enable Google connections" checked={enabled} onChange={e => setEnabled(e.target.checked)} disabled={locked} />
+          <Checkbox label="Google consent app is in testing mode" checked={testing} onChange={e => setTesting(e.target.checked)} disabled={locked} />
+          <Inline><Button type="submit" variant="primary" disabled={locked}>{dto.configured ? 'Save Google app settings' : 'Create Google app settings'}</Button></Inline>
+        </Form>
+        <Inline><Button type="button" variant="ghost" disabled={pending} onClick={() => { setSecret(''); setTick(t => t + 1); }}>Reload settings</Button></Inline>
+        {notice !== '' && <Text role="status" tone="muted">{notice}</Text>}
+        {err !== '' && <Alert tone="danger">{err}</Alert>}
+      </Stack>
+    </Card>
   );
 }
