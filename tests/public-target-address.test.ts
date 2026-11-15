@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import {test} from 'node:test';
+import {test,mock} from 'node:test';
+import http from 'node:http';
+import https from 'node:https';
 import {publicTargetAddress} from '../src/server/public-target-address.ts';
 import {observeDomainRedirect,redirectUrl,requestRedirectHeaders} from '../src/server/domain-redirect-network.ts';
 import {permittedOidcAddress} from '../src/server/oidc.ts';
@@ -57,7 +59,15 @@ test('crawl, redirect and OIDC admission all use the stricter test',async()=>{
   for(const answers of [[{address:'168.63.129.16',family:4 as const}],[{address:'2::1',family:6 as const}]])
     assert.equal((await observeDomainRedirect('alias.example.com','target.example.com',{resolve:async()=>answers,request})).outcome,'blocked');
   assert.equal(requests,0);
-  await assert.rejects(requestRedirectHeaders(new URL('https://example.com/'),{address:'168.63.129.16',family:4},AbortSignal.timeout(1000)));
+  // Both native clients are replaced, so a request that reached the network would be counted here instead of timing out.
+  let dialled=0;
+  const dial=(()=>{dialled++;throw new Error('No connection may be opened.');}) as never;
+  const clients=[mock.method(https,'request',dial),mock.method(http,'request',dial)];
+  try{
+    for(const scheme of ['https:','http:'])for(const address of [{address:'168.63.129.16',family:4},{address:'2::1',family:6},{address:'2002:a00:1::1',family:6},{address:'127.0.0.1',family:4},{address:'1.1.1.1',family:6}] as const)
+      await assert.rejects(requestRedirectHeaders(new URL(`${scheme}//example.com/`),address,AbortSignal.timeout(1000)),(error:{outcome?:string})=>error.outcome==='blocked',`${scheme} ${address.address}`);
+  }finally{for(const client of clients)client.mock.restore();}
+  assert.equal(dialled,0);
   assert.equal(permittedOidcAddress('168.63.129.16',[]),false);assert.equal(permittedOidcAddress('20::1',[]),false);
   assert.equal(permittedOidcAddress('1.1.1.1',[]),true);
 });
