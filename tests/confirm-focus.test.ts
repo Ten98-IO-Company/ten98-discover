@@ -4,9 +4,11 @@ import {readFile,readdir} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 
-// Since @ten98/ui 0.38.0 a non-danger confirm opens focused on Confirm, so a held or repeated Enter on the control that
-// opened it can confirm it. Every confirm in the app must therefore be danger (which opens on Cancel) or say where focus
-// starts. This walks the parsed source, so multi-line option objects and new call sites are covered, not just a grep.
+// @ten98/ui starts every confirm on Cancel since 0.39.1 (a typed or checkbox confirm starts on its field), so a held or
+// repeated Enter on the control that opened the dialog cannot confirm it. Only `initialFocus: 'confirm'` undoes that; it is
+// meant for flows where Enter accepts, such as voucher entry. Every Discover confirm guards a destructive, publishing or paid
+// action or discards edits, so none may start on Confirm. This walks the parsed source, so multi-line option objects and new
+// call sites are covered, not just a grep.
 const require=createRequire(resolve('package.json'));
 const {parseAst}=createRequire(require.resolve('vite/package.json'))('rolldown/parseAst') as {parseAst:(code:string,options:{lang:'tsx'})=>unknown};
 
@@ -20,36 +22,50 @@ function walk(node:unknown,visit:(node:Node)=>void){
 }
 const keyName=(property:Node)=>{const key=property.key as Node|undefined;return key?.type==='Identifier'?key.name as string:key?.type==='Literal'?String(key.value):undefined;};
 const property=(object:Node,name:string)=>(object.properties as Node[]).find(item=>item.type==='Property'&&keyName(item)===name);
-const isTrue=(node:Node|undefined)=>node?.type==='Literal'&&node.value===true;
+const stringValue=(node:Node|undefined):unknown=>node?.type==='JSXExpressionContainer'?stringValue(node.expression as Node):node?.type==='Literal'?node.value:undefined;
 const line=(code:string,node:Node)=>code.slice(0,node.start as number).split('\n').length;
 
-async function confirmSites(){
+// Every option object and <ConfirmDialog> whose initialFocus is anything but the literal 'cancel' (the default), and the number of confirm hooks seen.
+function focusPins(code:string,file:string){
+ const pins:string[]=[];let hooks=0;
+ walk(parseAst(code,{lang:'tsx'}),node=>{
+  if(node.type==='CallExpression'&&(node.callee as Node).type==='Identifier'&&(node.callee as Node).name==='useConfirmDialog')hooks++;
+  else if(node.type==='ObjectExpression'){
+   const pin=property(node,'initialFocus');
+   if(pin&&stringValue(pin.value as Node)!=='cancel')pins.push(`${file}:${line(code,pin)} initialFocus is not cancel`);
+  }else if(node.type==='JSXOpeningElement'&&(node.name as Node).type==='JSXIdentifier'&&(node.name as Node).name==='ConfirmDialog'){
+   const pin=(node.attributes as Node[]).find(item=>item.type==='JSXAttribute'&&(item.name as Node).name==='initialFocus');
+   if(pin&&stringValue(pin.value as Node)!=='cancel')pins.push(`${file}:${line(code,pin)} <ConfirmDialog> initialFocus is not cancel`);
+  }
+ });
+ return {pins,hooks};
+}
+
+test('no confirm in the app starts focus on Confirm',async()=>{
  const files=(await readdir('src',{recursive:true})).map(name=>'src/'+name.replaceAll('\\','/')).filter(name=>name.endsWith('.tsx')||name.endsWith('.ts'));
- const unguarded:string[]=[];let hooks=0,options=0,dialogs=0;
+ const pins:string[]=[];let hooks=0;
  for(const file of files){
   const code=await readFile(file,'utf8');
   if(!/useConfirmDialog|ConfirmDialog/.test(code))continue;
-  walk(parseAst(code,{lang:'tsx'}),node=>{
-   if(node.type==='CallExpression'&&(node.callee as Node).type==='Identifier'&&(node.callee as Node).name==='useConfirmDialog'){
-    hooks++;const [config]=node.arguments as Node[];
-    if(!config||config.type!=='ObjectExpression'||!(isTrue(property(config,'danger')?.value as Node)||property(config,'initialFocus')))unguarded.push(`${file}:${line(code,node)} useConfirmDialog without danger:true or initialFocus`);
-   }else if(node.type==='ObjectExpression'&&property(node,'danger')){
-    options++;const danger=property(node,'danger')!.value as Node;
-    if(!isTrue(danger)&&!property(node,'initialFocus'))unguarded.push(`${file}:${line(code,node)} danger is not true and initialFocus is missing`);
-   }else if(node.type==='JSXOpeningElement'&&(node.name as Node).type==='JSXIdentifier'&&(node.name as Node).name==='ConfirmDialog'){
-    dialogs++;const attributes=(node.attributes as Node[]).filter(item=>item.type==='JSXAttribute');
-    const named=(name:string)=>attributes.find(item=>(item.name as Node).name===name);
-    const danger=named('danger');const dangerTrue=danger&&(danger.value===null||isTrue(((danger.value as Node)?.expression) as Node));
-    if(!dangerTrue&&!named('initialFocus'))unguarded.push(`${file}:${line(code,node)} <ConfirmDialog> without danger or initialFocus`);
-   }
-  });
+  const found=focusPins(code,file);pins.push(...found.pins);hooks+=found.hooks;
  }
- return {unguarded,hooks,options,dialogs};
-}
-
-test('every confirm is danger or declares where focus starts',async()=>{
- const {unguarded,hooks,options}=await confirmSites();
  assert.ok(hooks>=30,'the scan finds the app confirm hooks ('+hooks+')');
- assert.ok(options>=9,'the scan finds per-call danger options ('+options+')');
- assert.deepEqual(unguarded,[]);
+ assert.deepEqual(pins,[]);
+});
+
+test('the scan flags a confirm that starts on Confirm and accepts the default and Cancel',()=>{
+ const flagged=focusPins(`async function offenders(){
+  const [confirm]=useConfirmDialog({danger:true,initialFocus:'confirm'});
+  await confirm({title:'t',description:'d',
+    initialFocus:'confirm'});
+  await confirm({title:'t',description:'d',initialFocus:focus});
+  return <ConfirmDialog initialFocus="confirm" open title="t" description="d" onConfirm={run} onOpenChange={close}/>;
+ }`,'inline.tsx');
+ assert.equal(flagged.hooks,1);
+ assert.deepEqual(flagged.pins.map(pin=>pin.split(' ')[0]),['inline.tsx:2','inline.tsx:4','inline.tsx:5','inline.tsx:6'],'the hook default, the multi-line option, the dynamic option and the dialog prop');
+ assert.deepEqual(focusPins(`async function allowed(){
+  await confirm({title:'t',description:'d'});
+  await confirm({title:'t',description:'d',initialFocus:'cancel'});
+  return <ConfirmDialog initialFocus="cancel" open title="t" description="d" onConfirm={run} onOpenChange={close}/>;
+ }`,'inline.tsx').pins,[]);
 });

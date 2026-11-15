@@ -82,7 +82,7 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
     event.preventDefault();
     try {
       const next = buildPromptQuestions({topic, audience, intent, brand, competitor: competitorName});
-      if (questions.length && !await confirm({title: 'Replace the current starter questions?', description: 'Your selections will reset.', confirmLabel: 'Replace questions', danger: false, initialFocus: 'cancel'})) return;
+      if (questions.length && !await confirm({title: 'Replace the current starter questions?', description: 'Your selections will reset.', confirmLabel: 'Replace questions', danger: false})) return;
       setQuestions(next); setSelected(next.map((_, index) => index)); setGenerated({signature, topic: normalize(topic)}); setError('');
     } catch (cause) { setError(errMsg(cause)); }
   }

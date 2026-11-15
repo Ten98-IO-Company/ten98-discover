@@ -20,5 +20,7 @@ export const Route = createRootRoute({
     // ponytail: no includeSubDomains/preload because setup admits apex APP_URLs that may own plain-HTTP subdomains; adding them is an owner decision.
     ...(getConfig().appUrl.startsWith('https:') ? { 'strict-transport-security': 'max-age=31536000' } : {}),
   } : {},
-  component: () => <html lang="en"><head><HeadContent /></head><body><ToastProvider><Outlet /></ToastProvider><Scripts /></body></html>,
+  // The app shell's theme script (src/routes/index.tsx) sets data-theme on <html> before hydration, which React would
+  // otherwise report as a mismatch. Documents without that script, such as the public share pages, have nothing to suppress.
+  component: () => <html lang="en" suppressHydrationWarning><head><HeadContent /></head><body><ToastProvider><Outlet /></ToastProvider><Scripts /></body></html>,
 });
