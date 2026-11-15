@@ -48,6 +48,100 @@ test('external or mislabeled image sources are removed while author text is esca
   assert.match(sanitizeReportHtml('<p>&lt;script&gt;visible text&lt;/script&gt;</p>'),/&lt;script&gt;visible text&lt;\/script&gt;/);
 });
 
+function styleOf(source:string) {
+  const sanitized=sanitizeReportHtml(source);
+  assert.equal(sanitizeReportHtml(sanitized),sanitized,'Sanitised styles must be stable when a snapshot is sanitised again.');
+  const found=elements(sanitized);
+  const sheet=found.find(node=>node.tagName==='style')?.childNodes.map(node=>(node as Html.TextNode).value).join('');
+  return {sheet,inline:found.find(node=>node.tagName==='p')?.attrs.find(attr=>attr.name==='style')?.value};
+}
+const hex=(char:string)=>char.charCodeAt(0).toString(16);
+const alternate=(name:string)=>[...name].map((char,index)=>index%2 ? char.toUpperCase() : char.toLowerCase()).join('');
+// Each spelling a browser may resolve to the same identifier, plus a raw control character.
+const spellings=(name:string)=>({
+  plain:name, upper:name.toUpperCase(), mixed:alternate(name),
+  escapedSpace:`\\${hex(name[0])} ${name.slice(1)}`, escapedHex:`${name.slice(0,-1)}\\${hex(name.at(-1)!)}`, escapedZeroPadded:`\\00${hex(name[0])}${name.slice(1)}`,
+  comment:`${name[0]}/**/${name.slice(1)}`, control:`${name[0]}\u0001${name.slice(1)}`,
+});
+const loaders:Array<[string,(name:string)=>string]>=[
+  ['url',name=>`background:${name}(https://external.invalid/a.png)`],
+  ['url',name=>`background:${name}("https://external.invalid/a.png")`],
+  ['image-set',name=>`background-image:${name}("https://external.invalid/a.png" 1x)`],
+  ['-webkit-image-set',name=>`background-image:${name}("https://external.invalid/a.png" 1x)`],
+  ['image',name=>`background-image:${name}("https://external.invalid/a.png")`],
+  ['cross-fade',name=>`background-image:${name}("https://external.invalid/a.png", "https://external.invalid/b.png", 50%)`],
+  ['element',name=>`background:${name}(#chart)`],
+  ['src',name=>`background-image:${name}("https://external.invalid/a.png")`],
+  ['expression',name=>`width:${name}(document.body.clientWidth)`],
+  ['url',name=>`background:linear-gradient(red, transparent), ${name}(https://external.invalid/a.png)`],
+  ['url',name=>`background:linear-gradient(red, ${name}(https://external.invalid/a.png))`],
+  ['url',name=>`--brand-image:${name}(https://external.invalid/a.png)`],
+];
+const blockedProperties:Array<[string,(name:string)=>string]>=[
+  ['behavior',name=>`${name}:url(https://external.invalid/a.htc)`],
+  ['behavior',name=>`${name}:default`],
+  ['-moz-binding',name=>`${name}:none`],
+];
+
+test('report styles drop every function that can load a resource or run script, in each spelling',()=>{
+  for(const [name,declaration] of loaders) for(const [variant,spelling] of Object.entries({...spellings(name),space:`${name} `,newline:`${name}\n`})) {
+    const css=declaration(spelling), context=`${name} ${variant}: ${css}`;
+    assert.equal(styleOf(`<p style='color:red;${css};margin:0'>x</p>`).inline,'color:red;margin:0',context);
+    assert.equal(styleOf(`<style>p{color:red;${css};margin:0}</style>`).sheet,'p{color:red;margin:0}',context);
+    assert.equal(styleOf(`<style>@media print{p{color:red;${css}}}</style>`).sheet,'@media print{p{color:red}}',context);
+  }
+  for(const [name,declaration] of blockedProperties) for(const [variant,spelling] of Object.entries({...spellings(name),space:`${name} `,newline:`${name}\n`})) {
+    const css=declaration(spelling), context=`${name} ${variant}: ${css}`;
+    assert.equal(styleOf(`<p style='color:red;${css}'>x</p>`).inline,'color:red',context);
+    assert.equal(styleOf(`<style>p{color:red;${css}}</style>`).sheet,'p{color:red}',context);
+  }
+  assert.equal(styleOf(`<p style='background:url(https://external.invalid/a.png)'>x</p>`).inline,undefined,'An emptied style attribute is removed.');
+});
+
+test('report stylesheets drop @import, @font-face, @namespace and other unlisted at-rules in each spelling',()=>{
+  const rules:Array<[string,(name:string)=>string]>=[
+    ['import',name=>`@${name} url(https://external.invalid/a.css);`],
+    ['import',name=>`@${name} "https://external.invalid/a.css" screen;`],
+    ['font-face',name=>`@${name}{font-family:Brand;src:url(https://external.invalid/a.woff2)}`],
+    ['font-face',name=>`@${name}{font-family:Brand;src:local(Brand)}`],
+    ['namespace',name=>`@${name} svg url(http://www.w3.org/2000/svg);`],
+    ['counter-style',name=>`@${name} marks{system:cyclic;symbols:url(https://external.invalid/a.png)}`],
+  ];
+  for(const [name,rule] of rules) for(const [variant,spelling] of Object.entries({...spellings(name),space:`${name}  `,newline:`${name}\n`})) {
+    const css=rule(spelling), context=`@${name} ${variant}: ${css}`;
+    assert.equal(styleOf(`<style>${css}p{color:red}</style>`).sheet,'p{color:red}',context);
+    assert.equal(styleOf(`<style>@media screen{${css}p{color:red}}</style>`).sheet,'@media screen{p{color:red}}',context);
+  }
+  assert.equal(styleOf('<style>@import url(https://external.invalid/a.css);p{color:red}</style>').sheet,'p{color:red}');
+  assert.equal(styleOf('<style>p{color:red}@font-face{font-family:Brand;src:url(https://external.invalid/a.woff2)}</style>').sheet,'p{color:red}');
+});
+
+test('report styles refuse escapes and unbalanced text, and keep only same-document SVG paint references',()=>{
+  assert.equal(styleOf(`<p style='color:red;content:"\\201C";width:calc(1px'>x</p>`).inline,'color:red');
+  assert.equal(styleOf(`<style>.md\\:flex{display:flex}p{color:red}a){color:blue}</style>`).sheet,'p{color:red}');
+  assert.equal(styleOf(`<style>p{color:red}q{color:blue</style>`).sheet,'p{color:red}');
+  assert.equal(styleOf(`<style>p{color:red;q{color:blue}}</style>`).sheet,'p{color:red}','Nested rules are dropped.');
+  assert.equal(styleOf(`<style>p{color:red}/* note */ q{color:blue /* x */}</style>`).sheet,'p{color:red}  q{color:blue  }','Comments become token-separating spaces.');
+  const svg=elements(sanitizeReportHtml('<svg><linearGradient id="g"/><rect fill="url(#g)" stroke="URL(https://external.invalid/a.svg#g)"/><rect fill="blue" clip-path="u\\72l(#g)"/><path fill="url(#g) red" stroke="none"/></svg>'))
+    .filter(node=>['rect','path'].includes(node.tagName)).map(node=>Object.fromEntries(node.attrs.map(attr=>[attr.name,attr.value])));
+  assert.deepEqual(svg,[{fill:'url(#g)'},{fill:'blue'},{fill:'url(#g) red',stroke:'none'}]);
+});
+
+test('harmless report styles for colour, size and layout survive unchanged',()=>{
+  const inline='display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:calc(var(--gap) * 2);color:rgb(10 20 30 / 50%);'
+    +'background:linear-gradient(90deg, #fff, hsl(0 0% 90%));transform:translateX(-50%) rotate(2deg);font:600 14px/1.4 "Segoe UI", system-ui, sans-serif;'
+    +'border:1px solid color-mix(in srgb, currentColor 20%, transparent);box-shadow:0 1px 2px rgba(0,0,0,.2);width:clamp(200px, 50%, 600px) !important;';
+  assert.equal(styleOf(`<p style='${inline}'>x</p>`).inline,inline);
+  const sheet=':root{--accent:#0b5;--gap:8px}\nbody{margin:0;font-family:system-ui}\n'
+    +'table{border-collapse:collapse;width:100%}\nth,td{padding:4px 8px;text-align:right}\ntr:nth-child(2n) td{background:#f5f5f5}\n'
+    +'a[title^="Report"]::after{content:" (report)"}\n'
+    +'@media (max-width: 600px) and (prefers-color-scheme: dark){body{color:#eee;background:#111}}\n'
+    +'@supports (display:grid){.cards{display:grid;grid-template-areas:"a b" "c d"}}\n'
+    +'@layer base, report;\n@layer base{h1{font-size:2rem}}\n@container (min-width: 400px){.card{padding:1rem}}\n'
+    +'@keyframes grow{from{transform:scaleX(0)}50%{opacity:.5}to{transform:scaleX(1)}}\n.bar{animation:grow 1s cubic-bezier(.2,.8,.2,1) both;filter:drop-shadow(0 1px 1px #0003)}\n';
+  assert.equal(styleOf(`<style>${sheet}</style>`).sheet,sheet);
+});
+
 test('all document callers receive an opaque sandbox and resource restrictions',async()=>{
   const response=reportDocument('<script>leak()</script><p>Safe</p>');
   const csp=response.headers.get('content-security-policy')!;

@@ -13,6 +13,7 @@ import {getConfig} from './config.ts';
 import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
 import {cleanText,text,revision as revisionInput} from './context-input.ts';
+import {safeSvgPaint,sanitizeDeclarations,sanitizeStylesheet} from './report-style.ts';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
@@ -21,6 +22,7 @@ const htmlTags = new Set('html head body title style main article section header
 const svgTags = new Set('svg g path rect circle ellipse line polyline polygon text tspan title desc defs linearGradient radialGradient stop clipPath'.split(' '));
 const commonAttrs = new Set('id class style title lang dir role aria-label aria-hidden'.split(' '));
 const svgAttrs = new Set('viewBox width height x y x1 x2 y1 y2 cx cy r rx ry d points fill stroke stroke-width stroke-linecap stroke-linejoin opacity fill-opacity stroke-opacity transform text-anchor dominant-baseline font-size font-family font-weight dx dy offset stop-color stop-opacity gradientUnits gradientTransform spreadMethod clip-path preserveAspectRatio'.split(' '));
+const svgPaintAttrs = new Set(['fill','stroke','clip-path']);
 const structuralAttrs: Record<string, Set<string>> = {
   th: new Set(['colspan','rowspan','scope','headers']), td: new Set(['colspan','rowspan','headers']),
   col: new Set(['span']), colgroup: new Set(['span']), ol: new Set(['start','reversed','type']), li: new Set(['value']),
@@ -66,8 +68,11 @@ export function sanitizeReportHtml(source:string):string {
       if (!(svg ? svgTags.has(child.tagName) : child.namespaceURI===htmlNamespace && htmlTags.has(child.tagName))) return false;
       child.attrs=child.attrs.filter(attr=>{
         if (attr.namespace || attr.prefix || !(commonAttrs.has(attr.name) || (svg ? svgAttrs.has(attr.name) : structuralAttrs[child.tagName]?.has(attr.name)))) return false;
+        if (attr.name==='style') { attr.value=sanitizeDeclarations(attr.value); return !!attr.value.trim(); }
+        if (svg && svgPaintAttrs.has(attr.name)) return safeSvgPaint(attr.value);
         return attr.name!=='src' || (child.tagName==='img' && rasterData(attr.value));
       });
+      if (!svg && child.tagName==='style') for (const node of child.childNodes) if (node.nodeName==='#text') (node as Html.TextNode).value=sanitizeStylesheet((node as Html.TextNode).value);
       pending.push({node:child,depth:depth+1});
       return true;
     });
