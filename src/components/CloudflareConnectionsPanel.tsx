@@ -75,8 +75,8 @@ function Connections({projectId, onUnauthorized}: Props) {
       if (row.revision === ack.revision && row.state !== (captured.operation === 'save' ? 'configured' : 'disconnected')) throw Error('Unmatched connection state');
       keep(null); apply(result); clearForm();
       if (result.role !== 'owner') return;
-      setNotice(row.revision > ack.revision ? 'Original request confirmed. Showing the latest connection; check access explicitly.' : captured.operation === 'save' ? 'Connection saved.' : 'Connection disconnected.');
-      if (captured.operation === 'save' && row.revision === ack.revision && row.state === 'configured') await check(row, controller);
+      // A save only stores the credential. Cloudflare is contacted solely by an explicit Check access.
+      setNotice(row.revision > ack.revision ? 'Original request confirmed. Showing the latest connection; check access explicitly.' : captured.operation === 'save' ? 'Connection saved. Choose Check access to test it.' : 'Connection disconnected.');
     } catch (cause) {
       if (!current(controller) || denied(cause)) return; setNotice('');
       // A missing or mismatched acknowledgment is ambiguous; only its original request may be retried.
@@ -109,7 +109,7 @@ function Connections({projectId, onUnauthorized}: Props) {
   useBlocker({shouldBlockFn: () => pendingRef.current !== null || state.current.dirty && !window.confirm('Discard connection edits and leave?'), enableBeforeUnload: () => pendingRef.current !== null || state.current.dirty});
   useEffect(() => { mounted.current = true; void load(); return () => { mounted.current = false; operation.current?.abort(); operation.current = null; pendingRef.current = null; dataRef.current = null; }; }, []);
   return <Stack gap={6}>
-    <Stack gap={2}><Heading level={2}>Cloudflare Web Analytics</Heading><Text tone="muted">Connect an account to check Web Analytics access. Reporting data is not imported yet.</Text></Stack>
+    <Stack gap={2}><Heading level={2}>Cloudflare Web Analytics</Heading><Text tone="muted">Connect an account, then choose Check access to confirm Web Analytics access. Reporting data is not imported yet.</Text></Stack>
     <Inline wrap><Button variant="secondary" disabled={busy || pending !== null} onClick={() => void refresh()}>{conflict ? 'Reload latest connections' : refreshFailed ? 'Retry refresh' : 'Refresh connections'}</Button></Inline>
     {busy && !notice && <Text role="status">Loading connections…</Text>}{notice && <Text role="status">{notice}</Text>}{error && <Text role="alert">{error}</Text>}
     {pending && !busy && <Button onClick={() => void send(pending)}>Retry same request</Button>}
@@ -118,7 +118,7 @@ function Connections({projectId, onUnauthorized}: Props) {
       {data.connections.map(row => { const checked = checks[row.id], failed = failedChecks[row.id] === row.revision;
         return <Stack key={row.id} gap={2}>
           <Text weight="semibold">{row.name}</Text><Text size="sm">Account ID: {row.accountId}</Text>
-          <Text>{row.state === 'disconnected' ? 'Disconnected' : checked ? 'Access checked' : failed ? 'Check failed. Connection saved.' : 'Configured. Access not checked.'}</Text>
+          <Text>{row.state === 'disconnected' ? 'Disconnected' : checked ? 'Access checked' : failed ? 'Check failed. Connection saved.' : 'Configured. Not checked yet.'}</Text>
           {checked && <Stack gap={1}><Text size="sm">Checked: {new Date(checked.checkedAt).toLocaleString()}</Text><Text>{checked.capabilities.enabled ? 'Analytics capability enabled.' : 'Analytics capability disabled for this account.'}</Text><Text>{checked.sites.length ? `${checked.sites.length} Web Analytics ${checked.sites.length === 1 ? 'site' : 'sites'} returned.` : 'No Web Analytics sites returned. This does not indicate zero traffic.'}</Text>
             {checked.sites.map(site => <Text key={site.site_tag} size="sm">{site.rules?.flatMap(rule => rule.host ? [rule.host] : []).join(', ') || `Site ${site.site_tag}`}</Text>)}
           </Stack>}
@@ -134,7 +134,7 @@ function Connections({projectId, onUnauthorized}: Props) {
         <Field label="Connection name" htmlFor={uid + '-name'}><Input id={uid + '-name'} value={name} disabled={blocked || !data.vaultConfigured} maxLength={120} onChange={event => setName(event.target.value)}/></Field>
         <Field label="Account ID" htmlFor={uid + '-account'}><Input id={uid + '-account'} value={accountId} disabled={blocked || !!selected || !data.vaultConfigured} maxLength={32} autoComplete="off" onChange={event => setAccountId(event.target.value)}/></Field>
         <Field label="API token" htmlFor={uid + '-token'} data-sensitive="true" data-rrweb-mask="true"><Input id={uid + '-token'} type="password" autoComplete="off" data-sensitive="true" data-rrweb-mask="true" value={token} disabled={blocked || !data.vaultConfigured} maxLength={4096} onChange={event => setToken(event.target.value)}/></Field>
-        <Inline wrap><Button type="submit" disabled={blocked || !data.vaultConfigured}>{selected ? 'Save token and check access' : 'Connect account'}</Button>{selected && <Button type="button" variant="ghost" disabled={busy || pending !== null} onClick={clearForm}>Cancel edit</Button>}</Inline>
+        <Inline wrap><Button type="submit" disabled={blocked || !data.vaultConfigured}>{selected ? 'Save token' : 'Connect account'}</Button>{selected && <Button type="button" variant="ghost" disabled={busy || pending !== null} onClick={clearForm}>Cancel edit</Button>}</Inline>
         </Form>
       </Stack> : <Text tone="muted">Only workspace owners can connect, check or disconnect Cloudflare accounts.</Text>}
     </Stack>}{confirmDialog}

@@ -24,9 +24,11 @@ export async function listSavedReplays(projectId:string,userId:string,raw:URLSea
  AND($4::uuid IS NULL OR(created_at,id)<(SELECT created_at,id FROM session_recording WHERE project_id=$1 AND id=$4)) ORDER BY created_at DESC,id DESC LIMIT 21`,[projectId,scope.cutoff,search,cursor?.id??null])).rows;
  return savedReplayList.parse({role:scope.role,asOf:scope.at,retainedFrom:scope.cutoff,items:rows.slice(0,20).map(row=>({recording:summary(row,row.expired),saved:saved(row)})),nextCursor:rows.length>20?contentCursor({id:rows[19].id,createdAt:rows[19].created_at},bound):null});
  });}
-export async function saveReplay(projectId:string,userId:string,recordingId:string,raw:unknown){if(!z.uuid().safeParse(projectId).success||!z.uuid().safeParse(recordingId).success)throw invalid();const parsed=savedReplayWrite.safeParse(raw);if(!parsed.success)throw invalid();const input=parsed.data;return transaction(async client=>{
+export async function saveReplay(projectId:string,userId:string,recordingId:string,raw:unknown){if(!z.uuid().safeParse(projectId).success||!z.uuid().safeParse(recordingId).success)throw invalid();return transaction(async client=>{
  const target=(await client.query('SELECT workspace_id FROM project WHERE id=$1',[projectId])).rows[0];if(!target)throw absent();await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[target.workspace_id]);await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[projectId]);
  const authority=(await client.query(`SELECT m.role,to_char(GREATEST(p.replay_retained_from,clock_timestamp()-w.replay_days*interval '24 hours')AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff FROM project p JOIN workspace w ON w.id=p.workspace_id JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1`,[projectId,userId])).rows[0];if(!authority||!['owner','admin','editor'].includes(authority.role))throw absent();
+ // Read after the access check, so a caller without access gets the same 404 whatever the input.
+ const parsed=savedReplayWrite.safeParse(raw);if(!parsed.success)throw invalid();const input=parsed.data;
  const request={...input,recordingId},receipt=await contentReceipt(client,projectId,input.requestId,'replay.saved',{actorId:userId,...request});if(receipt.replayed)return savedReplayAck.parse({role:authority.role,request,appliedRevision:receipt.result.appliedRevision,replayed:true});
  const row=(await client.query('SELECT *,created_at<$3::timestamptz AS expired FROM session_recording WHERE project_id=$1 AND id=$2 AND sampled FOR UPDATE',[projectId,recordingId,authority.cutoff])).rows[0];if(!row)throw absent();if(row.saved_revision!==input.revision||row.saved_revision===2147483647)throw new FoundationError(409,'The saved replay changed. Reload before saving.');
  if(input.action!=='unsave'&&(row.expired||row.entry_path===null))throw new FoundationError(409,'Expired recordings cannot be saved or renamed.');
@@ -124,8 +126,8 @@ export async function associateHeatmapBackground(request:Request,raw:unknown){
 
 export async function getHeatmapBackground(projectId:string,userId:string,raw:URLSearchParams|string){
  let query:ReturnType<typeof readHeatmapQuery>,after=-1;
- try{const p=replayHeatmapParams(raw);if(p.has('after')){const a=p.get('after')!;if(p.getAll('after').length!==1||!/^(0|[1-9]\d{0,3})$/.test(a)||Number(a)>1023)throw invalid();after=Number(a);p.delete('after');}query=readHeatmapQuery(p);if(!['click','scroll'].includes(query.mode))throw invalid();}catch{throw invalid();}
  return readScope(projectId,userId,async(client,scope)=>{
+  try{const p=replayHeatmapParams(raw);if(p.has('after')){const a=p.get('after')!;if(p.getAll('after').length!==1||!/^(0|[1-9]\d{0,3})$/.test(a)||Number(a)>1023)throw invalid();after=Number(a);p.delete('after');}query=readHeatmapQuery(p);if(!['click','scroll'].includes(query.mode))throw invalid();}catch{throw invalid();}
   const blank={version:1 as const,projectId,role:scope.role,query,asOf:scope.at,reference:null,item:null,chunks:[],nextAfter:null};
   const start=query.from+'T00:00:00Z',end=new Date(Date.parse(query.to+'T00:00:00Z')+86400000).toISOString();
   const ref=(await client.query(`SELECT b.*,c.epoch AS capture_epoch FROM heatmap_background b JOIN heatmap_batch h ON h.project_id=b.project_id AND h.request_id=b.batch_request_id

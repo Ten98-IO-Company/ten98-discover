@@ -44,7 +44,10 @@ export async function runCloudflareCheckChecks() {
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Cloudflare check fixture')", [workspace]);
     for (const [user, role] of [[owner, 'owner'], [coowner, 'owner'], [viewer, 'viewer']]) await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)', [workspace, user, role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Cloudflare check fixture','https://cloudflare.example',$3,'infinity')", [project, workspace, randomUUID()]);
-    return {workspace, project, connection: (await saveCloudflareConnection(project, owner, input())).ack.connectionId};
+    // Saving only stores the credential, so it must not reach the (throwing) global fetch. Only an explicit check contacts Cloudflare.
+    const outbound = external, connection = (await saveCloudflareConnection(project, owner, input())).ack.connectionId;
+    assert.equal(external, outbound, 'Saving a Cloudflare connection must not send a provider request');
+    return {workspace, project, connection};
   }
   const check = (f: Fixture, options = transport(), user = owner, revision = 1) => checkCloudflareConnection(f.project, user, {connectionId: f.connection, expectedRevision: revision}, options);
   async function denied(action: Promise<unknown>, status: number) {

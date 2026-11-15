@@ -110,7 +110,7 @@ export async function listSavedKeywordRefreshes(projectId:string,userId:string):
   });
 }
 export async function getSavedKeywordRefresh(projectId:string,userId:string,id:string):Promise<{role:Role;plan:SavedRefreshPlan}> {
-  id=uuid(id);return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>({role:role as Role,plan:await planDto(client,await planRow(client,projectId,id),userId,role)}));
+  return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{id=uuid(id);return {role:role as Role,plan:await planDto(client,await planRow(client,projectId,id),userId,role)};});
 }
 export async function startSavedKeywordRefresh(projectId:string,userId:string,raw:unknown):Promise<{role:Role;plan:SavedRefreshPlan}> {
   const {preparationId:quoteId,requestKey}=parseSavedKeywordRefreshStart(raw),boss=await getBoss();

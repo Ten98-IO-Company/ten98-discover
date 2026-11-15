@@ -19,13 +19,15 @@ const geoUsed=(query:ReturnType<typeof explorerQuery>)=>geographyFields.some(fie
 
 export async function projectRetentionReport(projectId:string,authority:SessionReadAuthority,params:URLSearchParams):Promise<RetentionReport>{
   if(!z.uuid().safeParse(projectId).success)throw new FoundationError(400,'Choose a valid project.');projectId=projectId.toLowerCase();
-  const input=retentionReportQuery(params),client=await getDatabase().pool.connect();
+  const client=await getDatabase().pool.connect();
   try{
     await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='250ms'; SET LOCAL TIME ZONE 'UTC'");
     const preliminary=authority.kind==='api-key'?await authenticateApiKey(authority.token,client):null;
     let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
     const workspace=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
     if(!workspace||preliminary&&preliminary.workspaceId!==workspace)throw missing();
+    // Membership is resolved before the query is read, so a non-member gets the same answer whatever the parameters.
+    const input=retentionReportQuery(params);
     // Same bounded publication gate as session reads; authority is refreshed after every possible wait.
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[workspace]);
     let key=authority.kind==='api-key'?await authorizeApiKey(authority.token,workspace,'analytics:read',client):null;
