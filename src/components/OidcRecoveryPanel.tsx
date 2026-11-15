@@ -5,7 +5,7 @@ import { api, ApiError, errMsg } from '../lib/api'
 import { authorizationRedirect } from '../lib/oidc-authorization'
 import { closureAcknowledgements, closurePrivacyNotice } from './AccountClosurePanel'
 
-// twoFactorRequirement is present while a workspace this user belongs to requires two-factor, so turning it off is refused.
+// twoFactorRequirement is present only while two-factor is on and a workspace this user belongs to requires it, so turning it off is refused.
 type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean; twoFactorRequirement: { message: string; workspaces: { id: string; name: string; owner: boolean }[] } | null }
 type Identity = { id: string; providerName: string; enabled: boolean }
 type Proof = { id: string; purpose: string; providerName: string; issuer: string; subject: string; expiresAt: string }
@@ -144,7 +144,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
     })
   }
   if (loading && !security) return <Text tone='muted' role='status'>Loading identity recovery settings…</Text>
-  const requirement = security?.user.twoFactorEnabled ? security.twoFactorRequirement ?? null : null
+  const requirement = security?.twoFactorRequirement ?? null
   if (security?.hasPassword && !notice && !enrollment) return null
   return <Card as='section' headingLevel={2} aria-label='Identity account security' aria-busy={busy || loading}
     title={<><AppIcon name='shield' size={18} />{' '}Identity account security</>} description='Recovery for accounts connected to an identity provider'>

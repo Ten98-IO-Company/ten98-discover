@@ -3,7 +3,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { getConfig } from '../src/server/config.ts';
 import { getDatabase } from '../src/server/db.ts';
 import { getAuth } from '../src/server/auth.ts';
-import { acceptInvitation, inviteMember } from '../src/server/teams.ts';
+import { acceptInvitation, inviteMember, setTwoFactorRequirement } from '../src/server/teams.ts';
 
 type Options = { baseUrl: string; appUrl: string; ownerCookie: string; ownerId: string; workspaceId: string };
 type Browser = { cookies: Map<string, string> };
@@ -87,6 +87,8 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   const initial = await expect('/api/account/security', primary, 200);
   assert.equal(initial.user.twoFactorEnabled, false);
   assert.equal(initial.hasPassword, true);
+  // R requires two-factor, but without a factor there is nothing to turn off, so the turn-off explanation stays null.
+  assert.equal(initial.twoFactorRequirement, null, 'A member without a factor gets no turn-off explanation.');
   assert.ok(initial.sessions.some((session: { current: boolean }) => session.current));
   assert.ok(initial.sessions.every((session: Record<string, unknown>) => !('token' in session) && !('ipAddress' in session)), 'Session list must not reveal bearer credentials.');
 
@@ -311,13 +313,56 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [requiredWorkspace]);
   assert.deepEqual(await expect(ownSetter, primary, 200, { required: false }), { twoFactorRequired: false });
   await refusedDisable('Two-factor authentication is required by Two-factor required fixture. An owner must turn off that requirement first.');
-  // Once no workspace of this user requires it, the same recovery code turns the factor off.
   await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
   assert.equal((await expect('/api/account/security', primary, 200)).twoFactorRequirement, null);
-  await expect('/api/account/two-factor/disable', primary, 200, disableProof);
+
+  // Concurrency: the disable reads the requirement after it locks the user row FOR UPDATE, in the same transaction. The
+  // runtime's requirement change locks the workspace, then the owner's user row FOR SHARE. Both interleavings are forced
+  // with row locks held by a separate connection and pg_stat_activity polling, without timing assumptions.
+  const waiting = async (description: string, condition: string, values: unknown[]) => {
+    for (const until = Date.now() + 10_000; !(await pool.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND ${condition}`, values)).rowCount;)
+      assert.ok(Date.now() < until, description);
+  };
+  const holding = async <T>(lock: string, run: (pid: number) => Promise<T>): Promise<T> => {
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(lock, [userId]);
+      return await run((await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+    } finally { await holder.query('ROLLBACK').catch(() => undefined); holder.release(); }
+  };
+  const settled = <T>(promise: Promise<T>) => { promise.catch(() => undefined); return promise; };
+  // 1. The requirement commits while the disable waits for its user lock: the disable must see it and refuse. A shared
+  // holder blocks the disable's FOR UPDATE but not the requirement change's FOR SHARE. Reading the requirement before
+  // the lock (or outside the transaction) misses it and turns the factor off under a requirement this owner just set.
+  const ownRequired = "Two-factor authentication is required by Two-factor owner fixture. As its owner, you can turn off the requirement in that workspace's team settings first.";
+  const raced = await holding('SELECT id FROM "user" WHERE id=$1 FOR SHARE', async (holder) => {
+    const disabling = settled(call('/api/account/two-factor/disable', primary, disableProof));
+    await waiting('The disable waits for the user row lock.', 'query=$1 AND $2=ANY(pg_blocking_pids(pid))', ['SELECT id FROM "user" WHERE id=$1 FOR UPDATE', holder]);
+    assert.deepEqual(await setTwoFactorRequirement(ownWorkspace.id, userId, { required: true }), { twoFactorRequired: true });
+    return { disabling }; // Wrapped: returning the promise itself would wait for it while the holder still blocks it.
+  });
+  assert.deepEqual(await raced.disabling, { status: 409, body: { error: ownRequired } }, 'A requirement committed before the disable takes its user lock must refuse the disable.');
+  await enrolled();
+  assert.equal(await factorRequired(ownWorkspace.id), true);
+  // 2. The disable holds the user lock first (a holder on its factor row keeps it inside the transaction): the requirement
+  // change waits on the user row, then sees the factor off and refuses. Once no workspace of this user requires it, the
+  // same recovery code turns the factor off.
+  assert.deepEqual(await expect(ownSetter, primary, 200, { required: false }), { twoFactorRequired: false });
+  const [disabled, requiring] = await holding('SELECT 1 FROM "twoFactor" WHERE "userId"=$1 FOR UPDATE', async (holder) => {
+    const disabling = settled(call('/api/account/two-factor/disable', primary, disableProof));
+    await waiting('The disable holds the user lock and waits on the factor row.', '$1=ANY(pg_blocking_pids(pid))', [holder]);
+    const requiring = settled(setTwoFactorRequirement(ownWorkspace.id, userId, { required: true }));
+    await waiting('The requirement change waits for the user row.', 'query=$1', ['SELECT "twoFactorEnabled" FROM "user" WHERE id=$1 FOR SHARE']);
+    return [disabling, requiring] as const;
+  });
+  assert.deepEqual(await disabled, { status: 200, body: { ok: true, twoFactorEnabled: false } });
+  await assert.rejects(requiring, { status: 409, message: 'Turn on two-factor authentication for your own account before requiring it for this workspace.' });
+  assert.equal(await factorRequired(ownWorkspace.id), false, 'The waiting requirement change must not commit once the factor is off.');
   assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, false);
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
   console.log('PASS turning off two-factor is refused with 409 while a workspace of the user requires it, naming the workspaces and the owner action, keeps the factor and the recovery code, and succeeds once no workspace requires it');
+  console.log('PASS a requirement committed while the disable waits for its user lock refuses the disable; a requirement change that waits behind the disable refuses once the factor is off');
 
   // Re-lock when a requirement starts after the factor is off (as another owner may set it): R and the member's own workspace
   // refuse again, the owner cannot lift it while locked, and the enrolment path stays reachable without creating a factor.
@@ -333,7 +378,7 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Two-factor own fixture',$3,gen_random_uuid(),'infinity')", [ownProject, ownWorkspace.id, `https://${randomUUID()}.two-factor.integration.test`]);
   assert.deepEqual(await expect(`/api/workspaces/${ownWorkspace.id}/projects`, outsider, 404), { error: 'Workspace not found or unavailable.' });
   assert.deepEqual(await expect(`/api/projects/${ownProject}/events`, outsider, 404), { error: 'Project not found or unavailable.' });
-  await expect('/api/account/security', primary, 200);
+  assert.equal((await expect('/api/account/security', primary, 200)).twoFactorRequirement, null, 'Once the factor is off, required workspaces give no turn-off explanation.');
   assert.equal((await expect('/api/account/two-factor/enable', primary, 400, { password: 'incorrect password' })).error, 'The current password was not accepted.');
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
   await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);

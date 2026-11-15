@@ -378,11 +378,13 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     const providerId = (await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1', [current.session.id])).rows[0]?.oidcProviderId as string | null;
     if (status) {
       const sessions = await client.query('SELECT id,"createdAt","expiresAt","userAgent" FROM session WHERE "userId"=$1 AND "expiresAt">clock_timestamp() ORDER BY "createdAt" DESC,id LIMIT 100', [userId]);
-      const workspaces = await requiringWorkspaces(client, userId);
+      const twoFactorEnabled = current.user.twoFactorEnabled === true;
+      const workspaces = twoFactorEnabled ? await requiringWorkspaces(client, userId) : [];
       return json({
-        user: { id: userId, name: current.user.name, email: current.user.email, twoFactorEnabled: current.user.twoFactorEnabled === true },
+        user: { id: userId, name: current.user.name, email: current.user.email, twoFactorEnabled },
         hasPassword: await hasLocalPassword(client, userId),
-        // Why turning off two-factor would be refused now; null when no workspace of this user requires it.
+        // Why turning off two-factor would be refused now. Null without a factor (there is nothing to turn off; the
+        // workspace gate and /api/me twoFactorLocked cover enrolment) or when no workspace of this user requires it.
         twoFactorRequirement: workspaces.length ? { message: requirementMessage(workspaces), workspaces } : null,
         sessions: sessions.rows.map((session) => ({ ...session, current: session.id === current.session.id })),
       });
