@@ -49,8 +49,6 @@ export type RankTrackingFieldsProps = {
 
 const DEPTHS: readonly RankDepth[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const PAGE_CAPS: readonly RankPageCap[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-// @ten98/ui text controls are 36px; keep the 44px coarse-pointer target the rank suite asserts.
-const TOUCH_TARGET: React.CSSProperties = { minHeight: 'var(--t98-control-touch)' };
 
 export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.Element {
   const {
@@ -104,7 +102,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
     <Fieldset legend="Rank tracker targeting" disabled={disabled} layout="grid">
       <Field label="Target domain" htmlFor={id('domain')} error={errors.domain}>
         <Input
-          style={TOUCH_TARGET}
           id={id('domain')}
           type="text"
           value={value.domain}
@@ -123,7 +120,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Country or territory" htmlFor={id('countryLocationCode')} error={errors.countryLocationCode}>
         <Select
-          style={TOUCH_TARGET}
           id={id('countryLocationCode')}
           value={value.countryLocationCode}
           options={[
@@ -142,7 +138,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Search targeting" htmlFor={id('targeting')} error={errors.targeting}>
         <Select
-          style={TOUCH_TARGET}
           id={id('targeting')}
           value={value.targeting}
           options={[
@@ -167,7 +162,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
           <Inline align="end">
             <Field label="Find a city or region" htmlFor={id('localLocationQuery')}>
               <Input
-                style={TOUCH_TARGET}
                 id={id('localLocationQuery')}
                 type="text"
                 value={localLocations.query}
@@ -190,7 +184,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
           <Field label="City or region" htmlFor={id('localLocationCode')} error={localFieldError}>
             <Select
-              style={TOUCH_TARGET}
               id={id('localLocationCode')}
               value={value.localLocationCode}
               options={[
@@ -226,7 +219,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Language" htmlFor={id('languageCode')} error={errors.languageCode}>
         <Select
-          style={TOUCH_TARGET}
           id={id('languageCode')}
           value={value.languageCode}
           options={[
@@ -243,7 +235,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Devices" htmlFor={id('devices')} error={errors.devices}>
         <Select
-          style={TOUCH_TARGET}
           id={id('devices')}
           value={value.devices}
           options={[
@@ -266,7 +257,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Requested results" htmlFor={id('depth')} error={errors.depth}>
         <Select
-          style={TOUCH_TARGET}
           id={id('depth')}
           value={String(value.depth)}
           options={DEPTHS.map((depth) => ({ value: String(depth), label: `${depth} results` }))}
@@ -280,7 +270,6 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
 
       <Field label="Maximum pages" htmlFor={id('maxCrawlPages')} error={errors.maxCrawlPages}>
         <Select
-          style={TOUCH_TARGET}
           id={id('maxCrawlPages')}
           value={String(value.maxCrawlPages)}
           options={PAGE_CAPS.map((pages) => ({ value: String(pages), label: pages === 1 ? '1 page' : `${pages} pages` }))}

@@ -178,10 +178,6 @@
     "element": 95,
     "styling": 61
   },
-  "src/components/RankTrackingFields.tsx": {
-    "element": 0,
-    "styling": 9
-  },
   "src/components/RankTrackingView.tsx": {
     "element": 196,
     "styling": 133
