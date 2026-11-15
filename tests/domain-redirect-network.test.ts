@@ -89,7 +89,7 @@ test('native HTTP(S) request pins host/TLS/lookup and rejects duplicate Location
     const client=scheme==='https:'?https:http;
     let calls=0,destroyed=0,options:any;
     const intercept=mock.method(client,'request',((url:URL,value:any,callback:(response:any)=>void)=>{
-      calls++;options=value;assert.equal(url.hostname,'alias.example.com');assert.equal(value.family,4);assert.equal(value.method,'GET');assert.equal(value.maxHeaderSize,16384);assert.equal(value.insecureHTTPParser,false);assert.deepEqual(value.headers,{accept:'*/*','user-agent':'ten98-monitor/redirect-check',connection:'close'});
+      calls++;options=value;assert.equal(url.hostname,'alias.example.com');assert.equal(value.family,4);assert.equal(value.method,'GET');assert.equal(value.maxHeaderSize,16384);assert.equal(value.insecureHTTPParser,false);assert.deepEqual(value.headers,{accept:'*/*','user-agent':'ten98-discover/redirect-check',connection:'close'});
       assert.deepEqual(value.agent.options.proxyEnv,{});assert.ok(value.signal);assert.equal(value.agent.keepAlive,false);
       if(scheme==='https:'){assert.equal(value.servername,'alias.example.com');assert.equal(value.rejectUnauthorized,true);}
       value.lookup('alias.example.com',{all:true},(err:any,addresses:any)=>{assert.equal(err,null);assert.deepEqual(addresses,[publicAddress]);});

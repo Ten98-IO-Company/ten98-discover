@@ -30,7 +30,7 @@ fi
 
 # No published release image yet: the source build is cached by Docker.
 # Distinct checkouts must not race by replacing a shared helper image tag.
-helper_image="ten98-monitor:setup-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)"
+helper_image="ten98-discover:setup-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)"
 docker build --tag "$helper_image" .
 helper() {
   docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
@@ -59,7 +59,7 @@ if [ -z "${COMPOSE_FILE:-}" ]; then
     export COMPOSE_FILE="$retained_compose_files" COMPOSE_PATH_SEPARATOR=,
   fi
 fi
-image="ten98-monitor:$project"
+image="ten98-discover:$project"
 docker tag "$helper_image" "$image"
 # Compose gives inherited shell variables precedence over .env. Never mix an
 # unrelated shell's credentials/origin into this installation.

@@ -7,7 +7,7 @@ import { listProviders, saveProviderRequestControls } from '../src/server/provid
 
 type Row = { id: string; workspace_id: string; connection_id: string; connection_revision: number; user_id: string; request_key: string; operation: string; input_hash: string; status: string; provider_reference: string | null };
 const workspace = randomUUID(), user = randomUUID(), connection = randomUUID();
-const databaseKey = Symbol.for('ten98-monitor.database');
+const databaseKey = Symbol.for('ten98-discover.database');
 const globals = globalThis as typeof globalThis & { [databaseKey]?: unknown };
 let prior: unknown, rows: Row[], queries: string[], revision: number, revoked: boolean, paused: boolean, role: string;
 let backup: Row[];

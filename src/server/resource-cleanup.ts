@@ -1,6 +1,6 @@
 type Cleanup=()=>Promise<void>;
 type Resources={jobs:Set<Cleanup>;database:Set<Cleanup>;closing?:Promise<void>};
-const key=Symbol.for('ten98-monitor.runtime-resource-cleanup');
+const key=Symbol.for('ten98-discover.runtime-resource-cleanup');
 const shared=globalThis as typeof globalThis&{[key]?:Resources};
 function resources() {return shared[key]??={jobs:new Set<Cleanup>(),database:new Set<Cleanup>()};}
 

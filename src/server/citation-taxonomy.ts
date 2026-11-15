@@ -1,6 +1,6 @@
 // Adapted from Elmo 3c673d0253d01ae030fa41519f62ad7e54f2281b / apps/web/src/lib/domain-categories.ts
 // Copyright (c) 2026 Blue Whale Software, LLC. MIT; see THIRD_PARTY_NOTICES.md.
-// Kept server-only in ten98-monitor; upstream provenance comments are retained.
+// Kept server-only in ten98-discover; upstream provenance comments are retained.
 
 export type CitationCategory =
 	| "brand"
