@@ -372,18 +372,13 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.19.0 --activate
           pnpm install --frozen-lockfile --ignore-scripts
-          npm install --prefix "$RUNNER_TEMP/discover-browser-tools" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.64.1
-          node --input-type=module <<'NODE'
-          import {readFileSync} from 'node:fs';
-          const lock=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/discover-browser-tools/package-lock.json','utf8'));
-          if(lock.packages['node_modules/playwright'].integrity!=='sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==')throw new Error('Unexpected Playwright archive identity');
-          NODE
-          "$RUNNER_TEMP/discover-browser-tools/node_modules/.bin/playwright" install --with-deps chromium
+          # Playwright 1.64.1 is a pinned devDependency; the frozen lockfile enforces its archive identity.
+          pnpm exec playwright install --with-deps chromium
       - name: Verify masked replay geometry
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_REPLAY_VENDOR_SMOKE: '1'
         run: |
           timeout 120s node tests/session-replay-vendor-browser.mjs
@@ -392,7 +387,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_HEATMAP_CONTROL_LAYOUT: '1'
           TEN98_REPLAY_HEATMAPS_CLASSIC: '1'
           TEN98_HEATMAP_VISIBILITY_BROWSER: '1'
@@ -404,7 +399,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_SESSION_REPLAY_BROWSER: '1'
           TEN98_REPLAY_HEATMAPS_BROWSER: '1'
         run: |
@@ -416,7 +411,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_AI_INSIGHTS_VIEW_BROWSER: '1'
           TEN98_AI_INSIGHTS_BROWSER: '1'
         run: |
@@ -426,7 +421,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_AI_RECOMMENDATIONS_VIEW_BROWSER: '1'
           TEN98_AI_RECOMMENDATIONS_BROWSER: '1'
         run: |
@@ -440,14 +435,14 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_CLOUDFLARE_BROWSER: '1'
         run: timeout 120s node tests/cloudflare-connections-browser.ts
       - name: Verify notes and Explore recovery
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_ANNOTATIONS_BROWSER: '1'
           TEN98_EXPLORER_SCOPE_BROWSER: '1'
           TEN98_COMPARISON_BROWSER: '1'
@@ -459,7 +454,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: |
           TEN98_CONVERSION_NAV_ONLY=0 timeout 120s node tests/conversions-library-browser.mjs
           TEN98_CONVERSION_NAV_ONLY=1 timeout 120s node tests/conversions-library-browser.mjs
@@ -467,28 +462,28 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_KEYWORD_COST_BROWSER: '1'
         run: timeout 120s node tests/keyword-cost-library-browser.mjs
       - name: Verify Explorer reports
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_EXPLORER_LIBRARY_BROWSER: '1'
         run: timeout 120s node tests/explorer-library-browser.mjs
       - name: Verify UTM reports
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_UTM_BROWSER: '1'
         run: timeout 120s node tests/utm-report-browser.mjs
       - name: Verify reopened domain polling
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_RESEARCH_POLLING_BROWSER: '1'
           TEN98_DOMAIN_OVERVIEW_BROWSER: '1'
         run: timeout 120s node tests/domain-overview-browser.mjs
@@ -496,7 +491,7 @@ jobs:
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash
         env:
-          PLAYWRIGHT_MODULE: ${{ runner.temp }}/discover-browser-tools/node_modules/playwright/index.mjs
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_RESEARCH_POLLING_BROWSER: '1'
           TEN98_BACKLINK_RESEARCH_BROWSER: '1'
         run: timeout 120s node tests/backlink-research-browser.mjs
