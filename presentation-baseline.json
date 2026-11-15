@@ -226,8 +226,7 @@
     "element": 10
   },
   "src/components/WebsiteSharePanel.tsx": {
-    "element": 50,
-    "styling": 52
+    "element": 1
   },
   "src/routes/__root.tsx": {
     "element": 3
