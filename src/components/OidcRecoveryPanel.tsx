@@ -1,6 +1,6 @@
 import {AppIcon} from '@ten98/ui/app';
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Checkbox, Text } from '@ten98/ui'
+import { Alert, Button, Card, Checkbox, Field, Inline, Input, Option, Select, Stack, Text, Textarea } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api'
 import { authorizationRedirect } from '../lib/oidc-authorization'
 import { closureAcknowledgements, closurePrivacyNotice } from './AccountClosurePanel'
@@ -141,44 +141,50 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
       if (alive.current && activeProof.current === proof.id) callbacks.current.onProofHandled()
     })
   }
-  if (loading && !security) return <p className='dim' role='status'>Loading identity recovery settings…</p>
+  if (loading && !security) return <Text tone='muted' role='status'>Loading identity recovery settings…</Text>
   if (security?.hasPassword && !notice && !enrollment) return null
-  return <section className='account-settings identity-recovery panel settings-panel integration-settings-card' aria-label='Identity account security' aria-busy={busy || loading}>
-    <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="shield" size={18}/></span><div><h2>Identity account security</h2><p>Recovery for accounts connected to an identity provider</p></div></div>
-    {error && <div className='alert' role='alert'>{error}<button className='btn button' disabled={busy} onClick={() => void load()}>Reload settings</button></div>}
-    {notice && <p role='status'>{notice}</p>}
-    {security && !security.hasPassword && <>
-      <p>Sign in again with your linked provider to change security settings. Adding a local recovery password is optional.</p>
-      {!proof && !enrollment && <div className='row button-wrap'>
-        {identities.map(identity => <button type='button' className='btn button' disabled={busy || loading} key={identity.id} onClick={() => start(identity.id)}>Verify with {identity.providerName}</button>)}
-        {!identities.length && <p>No enabled identity provider is available. Ask the installation operator to restore access to your provider.</p>}
-      </div>}
-      {proof && <form onSubmit={confirm}>
-        <p>Verified with <strong>{proof.providerName}</strong>. This proof expires {new Date(proof.expiresAt).toLocaleString()} and can be used once.</p>
-        <p className='mono' style={{ overflowWrap: 'anywhere' }}>{proof.issuer} · {proof.subject}</p>
-        <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, minWidth: 0 }}>
-          <div className='field'><label htmlFor='oidc-security-action'>Security change</label><select id='oidc-security-action' value={action} onChange={event => { setAction(event.target.value as Action); setPassword(''); setRepeat(''); setFactor('') }}>
-            {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select></div>
-          {action === 'close-account' && <p role='note'>Closing is permanent. You are signed out everywhere, every API key you issued is revoked, and your linked identities, authenticator, preferences and memberships are removed. You cannot close the account while you are the only owner of a workspace or the only instance operator.</p>}
-          {action === 'close-account' && <Text>{closurePrivacyNotice}</Text>}
-          {action === 'close-account' && closureAcknowledgements.map(item => <Checkbox key={item.id} name={`closure-${item.id}`} required label={item.label} />)}
-          {action === 'set-password' && <><div className='field'><label htmlFor='oidc-new-password'>New recovery password</label><input id='oidc-new-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} /></div>
-            <div className='field'><label htmlFor='oidc-repeat-password'>Repeat recovery password</label><input id='oidc-repeat-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={repeat} onChange={event => setRepeat(event.target.value)} /></div></>}
-          {security.user.twoFactorEnabled && <><div className='field'><label htmlFor='oidc-factor-type'>Existing second factor</label><select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><option value='totp'>Authenticator code</option><option value='recovery'>Recovery code</option></select></div>
-            <div className='field'><label htmlFor='oidc-existing-factor'>{recovery ? 'Recovery code' : 'Authenticator code'}</label><input id='oidc-existing-factor' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 21 : 6} required value={factor} onChange={event => setFactor(event.target.value)} /></div></>}
-          <button className='btn button primary' type='submit'>{action === 'close-account' ? 'Close account permanently' : 'Apply security change'}</button>
-          <button className='btn button ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</button>
-        </fieldset>
-      </form>}
-    </>}
-    {enrollment && <>
-      {enrollment.totpURI && (setupKey(enrollment.totpURI) ? <><p>Add this time-based account to your authenticator, then enter its code. Two-factor authentication is not active until verification succeeds.</p><div className='field'><label htmlFor='oidc-setup-key'>Authenticator setup key</label><input id='oidc-setup-key' readOnly value={setupKey(enrollment.totpURI)!} /></div></> : <p className='alert' role='alert'>The authenticator setup address could not be read. Start a fresh provider verification to restart setup.</p>)}
-      <div className='field'><label htmlFor='oidc-recovery-codes'>New recovery codes</label><textarea id='oidc-recovery-codes' className='snippet' style={{ width: '100%' }} rows={10} readOnly value={enrollment.backupCodes.join('\n')} /></div>
-      <p>Save these codes securely. They are shown once and each works once.</p>
-      {enrollment.totpURI && setupKey(enrollment.totpURI) ? <form onSubmit={event => { event.preventDefault(); const code = enrollmentCode; setEnrollmentCode(''); void run(signal => api('/api/account/two-factor/verify', { method: 'POST', body: { code }, signal }), async () => { setEnrollment({ backupCodes: enrollment.backupCodes }); setNotice('Two-factor authentication is now on. Save your recovery codes.'); await load(null) }) }}>
-        <div className='field'><label htmlFor='oidc-enrollment-code'>Confirm authenticator code</label><input id='oidc-enrollment-code' autoComplete='one-time-code' inputMode='numeric' minLength={6} maxLength={6} pattern='[0-9]{6}' required disabled={busy} value={enrollmentCode} onChange={event => setEnrollmentCode(event.target.value)} /></div><button className='btn button primary' disabled={busy}>Verify and turn on 2FA</button>
-      </form> : <button className='btn button' disabled={busy || loading} onClick={() => setEnrollment(null)}>{enrollment.totpURI ? 'Restart authenticator setup' : 'I saved these codes'}</button>}
-    </>}
-  </section>
+  return <Card as='section' headingLevel={2} aria-label='Identity account security' aria-busy={busy || loading}
+    title={<><AppIcon name='shield' size={18} />{' '}Identity account security</>} description='Recovery for accounts connected to an identity provider'>
+    <Stack>
+      {/* The live region holds only the message; Reload sits beside it so the alert never wraps a control. */}
+      {error && <Stack gap={2}><Alert tone='danger'>{error}</Alert><Inline><Button variant='secondary' disabled={busy} onClick={() => void load()}>Reload settings</Button></Inline></Stack>}
+      {notice && <Text role='status'>{notice}</Text>}
+      {security && !security.hasPassword && <>
+        <Text>Sign in again with your linked provider to change security settings. Adding a local recovery password is optional.</Text>
+        {!proof && !enrollment && <Inline>
+          {identities.map(identity => <Button variant='secondary' type='button' disabled={busy || loading} key={identity.id} onClick={() => start(identity.id)}>Verify with {identity.providerName}</Button>)}
+          {!identities.length && <Text>No enabled identity provider is available. Ask the installation operator to restore access to your provider.</Text>}
+        </Inline>}
+        {proof && <Stack as='form' onSubmit={confirm}>
+          <Text>Verified with <Text as='strong' weight='semibold'>{proof.providerName}</Text>. This proof expires {new Date(proof.expiresAt).toLocaleString()} and can be used once.</Text>
+          <Text mono>{proof.issuer} · {proof.subject}</Text>
+          <Stack as='fieldset' disabled={busy || loading}>
+            <Field label='Security change' htmlFor='oidc-security-action'><Select id='oidc-security-action' value={action} onChange={event => { setAction(event.target.value as Action); setPassword(''); setRepeat(''); setFactor('') }}>
+              {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <Option key={value} value={value}>{label}</Option>)}
+            </Select></Field>
+            {action === 'close-account' && <Text role='note'>Closing is permanent. You are signed out everywhere, every API key you issued is revoked, and your linked identities, authenticator, preferences and memberships are removed. You cannot close the account while you are the only owner of a workspace or the only instance operator.</Text>}
+            {action === 'close-account' && <Text>{closurePrivacyNotice}</Text>}
+            {action === 'close-account' && closureAcknowledgements.map(item => <Checkbox key={item.id} name={`closure-${item.id}`} required label={item.label} />)}
+            {action === 'set-password' && <><Field label='New recovery password' htmlFor='oidc-new-password'><Input id='oidc-new-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} /></Field>
+              <Field label='Repeat recovery password' htmlFor='oidc-repeat-password'><Input id='oidc-repeat-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={repeat} onChange={event => setRepeat(event.target.value)} /></Field></>}
+            {security.user.twoFactorEnabled && <><Field label='Existing second factor' htmlFor='oidc-factor-type'><Select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><Option value='totp'>Authenticator code</Option><Option value='recovery'>Recovery code</Option></Select></Field>
+              <Field label={recovery ? 'Recovery code' : 'Authenticator code'} htmlFor='oidc-existing-factor'><Input id='oidc-existing-factor' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 21 : 6} required value={factor} onChange={event => setFactor(event.target.value)} /></Field></>}
+            <Inline>
+              <Button variant='primary' type='submit'>{action === 'close-account' ? 'Close account permanently' : 'Apply security change'}</Button>
+              <Button variant='ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</Button>
+            </Inline>
+          </Stack>
+        </Stack>}
+      </>}
+      {enrollment && <>
+        {enrollment.totpURI && (setupKey(enrollment.totpURI) ? <><Text>Add this time-based account to your authenticator, then enter its code. Two-factor authentication is not active until verification succeeds.</Text><Field label='Authenticator setup key' htmlFor='oidc-setup-key'><Input id='oidc-setup-key' readOnly value={setupKey(enrollment.totpURI)!} /></Field></> : <Alert tone='danger'>The authenticator setup address could not be read. Start a fresh provider verification to restart setup.</Alert>)}
+        <Field label='New recovery codes' htmlFor='oidc-recovery-codes'><Textarea id='oidc-recovery-codes' rows={10} readOnly value={enrollment.backupCodes.join('\n')} /></Field>
+        <Text>Save these codes securely. They are shown once and each works once.</Text>
+        {/* Button defaults to type="button"; the enrollment confirmation must keep submitting its form. */}
+        {enrollment.totpURI && setupKey(enrollment.totpURI) ? <Stack as='form' onSubmit={event => { event.preventDefault(); const code = enrollmentCode; setEnrollmentCode(''); void run(signal => api('/api/account/two-factor/verify', { method: 'POST', body: { code }, signal }), async () => { setEnrollment({ backupCodes: enrollment.backupCodes }); setNotice('Two-factor authentication is now on. Save your recovery codes.'); await load(null) }) }}>
+          <Field label='Confirm authenticator code' htmlFor='oidc-enrollment-code'><Input id='oidc-enrollment-code' autoComplete='one-time-code' inputMode='numeric' minLength={6} maxLength={6} pattern='[0-9]{6}' required disabled={busy} value={enrollmentCode} onChange={event => setEnrollmentCode(event.target.value)} /></Field><Inline><Button variant='primary' type='submit' disabled={busy}>Verify and turn on 2FA</Button></Inline>
+        </Stack> : <Inline><Button variant='secondary' disabled={busy || loading} onClick={() => setEnrollment(null)}>{enrollment.totpURI ? 'Restart authenticator setup' : 'I saved these codes'}</Button></Inline>}
+      </>}
+    </Stack>
+  </Card>
 }
