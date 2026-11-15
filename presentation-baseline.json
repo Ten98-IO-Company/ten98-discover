@@ -251,8 +251,7 @@
     "styling": 28
   },
   "src/components/WebPerformancePanel.tsx": {
-    "styling": 41,
-    "element": 66
+    "element": 10
   },
   "src/components/WebsiteSharePanel.tsx": {
     "element": 50,
