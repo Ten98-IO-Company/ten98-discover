@@ -8,7 +8,7 @@ import {revenueQuery} from '../src/server/revenue.ts';
 import {annotationQuery} from '../src/server/annotation-input.ts';
 import {contextPatch, promptAction, promptBatch, promptPatch} from '../src/server/context-input.ts';
 import {projectDeleteInput} from '../src/lib/project-delete.ts';
-import {concretePath, inputBeforeAccess, workspaceRoutes} from './helpers/workspace-routes.ts';
+import {concretePath, sharedControllerRoutes, workspaceRoutes} from './helpers/workspace-routes.ts';
 
 type Options = {baseUrl: string; appUrl: string; memberCookie: string; outsiderCookie: string; outsiderId: string; workspaceId: string; projectId: string};
 type Case = {name: string; method: 'GET' | 'POST'; path: string; valid: URLSearchParams | Record<string, unknown>};
@@ -77,7 +77,7 @@ export async function runAccessOrderChecks(options: Options) {
     for (const method of ['GET', 'POST'] as const) {
       const {status, body} = await send(path, method, options.outsiderCookie);
       const key = `${method} ${route}`;
-      const allowed = inputBeforeAccess.has(key) ? [400, 404] : [404, 405];
+      const allowed = sharedControllerRoutes.has(key) ? [400, 404] : [404, 405];
       assert.ok(allowed.includes(status), `${key}: a non-member with an invalid input answered ${status} ${body.slice(0, 200)}`);
       swept++;
     }

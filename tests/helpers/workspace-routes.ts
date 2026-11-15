@@ -126,40 +126,8 @@ export function concretePath(route: string, targetId: string, fresh: () => strin
   });
 }
 
-/**
- * Existing routes that still read their input before resolving access, so a non-member with an invalid input gets a
- * 400 there. The sweep tolerates 400 or 404 only for these exact method and route pairs; remove an entry once its
- * route resolves access first. A route that is not listed must answer a non-member 404 (or 405 for another method).
- */
-export const inputBeforeAccess: ReadonlySet<string> = new Set([
-  'POST /api/projects/{uuid}/analytics-reset', 'POST /api/projects/{uuid}/analytics-settings',
-  'POST /api/projects/{uuid}/analytics/export', 'POST /api/projects/{uuid}/annotations',
-  'POST /api/projects/{uuid}/annotations/{uuid}/delete', 'POST /api/projects/{uuid}/annotations/{uuid}/update',
-  'POST /api/projects/{uuid}/audits', 'POST /api/projects/{uuid}/audits/{uuid}/pages/export', 'POST /api/projects/{uuid}/cohorts',
-  'POST /api/projects/{uuid}/cohorts/{uuid}/delete', 'POST /api/projects/{uuid}/cohorts/{uuid}/update',
-  'POST /api/projects/{uuid}/destinations/draft', 'POST /api/projects/{uuid}/destinations/preview',
-  'POST /api/projects/{uuid}/destinations/publish', 'POST /api/projects/{uuid}/destinations/rollback', 'POST /api/projects/{uuid}/domains',
-  'POST /api/projects/{uuid}/domains/{uuid}/redirect-checks', 'POST /api/projects/{uuid}/domains/{uuid}/update',
-  'POST /api/projects/{uuid}/funnels', 'POST /api/projects/{uuid}/funnels/{uuid}/delete', 'GET /api/projects/{uuid}/funnels/{uuid}/result',
-  'POST /api/projects/{uuid}/funnels/{uuid}/update', 'GET /api/projects/{uuid}/funnels/{uuid}/witnesses',
-  'POST /api/projects/{uuid}/goals', 'POST /api/projects/{uuid}/goals/{uuid}/delete', 'GET /api/projects/{uuid}/goals/{uuid}/result',
-  'POST /api/projects/{uuid}/goals/{uuid}/update', 'GET /api/projects/{uuid}/goals/{uuid}/witnesses',
-  'GET /api/projects/{uuid}/heatmaps/background', 'POST /api/projects/{uuid}/replays/{uuid}/saved',
-  'POST /api/projects/{uuid}/report-templates', 'POST /api/projects/{uuid}/report-templates/{uuid}',
-  'POST /api/projects/{uuid}/report-templates/{uuid}/delete', 'POST /api/projects/{uuid}/reports',
-  'POST /api/projects/{uuid}/reports/{uuid}', 'POST /api/projects/{uuid}/reports/{uuid}/delete',
-  'POST /api/projects/{uuid}/reports/{uuid}/shares', 'GET /api/projects/{uuid}/saved-keywords/refreshes/list',
-  'POST /api/projects/{uuid}/website-shares', 'POST /api/projects/{uuid}/website-shares/{uuid}/revoke',
-  'POST /api/workspaces/{uuid}/api-keys', 'POST /api/workspaces/{uuid}/boards', 'POST /api/workspaces/{uuid}/boards/preview',
-  'GET /api/workspaces/{uuid}/boards/{uuid}/cards/{uuid}', 'POST /api/workspaces/{uuid}/boards/{uuid}/clone',
-  'POST /api/workspaces/{uuid}/boards/{uuid}/delete', 'POST /api/workspaces/{uuid}/boards/{uuid}/shares',
-  'POST /api/workspaces/{uuid}/boards/{uuid}/shares/{uuid}/publish', 'POST /api/workspaces/{uuid}/boards/{uuid}/shares/{uuid}/revoke',
-  'POST /api/workspaces/{uuid}/boards/{uuid}/update', 'POST /api/workspaces/{uuid}/invitations',
-  'POST /api/workspaces/{uuid}/members/{uuid}/role', 'POST /api/workspaces/{uuid}/provider-requests/control',
-  'POST /api/workspaces/{uuid}/providers', 'POST /api/workspaces/{uuid}/providers/{uuid}/update', 'POST /api/workspaces/{uuid}/rename',
-  'POST /api/workspaces/{uuid}/retention/preview', 'POST /api/workspaces/{uuid}/retention/save',
-  'GET /api/workspaces/{uuid}/tracked-assets', 'POST /api/workspaces/{uuid}/tracked-assets',
-  'POST /api/workspaces/{uuid}/tracked-assets/{uuid}/delete', 'GET /api/workspaces/{uuid}/tracked-assets/{uuid}/report',
-  'POST /api/workspaces/{uuid}/tracked-assets/{uuid}/shares', 'POST /api/workspaces/{uuid}/tracked-assets/{uuid}/shares/{uuid}/revoke',
-  'POST /api/workspaces/{uuid}/tracked-assets/{uuid}/update', 'POST /api/workspaces/{uuid}/two-factor',
+// Handled by the shared @ten98/runtime team controller, which reads input before access; tracked upstream.
+export const sharedControllerRoutes: ReadonlySet<string> = new Set([
+  'POST /api/workspaces/{uuid}/invitations', 'POST /api/workspaces/{uuid}/members/{uuid}/role',
+  'POST /api/workspaces/{uuid}/rename', 'POST /api/workspaces/{uuid}/two-factor',
 ]);

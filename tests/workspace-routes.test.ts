@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {expandPattern, inputBeforeAccess, inventoryPaths, routePatterns, workspaceRoutes} from './helpers/workspace-routes.ts';
+import {expandPattern, inventoryPaths, routePatterns, sharedControllerRoutes, workspaceRoutes} from './helpers/workspace-routes.ts';
 
 test('every workspace and website route pattern in the server expands into concrete routes', () => {
   const patterns = routePatterns();
@@ -22,15 +22,13 @@ test('the route table includes the routes that now check access before reading i
   for (const route of routes) assert.match(route, /^\/api\/(workspaces|projects)\/\{uuid\}(\/|$)/);
 });
 
-test('routes still reading input before access name current routes and are not the reordered ones', () => {
+test('shared controller routes name current team routes only', () => {
   const routes = new Set(workspaceRoutes());
-  for (const entry of inputBeforeAccess) {
+  for (const entry of sharedControllerRoutes) {
     const [method, route] = entry.split(' ');
-    assert.ok(method === 'GET' || method === 'POST', entry);
-    assert.ok(routes.has(route), `${entry} is no longer a route; remove it from inputBeforeAccess`);
-  }
-  for (const route of ['/api/workspaces/{uuid}/projects', '/api/projects/{uuid}/prompts/bulk', '/api/projects/{uuid}/context/update']) {
-    assert.equal(inputBeforeAccess.has('POST ' + route), false, route);
+    assert.equal(method, 'POST', entry);
+    assert.match(route, /^\/api\/workspaces\/\{uuid\}\/(invitations|members\/\{uuid\}\/role|rename|two-factor)$/, entry);
+    assert.ok(routes.has(route), `${entry} is no longer a route; remove it from sharedControllerRoutes`);
   }
 });
 
