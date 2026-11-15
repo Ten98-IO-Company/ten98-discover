@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import {Button,DangerZoneFlow,Text,useToast} from '@ten98/ui';
+import {Button,DangerZoneFlow,Inline,Stack,Text,useToast} from '@ten98/ui';
 import {projectDeleteInput,projectDeleteState,projectDeleteResult,type ProjectDeleteInput,type ProjectDeleteState} from '../lib/project-delete';
 import {request as boundedRequest,ResetError as MutationError} from './AnalyticsResetPanel';
 
@@ -28,13 +28,13 @@ function DeleteInner({workspaceId,projectId,disabled=false,authorityOwner,isCurr
  const confirm=()=>{void run(true);};
  // The closed state reads nothing; opening it reads the current deletion access before any action is offered.
  if(!open)return <Button variant="danger" type="button" disabled={disabled||!currentAccess()} onClick={()=>{if(currentAccess()){setOpen(true);void run(false);}}}>{attempt?'Resolve submitted deletion':'Delete website'}</Button>;
- return <section className="stack" aria-label="Delete website" aria-busy={busy} style={{minWidth:0,overflowWrap:'anywhere'}}>
-  {verified?.item&&<Text>Website: <strong>{verified.item.name}</strong></Text>}{verified&&!verified.item&&<Text>This website is unavailable. A submitted request can still be retried to verify its original acknowledgment.</Text>}
+ return <Stack as="section" aria-label="Delete website" aria-busy={busy}>
+  {verified?.item&&<Text>Website: <Text as="strong" weight="semibold">{verified.item.name}</Text></Text>}{verified&&!verified.item&&<Text>This website is unavailable. A submitted request can still be retried to verify its original acknowledgment.</Text>}
   <DangerZoneFlow description="Other websites, workspaces, tracked links/pixels and provider request history stay. Finish or cancel queued provider work and check uncertain original requests first. Existing board references to this website become unavailable." busy={busy} error={error||undefined}
    disabled={disabled||!verified||!attempt&&!verified.item} messages={{retry:'Retry the same deletion'}}
    unconfirmed={attempt?'An outcome is unverified. Retry sends exactly the same website, revision, DELETE confirmation and request ID. Reloading access does not acknowledge the deletion.':undefined}
    actions={[{id:'delete-website',title:'Delete website',description:'This permanently deletes this website, its tracking key, native analytics, recordings, heatmaps, website settings and website-specific saved reports and configurations. It cannot be undone.',confirmLabel:'Delete website',confirmationText:'DELETE',retryOnly:true}]}
    onConfirm={confirm}/>
-  <div className="row" style={{flexWrap:'wrap'}}><Button variant="secondary" type="button" disabled={busy||!currentAccess()} onClick={()=>void run(false)}>Reload deletion access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close deletion</Button></div>
- </section>;
+  <Inline><Button variant="secondary" type="button" disabled={busy||!currentAccess()} onClick={()=>void run(false)}>Reload deletion access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close deletion</Button></Inline>
+ </Stack>;
 }
