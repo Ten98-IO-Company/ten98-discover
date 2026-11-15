@@ -59,8 +59,8 @@ export function AccountPreferencesPanel({expectedUserId,onUnauthorized}:{expecte
     <Text id={formatHelp} tone="muted" size="sm">Interface text is currently English. Regional format changes dates and numbers in account settings; report formats and applied report time zones stay unchanged.</Text>
     <Text tone="muted" size="sm">Preview only · your draft</Text>
     {mapping&&zone?<DescriptionList items={[
-      {term:'Number',description:<span lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.NumberFormat(mapping.formatLocale).format(1234567.89)}</span>},
-      {term:'Date and time',description:<span lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.DateTimeFormat(mapping.formatLocale,{timeZone:zone,dateStyle:'medium',timeStyle:'short'}).format(new Date())}</span>},
+      {term:'Number',description:<Text as="span" lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.NumberFormat(mapping.formatLocale).format(1234567.89)}</Text>},
+      {term:'Date and time',description:<Text as="span" lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.DateTimeFormat(mapping.formatLocale,{timeZone:zone,dateStyle:'medium',timeStyle:'short'}).format(new Date())}</Text>},
     ]}/>:<Text size="sm">This browser cannot preview that time zone. Choose a recognized named time zone to change it.</Text>}
   </Stack>;
   return <Stack as="section" ref={root} gap={4} className="account-preferences">

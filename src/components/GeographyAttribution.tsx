@@ -1,3 +1,4 @@
+import {Link,Text} from '@ten98/ui';
 export function GeographyAttribution(){
-  return <p className="hint geography-attribution"><a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP location data by DB-IP</a> · Approximate location, supplied under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.</p>;
+  return <Text as="p" size="sm" tone="muted"><Link href="https://db-ip.com" target="_blank">IP location data by DB-IP</Link> · Approximate location, supplied under <Link href="https://creativecommons.org/licenses/by/4.0/" target="_blank">CC BY 4.0</Link>.</Text>;
 }
