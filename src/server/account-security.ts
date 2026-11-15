@@ -136,6 +136,40 @@ async function requireFactorProof(client: PoolClient, request: Request, userId: 
   if (details.code) await rememberCode(client, userId, details.code);
 }
 
+const hasLocalPassword = async (client: PoolClient, userId: string) =>
+  !!(await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId])).rowCount;
+
+type RequiringWorkspace = { id: string; name: string; owner: boolean };
+
+/** Workspaces this user belongs to that require two-factor authentication, oldest first. */
+async function requiringWorkspaces(client: PoolClient, userId: string): Promise<RequiringWorkspace[]> {
+  return (await client.query<RequiringWorkspace>(`SELECT w.id,w.name,m.role='owner' AS owner FROM membership m
+    JOIN workspace_two_factor_requirement r ON r.workspace_id=m.workspace_id JOIN workspace w ON w.id=m.workspace_id
+    WHERE m.user_id=$1 ORDER BY w.created_at,w.id`, [userId])).rows;
+}
+
+function requirementMessage(workspaces: readonly RequiringWorkspace[]): string {
+  const names = workspaces.map(workspace => workspace.name), one = names.length === 1;
+  const by = names.length > 3 ? `${names.length} of your workspaces` : one ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+  const owned = workspaces.filter(workspace => workspace.owner).length;
+  const next = owned === 0 ? `${one ? 'An owner' : 'Their owners'} must turn off that requirement first.`
+    : owned === names.length ? `As ${one ? 'its' : 'their'} owner, you can turn off the requirement in ${one ? "that workspace's" : "each workspace's"} team settings first.`
+      : 'Turn off the requirement in the team settings of the workspaces you own first; for the others, an owner must turn it off.';
+  return `Two-factor authentication is required by ${by}. ${next}`;
+}
+
+/**
+ * Refuses turning off the factor while a workspace of this user requires it. Call it in the disable transaction after the
+ * user row is locked FOR UPDATE: this user's own concurrent requirement change as an owner takes that row FOR SHARE
+ * (runtime setTwoFactorRequirement), so it either committed before this read or waits, sees the factor off and refuses.
+ * Another owner's requirement committing after this read serializes as one set just after this disable, which is allowed
+ * for any member without a factor (they stay gated until they enrol again).
+ */
+async function refuseWhileWorkspaceRequiresFactor(client: PoolClient, userId: string) {
+  const workspaces = await requiringWorkspaces(client, userId);
+  if (workspaces.length) throw new FoundationError(409, requirementMessage(workspaces));
+}
+
 /** Server-only step-up proof for explicit identity linking and operator recovery tests. */
 export async function requireLocalIdentityProof(client: PoolClient, request: Request, proof: unknown) {
   const details = parsed(localIdentityProofInput, proof);
@@ -165,7 +199,7 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
   if (!current) throw new FoundationError(401, 'Sign in to continue.');
   await client.query('SELECT id FROM "user" WHERE id=$1 FOR UPDATE', [current.user.id]);
   if (!await auth.api.getSession({ headers: request.headers, query: { disableRefresh: true } })) throw new FoundationError(401, 'Sign in to continue.');
-  if ((await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [current.user.id])).rowCount) throw new FoundationError(409, 'Use your local account password for security changes.');
+  if (await hasLocalPassword(client, current.user.id)) throw new FoundationError(409, 'Use your local account password for security changes.');
   if ((details.action === 'set-password') !== (details.newPassword !== undefined)) throw new FoundationError(400, 'Supply a new password only when adding local sign-in.');
   if (current.user.twoFactorEnabled) await requireFactorProof(client, request, current.user.id, details);
   if (details.action === 'close-account') {
@@ -188,6 +222,8 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
     return json({ totpURI: result.totpURI, backupCodes: result.backupCodes }, 200, response);
   }
   if (details.action === 'disable-two-factor') {
+    // Throwing rolls back the consumed OIDC proof and factor code with everything else.
+    if (current.user.twoFactorEnabled) await refuseWhileWorkspaceRequiresFactor(client, current.user.id);
     const response = await invoke(auth, request, '/two-factor/disable', {});
     if (!response.ok) throw new FoundationError(400, 'Two-factor authentication could not be disabled.');
     await keepResponseSession(client, auth, request, response, current.user.id, providerId);
@@ -342,10 +378,12 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     const providerId = (await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1', [current.session.id])).rows[0]?.oidcProviderId as string | null;
     if (status) {
       const sessions = await client.query('SELECT id,"createdAt","expiresAt","userAgent" FROM session WHERE "userId"=$1 AND "expiresAt">clock_timestamp() ORDER BY "createdAt" DESC,id LIMIT 100', [userId]);
-      const credential = await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId]);
+      const workspaces = await requiringWorkspaces(client, userId);
       return json({
         user: { id: userId, name: current.user.name, email: current.user.email, twoFactorEnabled: current.user.twoFactorEnabled === true },
-        hasPassword: !!credential.rowCount,
+        hasPassword: await hasLocalPassword(client, userId),
+        // Why turning off two-factor would be refused now; null when no workspace of this user requires it.
+        twoFactorRequirement: workspaces.length ? { message: requirementMessage(workspaces), workspaces } : null,
         sessions: sessions.rows.map((session) => ({ ...session, current: session.id === current.session.id })),
       });
     }
@@ -369,7 +407,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       return json({ ok: true }, 200, response);
     }
     if (path === '/api/account/two-factor/enable') {
-      if (!(await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId])).rowCount) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
+      if (!await hasLocalPassword(client, userId)) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
       const response = await invoke(auth, request, '/two-factor/enable', { ...parsed(passwordInput, input), method: 'totp' });
       if (!response.ok) return rejected(response, current.user.twoFactorEnabled ? 'Two-factor authentication is already enabled.' : 'The current password was not accepted.');
       const data = await response.json();
@@ -393,13 +431,17 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       // The password is checked before the factor so a refused password never consumes a recovery code or authenticator window.
       if (!await verifyPassword({ hash: credential.rows[0].password, password: details.password })) throw new FoundationError(400, 'The current password was not accepted.');
       // Turning off two-factor needs the second factor as well as the password.
-      if (current.user.twoFactorEnabled) await requireFactorProof(client, request, userId, details);
+      if (current.user.twoFactorEnabled) {
+        await requireFactorProof(client, request, userId, details);
+        // Checked after the proof so a refusal answers only a verified holder; throwing rolls the used code back.
+        await refuseWhileWorkspaceRequiresFactor(client, userId);
+      }
       const response = await invoke(auth, request, '/two-factor/disable', { password: details.password });
       if (!response.ok) return rejected(response, 'The current password was not accepted.');
       await keepResponseSession(client, auth, request, response, userId, providerId);
       return json({ ok: true, twoFactorEnabled: false }, 200, response);
     }
-    if (!(await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId])).rowCount) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
+    if (!await hasLocalPassword(client, userId)) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
     const response = await invoke(auth, request, '/two-factor/generate-backup-codes', parsed(passwordInput, input));
     if (!response.ok) return rejected(response, 'Check your password and enable two-factor authentication before replacing recovery codes.');
     const data = await response.json();
@@ -427,8 +469,8 @@ async function handleAccountClosure(request: Request, path: string, limit: Limit
   if (!identity) throw new FoundationError(401, 'Sign in to continue.');
   await limit(`account-closure:${reading ? 'read' : 'write'}:${identity.user.id}`, reading ? 120 : 10);
   if (reading) return transaction(async client => {
-    const credential = await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [identity.user.id]);
-    return json({ blockers: await closureBlockers(client, identity.user.id), hasPassword: !!credential.rowCount, twoFactorEnabled: identity.user.twoFactorEnabled === true });
+    const hasPassword = await hasLocalPassword(client, identity.user.id);
+    return json({ blockers: await closureBlockers(client, identity.user.id), hasPassword, twoFactorEnabled: identity.user.twoFactorEnabled === true });
   });
   if (operatorPath) {
     const details = parsed(operatorClosureInput, input), targetId = parsed(z.uuid(), operatorPath[1]).toLowerCase();

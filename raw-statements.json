@@ -8,7 +8,7 @@
     "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
   },
   "src/server/account-security.ts": {
-    "count": 53,
+    "count": 50,
     "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
   },
   "src/server/advanced-predicates.ts": {

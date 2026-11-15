@@ -288,14 +288,40 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   while (currentCodes.has(refusedCode)) refusedCode = String(Number(refusedCode) + 1).padStart(6, '0');
   await expect('/api/account/two-factor/disable', primary, 400, { password: finalPassword, code: refusedCode });
   await expect('/api/account/two-factor/disable', primary, 400, { password: finalPassword, code: authenticatorCode(secret), backupCode: replaced.backupCodes[2] });
-  assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, true, 'A refused disable leaves two-factor on.');
-  assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 1);
-  await expect('/api/account/two-factor/disable', primary, 200, { password: finalPassword, backupCode: replaced.backupCodes[2] });
+  const enrolled = async () => {
+    assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, true, 'A refused disable leaves two-factor on.');
+    assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 1);
+  };
+  await enrolled();
+
+  // #562: with a valid password and factor, turning off two-factor is still refused while a workspace of this user requires it
+  // (R as a viewer, its own workspace as owner). The message names them, and the refusal rolls back the recovery code it used.
+  await resetBudget();
+  const disableProof = { password: finalPassword, backupCode: replaced.backupCodes[2] };
+  const refusedDisable = async (message: string) => {
+    assert.deepEqual(await expect('/api/account/two-factor/disable', primary, 409, disableProof), { error: message });
+    await enrolled();
+  };
+  const both = 'Two-factor authentication is required by Two-factor required fixture and Two-factor owner fixture. Turn off the requirement in the team settings of the workspaces you own first; for the others, an owner must turn it off.';
+  assert.deepEqual((await expect('/api/account/security', primary, 200)).twoFactorRequirement, { message: both, workspaces: [
+    { id: requiredWorkspace, name: 'Two-factor required fixture', owner: false }, { id: ownWorkspace.id, name: 'Two-factor owner fixture', owner: true }] });
+  await refusedDisable(both);
+  await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
+  await refusedDisable("Two-factor authentication is required by Two-factor owner fixture. As its owner, you can turn off the requirement in that workspace's team settings first.");
+  await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [requiredWorkspace]);
+  assert.deepEqual(await expect(ownSetter, primary, 200, { required: false }), { twoFactorRequired: false });
+  await refusedDisable('Two-factor authentication is required by Two-factor required fixture. An owner must turn off that requirement first.');
+  // Once no workspace of this user requires it, the same recovery code turns the factor off.
+  await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
+  assert.equal((await expect('/api/account/security', primary, 200)).twoFactorRequirement, null);
+  await expect('/api/account/two-factor/disable', primary, 200, disableProof);
   assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, false);
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
+  console.log('PASS turning off two-factor is refused with 409 while a workspace of the user requires it, naming the workspaces and the owner action, keeps the factor and the recovery code, and succeeds once no workspace requires it');
 
-  // Re-lock on disable: R and the member's own required workspace refuse again, the owner cannot lift it while locked,
-  // and the enrolment path stays reachable without creating a factor.
+  // Re-lock when a requirement starts after the factor is off (as another owner may set it): R and the member's own workspace
+  // refuse again, the owner cannot lift it while locked, and the enrolment path stays reachable without creating a factor.
+  await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1),($2)', [requiredWorkspace, ownWorkspace.id]);
   await locked(`/api/workspaces/${requiredWorkspace}/projects`, primary);
   await locked(`/api/workspaces/${ownWorkspace.id}/projects`, primary);
   await locked(ownSetter, primary, { required: false });
@@ -312,7 +338,7 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
   await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
   await expect(`/api/workspaces/${requiredWorkspace}/projects`, primary, 200);
-  console.log('PASS workspace two-factor requirement: refusal before enrolment, the enrolment path regains access, owner-only idempotent setting and clearing, disabling the factor locks the member again until the requirement is lifted, and a factor-less non-member still gets the service 404');
+  console.log('PASS workspace two-factor requirement: refusal before enrolment, the enrolment path regains access, owner-only idempotent setting and clearing, a requirement that starts after the factor is off locks the member again until it is lifted, and a factor-less non-member still gets the service 404');
   const normal = browser();
   assert.equal((await signIn(normal, finalPassword)).ok, true);
   await expect('/api/account/sessions/revoke-others', primary, 200, {});

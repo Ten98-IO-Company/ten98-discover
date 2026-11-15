@@ -1,5 +1,5 @@
 import {AppIcon} from '@ten98/ui/app';
-import { Button, Field, Form, Input, PasswordChangeFlow, SessionListFlow, useConfirmDialog } from '@ten98/ui'
+import { Alert, Button, Field, Form, Input, PasswordChangeFlow, SessionListFlow, useConfirmDialog } from '@ten98/ui'
 import type { PasswordChangeValues } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
@@ -18,6 +18,8 @@ type SecurityData = {
   user: { id: string; name: string; email: string; twoFactorEnabled: boolean }
   sessions: SessionInfo[]
   hasPassword: boolean
+  // Present while a workspace this user belongs to requires two-factor, so turning it off is refused.
+  twoFactorRequirement: { message: string; workspaces: { id: string; name: string; owner: boolean }[] } | null
 }
 
 type Op = 'password' | 'enable' | 'verify' | 'disable' | 'recovery' | 'revoke' | 'others'
@@ -222,7 +224,8 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
 
   const submitDisable = async (): Promise<void> => {
     setFieldErrs({})
-    if (!await confirm({ title: 'Turn off two-factor authentication?', description: 'Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again.', confirmLabel: 'Turn off 2FA' })) return
+    if (data?.twoFactorRequirement) return
+    if (!await confirm({ title: 'Turn off two-factor authentication?', description: 'Turning off two-factor authentication removes this layer of sign-in protection. A workspace that starts requiring it later will block your access, and API keys you created there will stop working, until you turn it on again.', confirmLabel: 'Turn off 2FA' })) return
     if (disablePw === '') { fieldErr('disable', 'disablePassword', 'Enter your current password to turn off 2FA.'); return }
     const factor = disableFactor.trim()
     if (factor === '') { fieldErr('disable', 'disableFactor', 'Enter an authenticator or recovery code to turn off 2FA.'); return }
@@ -271,6 +274,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
   }
 
   const twoFaOn = data.user.twoFactorEnabled
+  const requirement = data.twoFactorRequirement ?? null
   let setupKey: string | null = null
   if (setupUri) { try { setupKey = new URL(setupUri).searchParams.get('secret') } catch { /* The full URI remains available below. */ } }
 
@@ -373,14 +377,15 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
                 </Form>
                 <Form fieldErrors={fieldErrs} onSubmit={() => submitDisable()}>
                   <p><strong>Turn off 2FA</strong></p>
+                  {requirement ? <Alert id="tfa-disable-required" tone="info" variant="inline" title="Two-factor authentication is required">{requirement.message}</Alert> : null}
                   <Field label="Current password" htmlFor="tfa-disable-pw" error={fieldErrs.disablePassword}>
-                    <input id="tfa-disable-pw" name="disablePassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
+                    <input id="tfa-disable-pw" name="disablePassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked || requirement !== null} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
                   </Field>
                   <Field label="Authenticator or recovery code" htmlFor="tfa-disable-factor" description="Enter the 6-digit code from your authenticator, or one unused recovery code." error={fieldErrs.disableFactor}>
-                    <Input id="tfa-disable-factor" name="disableFactor" autoComplete="one-time-code" maxLength={21} required disabled={blocked} value={disableFactor} onChange={e => setDisableFactor(e.target.value)} />
+                    <Input id="tfa-disable-factor" name="disableFactor" autoComplete="one-time-code" maxLength={21} required disabled={blocked || requirement !== null} value={disableFactor} onChange={e => setDisableFactor(e.target.value)} />
                   </Field>
                   {errs.disable ? <div className="alert" role="alert">{errs.disable}</div> : null}
-                  <button type="submit" className="btn button" disabled={blocked}>
+                  <button type="submit" className="btn button" disabled={blocked || requirement !== null} aria-describedby={requirement ? 'tfa-disable-required' : undefined}>
                     {busy === 'disable' ? 'Turning off…' : 'Turn off 2FA'}
                   </button>
                 </Form>
