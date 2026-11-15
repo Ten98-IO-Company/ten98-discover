@@ -26,7 +26,7 @@ export function SavedKeywordFilterFields({ value, onChange, tags, disabled = fal
   const phraseHint = 'One phrase per line. All included phrases must match; excluded phrases must not match.';
   const set = <K extends keyof SavedKeywordFilterDraft>(key: K, next: SavedKeywordFilterDraft[K]) => onChange({ ...value, [key]: next });
   return (
-    <Fieldset legend="Saved keyword filters" layout="grid" disabled={disabled}>
+    <Fieldset legend="Saved keyword filters" disabled={disabled}>
       <Inline align="end">
         <Field label="Search" htmlFor={`${prefix}-search`}>
           <Input id={`${prefix}-search`} type="search" maxLength={200} value={value.search} onChange={(e) => set('search', e.target.value)} />
