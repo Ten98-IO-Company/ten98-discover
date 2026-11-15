@@ -132,7 +132,8 @@ export async function runRecordScopeChecks(options: Options) {
       '/{uuid}/revoke': [{method: 'POST', body: {}}], '/{uuid}/resend': [{method: 'POST', body: {}, status: 409}], '/{uuid}/new-link': [{method: 'POST', body: {}, status: 409}],
     }},
     'workspaces/projects': {ids: [projectA], calls: {
-      '/{uuid}/delete': [{method: 'GET'}, {method: 'POST', body: projectDeleteInput.parse({requestId: randomUUID(), revision: deletion.item!.revision, confirmation: 'DELETE'})}],
+      // Deletion access answers a website it cannot find in the workspace with item null, so a held request can be retried.
+      '/{uuid}/delete': [{method: 'GET', status: 200}, {method: 'POST', body: projectDeleteInput.parse({requestId: randomUUID(), revision: deletion.item!.revision, confirmation: 'DELETE'})}],
     }},
     'projects/website-shares': {ids: [websiteShare.ack.shareId], calls: {'/{uuid}/revoke': [{method: 'POST', body: {requestId: randomUUID()}}]}},
     'projects/reports': {ids: [report.id, reportShare.share.id], calls: {
@@ -207,16 +208,18 @@ export async function runRecordScopeChecks(options: Options) {
     }
     const suffix = suffixOf(route);
     const ids = [route.startsWith('/api/workspaces/') ? workspaceB : projectB, ...(collection.slots?.[suffix] ?? collection.ids)];
-    let slot = 0;
+    const madeUpIds = [ids[0], ...ids.slice(1).map(() => randomUUID())];
+    let slot = 0, madeUpSlot = 0;
     const path = route.replaceAll(routeTokens.uuid, () => ids[slot++] ?? randomUUID());
-    let madeUpSlot = 0;
-    const madeUpPath = route.replaceAll(routeTokens.uuid, () => madeUpSlot++ ? randomUUID() : ids[0]);
+    const madeUpPath = route.replaceAll(routeTokens.uuid, () => madeUpIds[madeUpSlot++] ?? randomUUID());
+    // An answer may echo the requested ids; compare the answers with each id replaced by its slot.
+    const echo = (text: string, used: string[]) => used.reduce((out, id, at) => out.replaceAll(id, `{id ${at}}`), text);
     const calls = collection.calls[suffix];
     if (calls) {
       for (const call of calls) {
         const foreign = await send(path, call), madeUp = await send(madeUpPath, call);
         assert.equal(foreign.status, call.status ?? 404, `${call.method} ${route}: another workspace's record answered ${foreign.status} ${foreign.text.slice(0, 200)}`);
-        assert.deepEqual(foreign, madeUp, `${call.method} ${route}: another workspace's record answers like a made-up id`);
+        assert.deepEqual({status: foreign.status, text: echo(foreign.text, ids)}, {status: madeUp.status, text: echo(madeUp.text, madeUpIds)}, `${call.method} ${route}: another workspace's record answers like a made-up id`);
       }
       coveredRoutes++;
     } else {
