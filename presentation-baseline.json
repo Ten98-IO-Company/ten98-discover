@@ -242,8 +242,7 @@
     "styling": 80
   },
   "src/components/UtmPanel.tsx": {
-    "element": 63,
-    "styling": 28
+    "element": 4
   },
   "src/components/WebPerformancePanel.tsx": {
     "element": 10
