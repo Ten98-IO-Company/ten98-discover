@@ -184,6 +184,12 @@ export async function runWebsiteShareChecks(){
   await pass('a public read holds no workspace gate, grant row or project row lock: revoke and member removal finish while it waits and it then answers 404; identified collection and a retention batch finish while it waits and it still answers; a reset commits while it waits and it then refuses with 503, and later reads hide pre-cutoff data');
 
   // Group 7: lifecycle.
+  // A manager of another workspace who names this website's share under their own website path gets the same 404 as for a
+  // made-up id, and the share stays live.
+  const keptInput=input(['overview']),kept=await createWebsiteShare(project,owner,keptInput),madeUp=await manage(stranger,otherProject,{requestId:randomUUID()},'/'+randomUUID()+'/revoke'),madeUpBody=await madeUp.text();assert.equal(madeUp.status,404);
+  for(let n=0;n<2;n++){const foreign=await manage(stranger,otherProject,{requestId:randomUUID()},'/'+kept.ack.shareId+'/revoke');assert.equal(foreign.status,404);assert.equal(await foreign.text(),madeUpBody);}
+  await assert.rejects(revokeWebsiteShare(otherProject,stranger,kept.ack.shareId,{requestId:randomUUID()}),status(404));
+  assert.equal((await pool.query('SELECT revoked_at FROM project_share WHERE id=$1',[kept.ack.shareId])).rows[0].revoked_at,null);assert.ok(await readWebsiteShare(kept.ack.shareId,keptInput.token,range));
   const lifeInput=input(['overview']),life=await createWebsiteShare(project,owner,lifeInput),first=await revokeWebsiteShare(project,owner,life.ack.shareId,{requestId:randomUUID()}),again=await revokeWebsiteShare(project,admin,life.ack.shareId,{requestId:randomUUID()});
   assert.equal(again.item?.revokedAt,first.item?.revokedAt,'Revocation is idempotent and keeps its first instant.');assert.equal(again.item?.state,'revoked');await assert.rejects(readWebsiteShare(life.ack.shareId,lifeInput.token,range),status(404));
   assert.equal((await createWebsiteShare(project,owner,lifeInput)).item?.state,'revoked','An exact create replay never revives a revoked grant.');
