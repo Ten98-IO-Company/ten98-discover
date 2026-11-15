@@ -1264,6 +1264,8 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'POST') {
         const input = projectInput.parse(await readJson(request));
+        // Access first, so a caller without it never takes the workspace lock; it is checked again under the lock below.
+        await workspaceAccess(match[1], user.id, true);
         const client = await getDatabase().pool.connect();
         try {
           await client.query('BEGIN');

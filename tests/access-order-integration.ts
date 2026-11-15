@@ -11,6 +11,7 @@ import {projectDeleteInput} from '../src/lib/project-delete.ts';
 import {journeysQuery} from '../src/server/journeys.ts';
 import {readPerformanceQuery} from '../src/lib/web-performance.ts';
 import {apiKeyScopes, createApiKey} from '../src/server/api-keys.ts';
+import {listBoards} from '../src/server/boards.ts';
 import {concretePath, invalidQuery, sweepExceptions, workspaceRoutes} from './helpers/workspace-routes.ts';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -37,13 +38,13 @@ const oversize = json({padding: 'x'.repeat(300 * 1024)});
  */
 export async function runAccessOrderChecks(options: Options) {
   const {pool} = getDatabase();
-  async function send(path: string, shape: Shape, caller: Caller) {
+  async function send(path: string, shape: Shape, caller: Caller, timeout = 15_000) {
     const query = shape.query?.size ? `?${shape.query}` : '';
     const headers: Record<string, string> = 'cookie' in caller ? {cookie: caller.cookie} : {authorization: `Bearer ${caller.token}`};
     if (shape.method === 'POST' && 'cookie' in caller) headers.origin = options.appUrl;
     if (shape.body && shape.contentType !== null) headers['content-type'] = shape.contentType ?? 'application/json';
     const response = await fetch(new URL(path + query, options.baseUrl), {
-      method: shape.method, headers, redirect: 'manual', signal: AbortSignal.timeout(15_000), ...(shape.body ? {body: new Uint8Array(shape.body)} : {}),
+      method: shape.method, headers, redirect: 'manual', signal: AbortSignal.timeout(timeout), ...(shape.body ? {body: new Uint8Array(shape.body)} : {}),
     });
     const body = await response.text();
     // Refused requests from one identity add up; per-user request budgets are not what these checks measure.
@@ -53,9 +54,6 @@ export async function runAccessOrderChecks(options: Options) {
   const outsider = {cookie: options.outsiderCookie}, member = {cookie: options.memberCookie};
   const shapeOf = (method: 'GET' | 'POST', input?: URLSearchParams | Record<string, unknown> | unknown[] | Buffer): Shape =>
     input instanceof URLSearchParams ? {method, query: input} : method === 'GET' ? {method} : {method, body: Buffer.isBuffer(input) ? input : json(input ?? {})};
-
-  const roleMismatches = await checkRoleSample();
-  const sweepFailures = await sweep();
 
   const {workspaceId, projectId} = options;
   const visitorKey = randomBytes(32).toString('hex');
@@ -109,6 +107,9 @@ export async function runAccessOrderChecks(options: Options) {
     assert.throws(() => parse(byName(name).invalid as URLSearchParams), `${name}: the invalid query is one its parser refuses`);
   }
 
+  // The role sample and the sweep run before the per-route cases, so each reports in full even when a case below fails.
+  const {mismatches: roleMismatches, workspace: roleWorkspace, project: roleProject} = await checkRoleSample();
+  const sweepFailures = await sweep(roleWorkspace, roleProject);
   for (const item of cases) {
     const invalid = await send(item.path, shapeOf(item.method, item.invalid), outsider);
     const valid = await send(item.path, shapeOf(item.method, item.valid), outsider);
@@ -122,8 +123,13 @@ export async function runAccessOrderChecks(options: Options) {
   assert.deepEqual(roleMismatches, [], 'Editors, viewers and API keys get what they got before; the observed matrix is logged above.');
   assert.deepEqual(sweepFailures, [], 'Every workspace and website route refuses a non-member before reading its input; failures are logged above.');
 
-  /** Every route, every shape, from the non-member: exactly the dispatcher's 404 and its body. */
-  async function sweep() {
+  /**
+   * Every route, every shape, from the non-member: exactly the dispatcher's 404 and its body. The target is the role sample's
+   * workspace and website, whose rows another connection holds FOR UPDATE for the whole sweep. A request that tried to lock
+   * either row, or to write a row referencing one, would wait and get no answer within its 5-second timeout, so every answer
+   * also shows the non-member took no lock on them. The hold touches no fixture another stage uses.
+   */
+  async function sweep(targetWorkspace: string, targetProject: string) {
     const query = invalidQuery();
     const shapes: [string, Shape][] = [
       ['GET', {method: 'GET'}],
@@ -140,24 +146,39 @@ export async function runAccessOrderChecks(options: Options) {
     ];
     const routes = workspaceRoutes(), failures: string[] = [];
     assert.ok(routes.length > 100, `Expected the route table to name more than 100 workspace and website routes, found ${routes.length}.`);
-    let swept = 0;
-    for (const route of routes) {
-      const workspace = route.startsWith('/api/workspaces/');
-      const path = concretePath(route, workspace ? options.workspaceId : options.projectId, randomUUID, visitorKey);
-      const refusal = JSON.stringify({error: workspace ? 'Workspace not found or unavailable.' : 'Project not found or unavailable.'});
-      for (const [name, shape] of shapes) {
-        if (sweepExceptions.has(`${shape.method} ${route}`)) continue;
-        swept++;
-        try {
-          const {status, body} = await send(path, shape, outsider);
-          if (status !== 404 || shape.method !== 'HEAD' && body !== refusal) failures.push(`${name} ${route}: ${status} ${body.slice(0, 160)}`);
-        } catch (error) {
-          failures.push(`${name} ${route}: no answer, ${error instanceof Error ? `${error.message} ${String((error as {cause?: unknown}).cause ?? '')}` : String(error)}`);
+    let swept = 0, unanswered = 0;
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [targetWorkspace]);
+      await holder.query('SELECT id FROM project WHERE id=$1 FOR UPDATE', [targetProject]);
+      // Boards check access before taking the workspace lock, so a non-member's direct call does not wait behind the hold either.
+      const started = Date.now();
+      await assert.rejects(listBoards(targetWorkspace, options.outsiderId, ''), (error: {status?: number}) => error.status === 404);
+      assert.ok(Date.now() - started < 2_000, 'A non-member board read waited for the workspace lock.');
+      for (const route of routes) {
+        if (unanswered >= 10) break; // Each unanswered request waits out its timeout; ten are enough to show the failure.
+        const workspace = route.startsWith('/api/workspaces/');
+        const path = concretePath(route, workspace ? targetWorkspace : targetProject, randomUUID, visitorKey);
+        const refusal = JSON.stringify({error: workspace ? 'Workspace not found or unavailable.' : 'Project not found or unavailable.'});
+        for (const [name, shape] of shapes) {
+          if (sweepExceptions.has(`${shape.method} ${route}`)) continue;
+          swept++;
+          try {
+            const {status, body} = await send(path, shape, outsider, 5_000);
+            if (status !== 404 || shape.method !== 'HEAD' && body !== refusal) failures.push(`${name} ${route}: ${status} ${body.slice(0, 160)}`);
+          } catch (error) {
+            unanswered++;
+            failures.push(`${name} ${route}: no answer, ${error instanceof Error ? `${error.message} ${String((error as {cause?: unknown}).cause ?? '')}` : String(error)}`);
+          }
         }
       }
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
     }
     if (failures.length) console.log(`FAIL ${failures.length} of ${swept} requests from a non-member did not get the 404:\n${failures.slice(0, 80).join('\n')}`);
-    else console.log(`PASS ${swept} requests from a non-member (${routes.length} routes, ${shapes.length} shapes each) answer the same 404 whatever the method, query, content type, size or shape of the body`);
+    else console.log(`PASS ${swept} requests from a non-member (${routes.length} routes, ${shapes.length} shapes each) answer the same 404 whatever the method, query, content type, size or shape of the body, and take no lock on the workspace or website row`);
     return failures;
   }
 
@@ -226,6 +247,6 @@ export async function runAccessOrderChecks(options: Options) {
     assert.equal((await send(`/api/workspaces/${workspace}/projects`, {method: 'GET'}, owner)).body.includes(project), true, 'The role sample website is still there.');
     if (mismatches.length) console.log(`FAIL role sample:\n${mismatches.join('\n')}\nObserved [valid, invalid]:\n${observed.join('\n')}`);
     else console.log(`PASS ${rows.length * Object.keys(callers).length * 2} role sample writes from an editor, a viewer and two API keys answer as before`);
-    return mismatches;
+    return {mismatches, workspace, project};
   }
 }
