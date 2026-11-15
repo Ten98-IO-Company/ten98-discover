@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, CodeBlock, CopyButton, Dialog, Disclosure, EmptyState, Field, Fieldset, Heading, InlineCode, Input, RadioGroup, SecretField, Select, Stack, Tabs, Text, useConfirmDialog } from '@ten98/ui'
+import { Alert, Button, Card, CodeBlock, CopyButton, Dialog, Disclosure, EmptyState, Field, Fieldset, DataTable, Heading, Inline, InlineCode, Input, Link, RadioGroup, SecretField, Select, Stack, StatusLine, Tabs, Text, useConfirmDialog } from '@ten98/ui'
 import type { ReactNode } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { formatRelativeInstant } from '../lib/report-time'
@@ -231,51 +231,35 @@ function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: st
   }
 
   const relativeTime = (iso: string) => <Text as="time" dateTime={iso} title={new Date(iso).toLocaleString()}>{formatRelativeInstant(iso)}</Text>
-  const keyCells = (k: ApiKey) => <>
-    <td style={{ minWidth: '8rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{k.name}</td>
-    <td>
-      {k.displayPrefix
-        ? <InlineCode>{k.displayPrefix}…</InlineCode>
-        : <Text as="span" size="sm" tone="muted">Created before prefixes were recorded</Text>}
-    </td>
-    <td>{accessLabel(k.scopes)}</td>
-    <td>{k.lastUsedAt ? relativeTime(k.lastUsedAt) : <Text as="span" tone="muted">Never used</Text>}</td>
-  </>
-  const keyTable = (rows: ApiKey[], last: { label: string; cell: (k: ApiKey) => ReactNode }, actions: boolean) => (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Key</th>
-            <th>Access</th>
-            <th>Last used</th>
-            <th>{last.label}</th>
-            {actions && <th aria-label="Actions" />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((k) => (
-            <tr key={k.id}>
-              {keyCells(k)}
-              <td>{last.cell(k)}</td>
-              {actions && (
-                <td>
-                  <Button variant="ghost" disabled={busy} loading={revokingId === k.id} onClick={() => void revokeKey(k)}>
-                    {revokingId === k.id ? 'Revoking…' : 'Revoke'}
-                  </Button>
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+  const keyTable = (rows: ApiKey[], last: { label: string; cell: (k: ApiKey) => ReactNode }, actions: boolean, tableLabel: string) => (
+    <DataTable<ApiKey>
+      ariaLabel={tableLabel}
+      rows={rows}
+      rowKey={(k) => k.id}
+      searchable={false}
+      sortable={false}
+      pagination={false}
+      columns={[
+        { key: 'name', header: 'Name', wrap: true, minWidth: 'md', render: (k) => k.name },
+        { key: 'key', header: 'Key', render: (k) => k.displayPrefix
+          ? <InlineCode>{k.displayPrefix}…</InlineCode>
+          : <Text as="span" size="sm" tone="muted">Created before prefixes were recorded</Text> },
+        { key: 'access', header: 'Access', render: (k) => accessLabel(k.scopes) },
+        { key: 'lastUsed', header: 'Last used', render: (k) => k.lastUsedAt ? relativeTime(k.lastUsedAt) : <Text as="span" tone="muted">Never used</Text> },
+        { key: 'last', header: last.label, render: last.cell },
+      ]}
+      rowActions={actions ? (k) => (
+        <Button variant="ghost" disabled={busy} loading={revokingId === k.id} onClick={() => void revokeKey(k)}>
+          {revokingId === k.id ? 'Revoking…' : 'Revoke'}
+        </Button>
+      ) : undefined}
+      rowActionsLabel="Actions"
+    />
   )
 
   if (keys === null) return loading
-    ? <p className="dim" role="status">Loading API keys…</p>
-    : <div className="alert" role="alert"><p>{listError || 'API keys are unavailable. Try again.'}</p><button type="button" className="btn" disabled={busy} onClick={() => void load()}>Retry</button></div>
+    ? <StatusLine busy>Loading API keys…</StatusLine>
+    : <Alert tone="danger" actions={<Button variant="secondary" disabled={busy} onClick={() => void load()}>Retry</Button>}>{listError || 'API keys are unavailable. Try again.'}</Alert>
 
   const current = keys.filter((k) => !k.revokedAt)
   const revoked = keys.filter((k) => k.revokedAt)
@@ -291,9 +275,9 @@ function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: st
 
   return (
     <Stack gap={4}>
-      <div>
+      <Inline>
         <Button variant="primary" disabled={busy} onClick={() => openCreate('reports-read')}>Create key</Button>
-      </div>
+      </Inline>
 
       {listError !== '' && (
         <Alert tone="danger" actions={<Button variant="secondary" disabled={busy} onClick={() => void load()}>Retry</Button>}>{listError}</Alert>
@@ -303,20 +287,20 @@ function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: st
         ? <EmptyState title="No API keys yet. Create one to use the API or connect an AI tool." />
         : current.length === 0
           ? <Text tone="muted">No usable keys. Create one to use the API or connect an AI tool.</Text>
-          : keyTable(current, { label: 'Expires', cell: (k) => new Date(k.expiresAt).getTime() <= Date.now() ? <Text as="span" tone="muted">Expired</Text> : <Text as="span" title={new Date(k.expiresAt).toLocaleString()}>{formatRelativeInstant(k.expiresAt)}</Text> }, true)}
+          : keyTable(current, { label: 'Expires', cell: (k) => new Date(k.expiresAt).getTime() <= Date.now() ? <Text as="span" tone="muted">Expired</Text> : <Text as="span" title={new Date(k.expiresAt).toLocaleString()}>{formatRelativeInstant(k.expiresAt)}</Text> }, true, 'API keys')}
 
       {revoked.length > 0 && (
         <Disclosure summary={`Revoked (${revoked.length})`}>
-          {keyTable(revoked, { label: 'Revoked', cell: (k) => <Text as="span" tone="muted" title={new Date(k.revokedAt!).toLocaleString()}>{formatRelativeInstant(k.revokedAt!)}</Text> }, false)}
+          {keyTable(revoked, { label: 'Revoked', cell: (k) => <Text as="span" tone="muted" title={new Date(k.revokedAt!).toLocaleString()}>{formatRelativeInstant(k.revokedAt!)}</Text> }, false, 'Revoked API keys')}
         </Disclosure>
       )}
 
       <Card title="Connect an AI tool with MCP" headingLevel={2} description="Point an MCP client at this server and send a key in the Authorization header.">
         <Stack gap={3}>
           <CodeBlock code={serverUrl} label="MCP server URL" copy />
-          <div>
+          <Inline>
             <Button variant="secondary" disabled={busy} onClick={() => openCreate('mcp-read')}>Create MCP key</Button>
-          </div>
+          </Inline>
           <Tabs label="MCP client" value={client} onValueChange={setClient} items={snippets.map((s) => ({
             value: s.id,
             label: s.label,
@@ -328,7 +312,7 @@ function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: st
 
       <Stack gap={1}>
         <Text size="sm" tone="muted">Keys work in this workspace only. Every request checks its expiry, scopes, current workspace access and two-factor requirement. Existing keys can never be re-read — only created, revoked or replaced.</Text>
-        <Text size="sm"><a href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</a></Text>
+        <Text size="sm"><Link href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</Link></Text>
       </Stack>
 
       <Dialog

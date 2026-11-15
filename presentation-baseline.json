@@ -52,10 +52,6 @@
     "element": 64,
     "styling": 50
   },
-  "src/components/ApiKeysPanel.tsx": {
-    "element": 25,
-    "styling": 5
-  },
   "src/components/AttributionPanel.tsx": {
     "stylesheet": 1,
     "element": 95,
