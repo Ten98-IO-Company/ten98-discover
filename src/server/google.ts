@@ -113,8 +113,10 @@ export async function getGoogleApp(userId: string) {
   const app = (await pool.query<App>("SELECT * FROM google_app WHERE id='instance'")).rows[0];
   return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator: true, revision: app?.revision ?? 0, ...(app ? { clientId: app.client_id } : {}) };
 }
-export async function saveGoogleApp(userId: string, value: unknown) {
-  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), value);
+/** The body is read only after the operator check, so a non-operator gets the same 403 whatever it sends. */
+export async function saveGoogleApp(userId: string, readBody: () => Promise<unknown>) {
+  await requireInstanceOperator(getDatabase().pool, userId);
+  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), await readBody());
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN'); await requireInstanceOperator(client, userId);

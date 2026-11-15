@@ -101,7 +101,7 @@ test('native HTTP(S) request pins host/TLS/lookup and rejects duplicate Location
       const signal=new AbortController().signal,url=new URL(`${scheme}//alias.example.com/`);
       assert.deepEqual(await requestRedirectHeaders(url,publicAddress,signal),{status:302,location:'https://target.example.com/'});
       await assert.rejects(requestRedirectHeaders(url,publicAddress,signal));assert.equal(destroyed,2);
-      await assert.rejects(requestRedirectHeaders(url,{address:'127.0.0.1',family:4},signal));assert.equal(calls,2);
+      await assert.rejects(requestRedirectHeaders(url,{address:'127.0.0.1',family:4},signal),(error:{outcome?:string})=>error.outcome==='blocked');assert.equal(calls,2);
       assert.ok(!('authorization' in options.headers));assert.ok(!('cookie' in options.headers));
     }finally{intercept.mock.restore();}
   }
