@@ -210,8 +210,9 @@ function requireRun(run:AuditRunRow|null){if(!run)throw missing();if(run.deleted
 function actorTarget(projectId:string,userId:string,runId?:string,manage=false,apiToken?:string):ActorTarget{return {projectId,runId,actor:{userId,permission:manage?'manage':'read'},apiToken};}
 const runDtoColumns='id,project_id,domain_id,origin,config,status,phase,created_at,started_at,completed_at,deadline_at,stop_reason,coverage,summary,request_count,html_pages_started,sitemap_documents_started,frontier_count,edge_count,budget_charged_bytes,wire_bytes,http_decoded_bytes,decoded_bytes,raw_expired_at,data_expired_at,deleted_at';
 export async function listSiteAudits(projectId:string,userId:string,params:URLSearchParams,apiToken?:string){
- const query=parseAuditListQuery(params,'runs'),scope={projectId,list:'audits'},before=cursor(query.cursor,scope);
  return withAuditLock(actorTarget(projectId,userId,undefined,false,apiToken),async({client,role})=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const query=parseAuditListQuery(params,'runs'),scope={projectId,list:'audits'},before=cursor(query.cursor,scope);
   if(before&&!(await client.query('SELECT id FROM site_audit_run WHERE id=$1 AND project_id=$2 AND deleted_at IS NULL',[before,projectId])).rowCount)throw new FoundationError(400,'This audit cursor is no longer available.');
   const rows=(await client.query<AuditRunRow>(`SELECT ${runDtoColumns} FROM site_audit_run WHERE project_id=$1 AND deleted_at IS NULL
    AND ($2::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM site_audit_run WHERE id=$2 AND project_id=$1)) ORDER BY created_at DESC,id DESC LIMIT $3 FOR UPDATE`,[projectId,before,query.limit+1])).rows;
@@ -279,8 +280,9 @@ function pageReadFailure(reason:'raw_expired'|'population'|'selection_changed'|'
  return new FoundationError(reason==='missing_anchor'?400:409,messages[reason]);
 }
 export async function listSiteAuditPages(projectId:string,userId:string,runId:string,params:URLSearchParams){
- const query=parseAuditListQuery(params,'pages'),fields:PageSelectionQuery={coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order},scope=pageSelectionScope(projectId,runId,fields),before=pagesCursor(query.cursor,scope);
  const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const query=parseAuditListQuery(params,'pages'),fields:PageSelectionQuery={coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order},scope=pageSelectionScope(projectId,runId,fields),before=pagesCursor(query.cursor,scope);
   const run=requireRun(saved),asOf=(await client.query<{at:Date}>('SELECT clock_timestamp() AS at')).rows[0].at.toISOString(),envelope={role:role!,run:auditRunDto(run,role),asOf,countBasis:'retained' as const};
   if(run.data_expired_at)return {...envelope,pages:[],nextCursor:null,selectionRevision:null,matchingRetainedCount:null};
   const selection=await selectAuditPages(client,run,fields,scope);if(selection.pageReadError)return selection;
@@ -447,8 +449,9 @@ export async function getSiteAuditPage(projectId:string,userId:string,runId:stri
  return result;
 }
 export async function listSiteAuditIssues(projectId:string,userId:string,runId:string,params:URLSearchParams,apiToken?:string){
- const query=parseAuditListQuery(params,'issues'),scope={projectId,runId,list:'issues',code:query.code,severity:query.severity,pageId:query.pageId},before=cursor(query.cursor,scope);
  return withAuditLock(actorTarget(projectId,userId,runId,false,apiToken),async({client,run:saved,role})=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const query=parseAuditListQuery(params,'issues'),scope={projectId,runId,list:'issues',code:query.code,severity:query.severity,pageId:query.pageId},before=cursor(query.cursor,scope);
   const run=requireRun(saved),base={role:role!,run:auditRunDto(run,role),findingsComplete:run.summary?.findingsComplete??false,countBasis:'retained' as const};
   if(run.data_expired_at)return {...base,issues:[],groups:null,nextCursor:null,matchingRetainedCount:null};
   if(query.pageId)await scopedPage(client,run.id,query.pageId);
@@ -471,8 +474,10 @@ export async function listSiteAuditIssues(projectId:string,userId:string,runId:s
  });
 }
 export async function listSiteAuditLinks(projectId:string,userId:string,runId:string,pageId:string,params:URLSearchParams){
- parse(z.uuid(),pageId);const query=parseAuditListQuery(params,'links'),scope={projectId,runId,pageId,list:'links',direction:query.direction},before=cursor(query.cursor,scope);
+ parse(z.uuid(),pageId);
  return withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const query=parseAuditListQuery(params,'links'),scope={projectId,runId,pageId,list:'links',direction:query.direction},before=cursor(query.cursor,scope);
   const run=requireRun(saved),base={role:role!,run:auditRunDto(run,role)};
   if(run.data_expired_at)return {...base,links:[],nextCursor:null};
   await scopedPage(client,run.id,pageId);

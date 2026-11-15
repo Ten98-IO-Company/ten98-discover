@@ -31,7 +31,7 @@ function count(value:unknown):number{const n=typeof value==='string'?Number(valu
 const usesGeography=(query:ReturnType<typeof explorerQuery>)=>geographyFields.some(field=>Object.hasOwn(query.filters,field))||!!query.predicates?.fields.some(row=>geographyFields.includes(row.field as GeoField));
 
 export async function projectJourneys(projectId:string,authority:SessionReadAuthority,params:URLSearchParams):Promise<JourneysResult>{
- if(!z.uuid().safeParse(projectId).success)throw bad();projectId=projectId.toLowerCase();const input=journeysQuery(params);
+ if(!z.uuid().safeParse(projectId).success)throw bad();projectId=projectId.toLowerCase();
  const client=await getDatabase().pool.connect();
  try{
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
@@ -40,6 +40,8 @@ export async function projectJourneys(projectId:string,authority:SessionReadAuth
   let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
   const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
   if(!hint||preliminary&&preliminary.workspaceId!==hint)throw missing();
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const input=journeysQuery(params);
   await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
   const currentKey=authority.kind==='api-key'?await authorizeApiKey(authority.token,hint,'analytics:read',client):null;if(currentKey)userId=currentKey.userId;
   const query=input.scope,item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null;

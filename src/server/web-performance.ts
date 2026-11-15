@@ -36,7 +36,6 @@ const stats=(alias:string)=>`json_build_object('count',${alias}.n,'p50',${alias}
 const aggregates=`count(o.value) AS n,percentile_cont(0.5) WITHIN GROUP(ORDER BY o.value) AS p50,percentile_cont(0.75) WITHIN GROUP(ORDER BY o.value) AS p75,percentile_cont(0.95) WITHIN GROUP(ORDER BY o.value) AS p95`;
 export async function projectPerformance(projectId:string,authority:SessionReadAuthority,params:URLSearchParams|string):Promise<PerformanceReport>{
  if(!z.uuid().safeParse(projectId).success)throw new FoundationError(400,'Choose a project.');projectId=projectId.toLowerCase();
- let query:ReturnType<typeof readPerformanceQuery>;try{query=readPerformanceQuery(params);}catch{throw new FoundationError(400,'Choose a valid performance range, metric, percentile and supported filters.');}
  const client=await getDatabase().pool.connect();
  try{
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'; SET LOCAL TIME ZONE 'UTC'");
@@ -44,6 +43,8 @@ export async function projectPerformance(projectId:string,authority:SessionReadA
   let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
   const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
   if(!hint||preliminary&&preliminary.workspaceId!==hint)throw new FoundationError(404,'Project not found or unavailable.');
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  let query:ReturnType<typeof readPerformanceQuery>;try{query=readPerformanceQuery(params);}catch{throw new FoundationError(400,'Choose a valid performance range, metric, percentile and supported filters.');}
   await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
   const key=authority.kind==='api-key'?await authorizeApiKey(authority.token,hint,'analytics:read',client):null;if(key)userId=key.userId;
   // One current authority clock and one SQL snapshot for every metric, UTC day and category.

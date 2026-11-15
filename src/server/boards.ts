@@ -79,8 +79,9 @@ async function receipt(client:PoolClient,wid:string,uid:string,requestId:string,
 }
 async function acknowledged(client:PoolClient,wid:string,role:BoardRole,ack:BoardAck,replayed:boolean):Promise<BoardWriteResult>{const row=await find(client,wid,ack.boardId);return{workspaceId:wid,role,ack,item:row?dto(row):null,deleted:!row,replayed};}
 export async function listBoards(workspaceId:unknown,userId:unknown,rawQuery=''){
- const params=boardParams(rawQuery);if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one board list cursor.');
  return withBoardWorkspace(workspaceId,userId,false,async(client,wid,_uid,role)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const params=boardParams(rawQuery);if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one board list cursor.');
   const scope={workspaceId:wid,list:'boards'},after=readContentCursor(params.get('cursor'),scope);
   // New table timestamps are millisecond precision: the existing cursor is lossless, including a deleted anchor.
   const rows=(await client.query<Row>(`SELECT ${columns} FROM custom_board WHERE workspace_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::uuid)) ORDER BY created_at DESC,id DESC LIMIT 21`,[wid,after?.at??null,after?.id??null])).rows;
@@ -237,8 +238,11 @@ async function validateShareSelection(c:PoolClient,wid:string,board:Row,input:{s
  return scope.scope;
 }
 export async function listBoardShares(workspaceId:unknown,userId:unknown,boardId:unknown,rawQuery=''){
- const bid=parse(uuid,boardId),params=boardParams(rawQuery);for(const key of params.keys())if(key!=='cursor'||params.getAll(key).length!==1)throw new FoundationError(400,'Use one share cursor.');
- return withBoardWorkspace(workspaceId,userId,false,async(c,wid,_uid,role)=>{shareManager(role);if(!await find(c,wid,bid))throw missing();const scope={workspaceId:wid,boardId:bid,list:'board-shares'},after=readContentCursor(params.get('cursor'),scope);
+ const bid=parse(uuid,boardId);
+ return withBoardWorkspace(workspaceId,userId,false,async(c,wid,_uid,role)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  const params=boardParams(rawQuery);for(const key of params.keys())if(key!=='cursor'||params.getAll(key).length!==1)throw new FoundationError(400,'Use one share cursor.');
+  shareManager(role);if(!await find(c,wid,bid))throw missing();const scope={workspaceId:wid,boardId:bid,list:'board-shares'},after=readContentCursor(params.get('cursor'),scope);
   const rows=(await c.query<ShareRow>('SELECT * FROM board_share WHERE board_id=$1 AND($2::timestamptz IS NULL OR(created_at,id)<($2::timestamptz,$3::uuid))ORDER BY created_at DESC,id DESC LIMIT 21',[bid,after?.at??null,after?.id??null])).rows;
   return{workspaceId:wid,boardId:bid,role,items:rows.slice(0,20).map(shareItem),nextCursor:rows.length>20?contentCursor({id:rows[19].id,createdAt:rows[19].created_at},scope):null};
  });

@@ -38,8 +38,10 @@ function oneCursor(params:URLSearchParams){
 }
 
 export async function listAnalyses(projectId:unknown,userId:unknown,kind:AnalysisKind,params:URLSearchParams){
-  kind=kindValue(kind);const value=oneCursor(params);
+  kind=kindValue(kind);
   return withContentProject(projectId,userId,false,async(client,project)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    const value=oneCursor(params);
     const scope={projectId:project.id,list:'analyses',kind},after=readContentCursor(value,scope);
     const {rows}=await client.query<DefinitionRow>(`SELECT ${columns} FROM analytics_definition WHERE project_id=$1 AND kind=$2
       AND ($3::timestamptz IS NULL OR (created_at,id)<($3::timestamptz,$4::uuid)) ORDER BY created_at DESC,id DESC LIMIT 51`,[project.id,kind,after?.at??null,after?.id??null]);

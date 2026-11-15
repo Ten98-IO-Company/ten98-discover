@@ -18,8 +18,9 @@ function dto(row:Row):SegmentItem{return {id:row.id,projectId:row.project_id,rev
 async function find(client:PoolClient,projectId:string,id:string){return (await client.query<Row>(`SELECT ${columns} FROM analytics_segment WHERE project_id=$1 AND id=$2`,[projectId,id])).rows[0];}
 
 export async function listSegments(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
-  if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one saved-filter list cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one saved-filter list cursor.');
     const scope={projectId:project.id,list:'segments'},after=readContentCursor(params.get('cursor'),scope);
     const {rows}=await client.query<Row>(`SELECT ${columns} FROM analytics_segment WHERE project_id=$1
       AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::uuid))

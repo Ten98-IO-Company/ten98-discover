@@ -28,8 +28,9 @@ const population=`selected AS MATERIALIZED (SELECT a.* FROM analytics_annotation
   WHERE a.project_id=t.id AND ($3::date IS NULL OR (a.date>=b.start AND a.date<b.finish AND (a.date AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date)))`;
 
 export async function listAnnotations(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
-  const input=annotationQuery(params);
   return withContentProject(projectId,userId,false,async(client,p)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    const input=annotationQuery(params);
     await prepare(client,input.range?.timeZone);const scope={projectId:p.id,list:'annotations',range:input.range,search:input.search},after=readContentCursor(input.cursor,scope);
     const {rows}=await client.query<Row>(`${calendarPrefix}, ${population} SELECT ${columns} FROM selected
       WHERE ($6::text IS NULL OR strpos(lower(note),lower($6))>0) AND ($7::timestamptz IS NULL OR (date,id)<($7::timestamptz,$8::uuid))

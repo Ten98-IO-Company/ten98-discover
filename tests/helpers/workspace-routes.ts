@@ -1,5 +1,6 @@
 // Every signed-in route that names a workspace or website id, derived from the server's own route table and the OpenAPI
-// inventory, so tests/access-order-integration.ts sweeps a new route without anyone adding it by hand.
+// inventory, so tests/access-order-integration.ts sweeps a new route without anyone adding it by hand. The sweep's GET query
+// is built here too, from the query parameters the OpenAPI document declares.
 // The router matches paths with inline regular expressions rather than a data table, so the route patterns are read
 // from the server source and expanded into concrete paths. A pattern this expander cannot read fails loudly instead of
 // being skipped; tests/workspace-routes.test.ts checks that in the offline suite.
@@ -124,6 +125,26 @@ export function concretePath(route: string, targetId: string, fresh: () => strin
     if (first) { first = false; return targetId; }
     return fresh();
   });
+}
+
+// Query parameters that only cookie routes read, so the OpenAPI document does not declare them.
+const cookieQueryNames = ['after', 'coverage', 'direction', 'environment', 'mode', 'order', 'resourceKind', 'revision', 'scope', 'searchIn', 'sort'];
+
+/** Every query parameter name the OpenAPI document declares, plus the cookie-only ones. */
+export function queryNames(): string[] {
+  const names = new Set(cookieQueryNames);
+  (function collect(value: unknown) {
+    if (!value || typeof value !== 'object') return;
+    const item = value as Record<string, unknown>;
+    if (item.in === 'query' && typeof item.name === 'string') names.add(item.name);
+    for (const child of Object.values(item)) collect(child);
+  })(nativeOpenApi);
+  return [...names].sort();
+}
+
+/** A query no route accepts: a name no route knows, then every known name with a value no date, number, id, cursor or choice matches. */
+export function invalidQuery(): URLSearchParams {
+  return new URLSearchParams([['unexpected', '1'], ...queryNames().map(name => [name, '~'])]);
 }
 
 // Handled by the shared @ten98/runtime team controller, which reads input before access; tracked upstream.

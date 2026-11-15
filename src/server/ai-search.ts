@@ -147,8 +147,9 @@ export async function readAiSearchAnalysisPopulation(c:PoolClient,p:Project,filt
   return {asOf,resolvedRange:range,filters,contextRevision:profile.revision,profileHash,selectionRevision,warnings,brand,rows,receipts:stored.map(({input,result,...receipt})=>receipt)};
 }
 export async function getAiSearchAnalysis(projectId:string,userId:string,params:URLSearchParams):Promise<AiQueryReport>{
- let filters:ReturnType<typeof aiQueryFilters>;try{filters=aiQueryFilters(params);}catch{throw new FoundationError(400,'Check the query analysis filters.');}
  return projectGate(projectId,userId,false,async(c,p)=>{
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  let filters:ReturnType<typeof aiQueryFilters>;try{filters=aiQueryFilters(params);}catch{throw new FoundationError(400,'Check the query analysis filters.');}
   const {rows,receipts,...population}=await readAiSearchAnalysisPopulation(c,p,filters);
   try{return aiQueryReportSchema.parse(bounded({role:p.role,projectId:p.id,profileId:aiSearchProfileId,...population,label:'Recomputed from retained captures using current brand context',...aggregateAiSearchQueries(rows!,filters,population.brand)}));}
   catch(error){if(error instanceof AiQueryCapacityError)throw new FoundationError(413,error.message);if(error instanceof AiQueryDataError||error instanceof z.ZodError)throw new FoundationError(503,'Stored query analysis evidence is inconsistent. Try a narrower selection.');throw error;}

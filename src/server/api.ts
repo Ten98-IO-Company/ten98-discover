@@ -416,6 +416,8 @@ export async function handleApi(request: Request): Promise<Response> {
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
     // Every route below is under /api/(workspaces|projects)/<id> except GET /api/me and POST /api/workspaces, which stay reachable.
     await requireWorkspaceFactor(path, user.id);
+    // Routes below read the query only after the membership check, so a non-member gets the same 404 whatever the query. Where a route
+    // refuses a query before its module resolves access, it runs projectAccess or workspaceAccess first.
     const analyticsExportRoute=path.match(new RegExp('^/api/projects/('+id+')/analytics/export$','i'));
     if(analyticsExportRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
@@ -430,7 +432,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit('board-shares:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?120:30);
       if(request.method==='GET'&&!boardShareManagement[4]){
         if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Share management reads do not accept a body.');
-        if(boardShareManagement[3]){if(request.url.includes('?'))throw new FoundationError(400,'Share point reads have no query.');return json(await getBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3]));}
+        if(boardShareManagement[3]){if(request.url.includes('?')){await workspaceAccess(boardShareManagement[1],user.id);throw new FoundationError(400,'Share point reads have no query.');}return json(await getBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3]));}
         return json(await listBoardShares(boardShareManagement[1],user.id,boardShareManagement[2],url.search.slice(1)));
       }
       if(request.method!=='POST'||boardShareManagement[3]&&!boardShareManagement[4])return json({error:'Method not allowed.'},405);
@@ -466,7 +468,7 @@ export async function handleApi(request: Request): Promise<Response> {
         if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Board reads do not accept a body.');
         if(cardId)return json(await readBoardCard(workspaceId,user.id,boardId,cardId,url.search.slice(1)));
         if(!boardId)return json(await listBoards(workspaceId,user.id,url.search.slice(1)));
-        if(!action){if(url.search)throw new FoundationError(400,'Board details do not accept query parameters.');return json(await getBoard(workspaceId,user.id,boardId));}
+        if(!action){if(url.search){await workspaceAccess(workspaceId,user.id);throw new FoundationError(400,'Board details do not accept query parameters.');}return json(await getBoard(workspaceId,user.id,boardId));}
       }
       if(request.method==='POST'&&!cardId&&(!boardId||action)){
         if(url.search)throw new FoundationError(400,'Board changes do not accept query parameters.');
@@ -488,7 +490,7 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action)return json({error:'Method not allowed.'},405);
         if(target==='timeline')return json(await annotationTimeline(pid,user.id,url.searchParams,apiToken??undefined));
         if(!target)return json(await listAnnotations(pid,user.id,url.searchParams,apiToken??undefined));
-        if(url.search)throw new FoundationError(400,'This annotation read has no query parameters.');
+        if(url.search){await projectAccess(pid,user.id);throw new FoundationError(400,'This annotation read has no query parameters.');}
         return json(await getAnnotation(pid,user.id,target,apiToken??undefined));
       }
       if(request.method==='POST'&&target!=='timeline'&&(!target||action==='update'||action==='delete')){
@@ -502,7 +504,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const savedReplayRoute=path.match(new RegExp('^/api/projects/('+id+')/replays/(saved|('+id+')/saved)$','i'));
     if(savedReplayRoute){
       await limit('saved-replays:'+user.id+':'+request.method,request.method==='GET'?60:30);
-      if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Saved replay reads do not accept a body.');if(savedReplayRoute[3]&&request.url.includes('?'))throw new FoundationError(400,'Saved replay point reads have no query.');if(request.url.includes('#'))throw new FoundationError(400,'Saved replay reads have no fragment.');return json(savedReplayRoute[3]?await getSavedReplay(savedReplayRoute[1],user.id,savedReplayRoute[3]):await listSavedReplays(savedReplayRoute[1],user.id,url.search.slice(1)));}
+      if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Saved replay reads do not accept a body.');if(savedReplayRoute[3]&&request.url.includes('?')){await projectAccess(savedReplayRoute[1],user.id);throw new FoundationError(400,'Saved replay point reads have no query.');}if(request.url.includes('#'))throw new FoundationError(400,'Saved replay reads have no fragment.');return json(savedReplayRoute[3]?await getSavedReplay(savedReplayRoute[1],user.id,savedReplayRoute[3]):await listSavedReplays(savedReplayRoute[1],user.id,url.search.slice(1)));}
       if(request.method==='POST'&&savedReplayRoute[3]){if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Saved replay writes have no query.');return json(await saveReplay(savedReplayRoute[1],user.id,savedReplayRoute[3],await readJson(request,8192)));}
       return json({error:'Method not allowed.'},405);
     }
@@ -527,7 +529,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit('cohorts:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
       if(request.method==='GET'){
         if(!cohortId)return json(await listCohorts(projectId,user.id,url.searchParams,apiToken??undefined));
-        if(!action){if(url.search)throw new FoundationError(400,'Cohort details do not accept query parameters.');return json(await getCohort(projectId,user.id,cohortId,apiToken??undefined));}
+        if(!action){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Cohort details do not accept query parameters.');}return json(await getCohort(projectId,user.id,cohortId,apiToken??undefined));}
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Cohort changes do not accept query parameters.');
@@ -545,7 +547,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit('segments:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
       if(request.method==='GET'){
         if(!segmentId)return json(await listSegments(projectId,user.id,url.searchParams,apiToken??undefined));
-        if(!action){if(url.search)throw new FoundationError(400,'Saved filter details do not accept query parameters.');return json(await getSegment(projectId,user.id,segmentId,apiToken??undefined));}
+        if(!action){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Saved filter details do not accept query parameters.');}return json(await getSegment(projectId,user.id,segmentId,apiToken??undefined));}
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Saved filter changes do not accept query parameters.');
@@ -563,7 +565,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`analyses:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?60:30);
       if(request.method==='GET'){
         if(!analysisId)return json(await listAnalyses(projectId,user.id,kind,url.searchParams));
-        if(!action){if(url.search)throw new FoundationError(400,'Analysis details do not accept query parameters.');return json(await getAnalysis(projectId,user.id,kind,analysisId));}
+        if(!action){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Analysis details do not accept query parameters.');}return json(await getAnalysis(projectId,user.id,kind,analysisId));}
         if(action==='result'||action==='witnesses'){await projectAccess(projectId,user.id);return json(await runAnalysis(projectId,user.id,kind,analysisId,url.searchParams,action==='witnesses'));}
       }
       if(request.method==='POST'){
@@ -587,7 +589,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const auditAccessRoute=path.match(new RegExp(`^/api/projects/(${id})/audits/access(?:/(remove))?$`,'i'));
     if(auditAccessRoute){
       const [,projectId,action]=auditAccessRoute;
-      if(url.search)throw new FoundationError(400,'Crawler access does not accept query parameters.');
+      if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Crawler access does not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`audit-access:${user.id}`,60);
       if(request.method==='GET'&&!action)return json(await getSiteAuditAccess(projectId,user.id));
       if(request.method==='POST'){
@@ -599,7 +601,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const auditScheduleRoute=path.match(new RegExp(`^/api/projects/(${id})/audits/schedule(?:/(pause))?$`,'i'));
     if(auditScheduleRoute){
       const [,projectId,action]=auditScheduleRoute;
-      if(url.search)throw new FoundationError(400,'Audit schedules do not accept query parameters.');
+      if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Audit schedules do not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`audit-schedule:${user.id}`,60);
       if(request.method==='GET'&&!action)return json(await getSiteAuditSchedule(projectId,user.id));
       if(request.method==='POST'){
@@ -614,12 +616,12 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`audits:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?120:10);
       if(request.method==='GET'){
         if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams,apiToken??undefined));
-        if(runOrSetup==='setup'&&!action){if(url.search)throw new FoundationError(400,'Audit setup does not accept query parameters.');return json(await getSiteAuditSetup(projectId,user.id));}
+        if(runOrSetup==='setup'&&!action){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Audit setup does not accept query parameters.');}return json(await getSiteAuditSetup(projectId,user.id));}
         if(runOrSetup!=='setup'){
-          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup,apiToken??undefined));}
+          if(!action){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Audit details do not accept query parameters.');}return json(await getSiteAudit(projectId,user.id,runOrSetup,apiToken??undefined));}
           if(action==='pages'&&!pageId)return json(await listSiteAuditPages(projectId,user.id,runOrSetup,url.searchParams));
           if(action==='pages'&&pageId&&links)return json(await listSiteAuditLinks(projectId,user.id,runOrSetup,pageId,url.searchParams));
-          if(action==='pages'&&pageId&&!links){if(url.search)throw new FoundationError(400,'Page details do not accept query parameters.');return json(await getSiteAuditPage(projectId,user.id,runOrSetup,pageId));}
+          if(action==='pages'&&pageId&&!links){if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Page details do not accept query parameters.');}return json(await getSiteAuditPage(projectId,user.id,runOrSetup,pageId));}
           if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams,apiToken??undefined));
         }
       }
@@ -689,7 +691,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const modelCatalogRoute=path.match(new RegExp(`^/api/projects/(${id})/openrouter-models$`,'i'));
     if(modelCatalogRoute){
       const projectId=modelCatalogRoute[1];
-      if(url.search)throw new FoundationError(400,'The model catalog does not accept query parameters.');
+      if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'The model catalog does not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method==='POST');
       if(request.method==='GET'){
         if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Model catalog reads do not accept a body.');
@@ -738,7 +740,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const trackerRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-trackers(?:/(${id})(?:/(approve|pause|run|archive|restore))?)?$`,'i'));
     if(trackerRoute){
       const [,projectId,trackerId,action]=trackerRoute;
-      if(request.url.includes('#')||((request.method!=='GET'||trackerId)&&request.url.includes('?')))throw new FoundationError(400,'Only the tracker collection accepts its supported filters.');
+      if(request.url.includes('#')||((request.method!=='GET'||trackerId)&&request.url.includes('?'))){await projectAccess(projectId,user.id);throw new FoundationError(400,'Only the tracker collection accepts its supported filters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`prompt-tracker-read:${user.id}`,120);
       if(request.method==='GET'&&!trackerId)return json(await getPromptTrackers(projectId,user.id,url.searchParams));
       if(request.method==='GET'&&trackerId&&!action)return json(await getPromptTracker(projectId,user.id,trackerId));
@@ -756,7 +758,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if(executionRoute){
       const [,projectId,action,runId,runAction]=executionRoute;
       const citationRead=request.method==='GET'&&action==='runs'&&!!runId&&runAction==='citations';
-      if(url.search&&!citationRead)throw new FoundationError(400,'Prompt executions do not accept query parameters.');
+      if(url.search&&!citationRead){await projectAccess(projectId,user.id);throw new FoundationError(400,'Prompt executions do not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');
       await limit(`execution:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getPromptExecutions(projectId,user.id));
@@ -779,7 +781,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const savedKeywordRoute=path.match(new RegExp(`^/api/projects/(${id})/saved-keywords(?:/(list|bulk-tags|remove|export|refresh-prepare|refreshes|tags)(?:/(list|${id})(?:/(update|delete|cancel|recover))?)?)?$`,'i'));
     if(savedKeywordRoute){
-      if(url.search)throw new FoundationError(400,'Saved keyword requests do not accept query parameters.');
+      if(url.search){await projectAccess(savedKeywordRoute[1],user.id);throw new FoundationError(400,'Saved keyword requests do not accept query parameters.');}
       const [,projectId,action,targetId,operation]=savedKeywordRoute;
       await limit(`saved-keyword:${user.id}`,120);
       if(request.method==='GET'){
@@ -818,7 +820,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const rankCheckRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-checks/(${id})(?:/(start|cancel|recover))?$`,'i'));
     if(rankCheckRoute){
       const [,projectId,runId,action]=rankCheckRoute;
-      if(url.searchParams.size)throw new FoundationError(400,'Rank check actions do not accept query parameters.');
+      if(url.searchParams.size){await projectAccess(projectId,user.id);throw new FoundationError(400,'Rank check actions do not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');
       await limit(`rank-read:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getRankRun(projectId,user.id,runId));
@@ -834,7 +836,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const rankScheduleRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers/(${id})/schedule(?:/(preview|approve|disable))?$`,'i'));
     if(rankScheduleRoute){
       const [,projectId,trackerId,action]=rankScheduleRoute;
-      if(url.searchParams.size)throw new FoundationError(400,'Rank schedule actions do not accept query parameters.');
+      if(url.searchParams.size){await projectAccess(projectId,user.id);throw new FoundationError(400,'Rank schedule actions do not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');
       await limit(`rank-read:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getRankSchedule(projectId,user.id,trackerId));
@@ -1010,7 +1012,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|prepare|runs)(?:/(${id})(?:/(cancel|recover|export))?)?)?$`,'i'));
     if(domainResearchRoute){
       const [,projectId,action,runId,runAction]=domainResearchRoute;
-      if(url.search)throw new FoundationError(400,'Domain research does not accept query parameters.');
+      if(url.search){await projectAccess(projectId,user.id);throw new FoundationError(400,'Domain research does not accept query parameters.');}
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`domain-research:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getDomainResearch(projectId,user.id));
       if(request.method==='GET'&&action==='runs'&&runId&&!runAction)return json(await getDomainResearchRun(projectId,user.id,runId));
@@ -1048,7 +1050,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const redirectRoute=path.match(new RegExp(`^/api/projects/(${id})/domains/(${id})/redirect-checks$`,'i'));
     if(redirectRoute){
-      if(url.search)throw new FoundationError(400,'Redirect checks do not accept query parameters.');
+      if(url.search){await projectAccess(redirectRoute[1],user.id);throw new FoundationError(400,'Redirect checks do not accept query parameters.');}
       await limit(`domain-redirect:${user.id}:read`,60);
       if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2],apiToken??undefined));
       if(request.method==='POST'){
@@ -1060,7 +1062,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const domainRoute = path.match(new RegExp(`^/api/projects/(${id})/domains(?:/(${id})/(update|challenge|verify|revoke|remove))?$`, 'i'));
     if (domainRoute) {
-      if (url.search) throw new FoundationError(400, 'Domain settings do not accept query parameters.');
+      if (url.search) { await projectAccess(domainRoute[1], user.id); throw new FoundationError(400, 'Domain settings do not accept query parameters.'); }
       await limit(`domain-settings:${user.id}`, 60);
       if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id, apiToken ?? undefined));
       if (request.method === 'POST') {
@@ -1110,7 +1112,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const projectDeleteRoute=path.match(new RegExp(`^/api/workspaces/(${id})/projects/(${id})/delete$`,'i'));
     if(projectDeleteRoute){
-      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Website deletion has no query parameters.');
+      if(request.url.includes('?')||request.url.includes('#')){await workspaceAccess(projectDeleteRoute[1],user.id);throw new FoundationError(400,'Website deletion has no query parameters.');}
       await limit(`project-delete:${user.id}`,20);
       if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Deletion access does not accept a body.');return json(await getProjectDeletion(projectDeleteRoute[1],projectDeleteRoute[2],user.id));}
       if(request.method==='POST')return json(await deleteProject(projectDeleteRoute[1],projectDeleteRoute[2],user.id,await readJson(request,1024)));
@@ -1118,7 +1120,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const resetRoute=path.match(new RegExp(`^/api/projects/(${id})/analytics-reset$`,'i'));
     if(resetRoute){
-      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Reset analytics has no query parameters.');
+      if(request.url.includes('?')||request.url.includes('#')){await projectAccess(resetRoute[1],user.id);throw new FoundationError(400,'Reset analytics has no query parameters.');}
       await limit(`analytics-reset:${user.id}`,20);
       if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Reset status does not accept a body.');return json(await getAnalyticsReset(resetRoute[1],user.id));}
       if(request.method==='POST')return json(await resetAnalytics(resetRoute[1],user.id,await readJson(request,1024)));
@@ -1132,6 +1134,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const destinationRoute = path.match(new RegExp(`^/api/projects/(${id})/destinations(?:/(draft|preview|publish|rollback))?$`, 'i'));
     if (destinationRoute) {
+      if (url.search) await projectAccess(destinationRoute[1], user.id);
       if ([...url.searchParams.keys()].some(key => key !== 'environment') || url.searchParams.getAll('environment').length > 1) throw new FoundationError(400, 'Choose one tracking environment.');
       const environment = z.enum(['live', 'test']).parse(url.searchParams.get('environment') ?? 'live');
       await limit(`tracking-settings:${user.id}`, 60);
@@ -1317,6 +1320,7 @@ export async function handleApi(request: Request): Promise<Response> {
     match=path.match(new RegExp(`^/api/projects/(${id})/realtime$`,'i'));
     if(match){
       if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(url.search)await projectAccess(match[1],user.id);
       if(url.search||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Live traffic uses the fixed window with no query parameters or body.');
       await limit(`realtime:${user.id}`,60);
       return json(await projectRealtime(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.searchParams));

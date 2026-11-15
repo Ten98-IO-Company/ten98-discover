@@ -38,8 +38,9 @@ function filters(params:URLSearchParams) {
     classification:parse(z.enum(['branded','unbranded','']),params.get('classification')??'')};
 }
 export async function listPrompts(projectId:unknown,userId:unknown,params:URLSearchParams,promptApiToken?:string) {
-  const input=filters(params);
   return withContentProject(projectId,userId,false,async(client,project)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    const input=filters(params);
     const profile=await contentProfile(client,project),scope={projectId:project.id,list:'prompts',...input},cursor=readContentCursor(params.get('cursor'),scope);
     const terms=classificationTerms(profile.name,project.origin,profile.aliases);
     const {rows}=await client.query<PromptRow>(`WITH matches AS (
@@ -110,8 +111,9 @@ export async function setPromptArchived(projectId:unknown,userId:unknown,promptI
 }
 export async function promptVersions(projectId:unknown,userId:unknown,promptId:unknown,params:URLSearchParams,promptApiToken?:string) {
   const id=parse(z.uuid(),promptId);
-  if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1) throw new FoundationError(400,'Use one version page cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1) throw new FoundationError(400,'Use one version page cursor.');
     await promptRow(client,project.id,id);
     const scope={projectId:project.id,list:'versions',promptId:id},cursor=readContentCursor(params.get('cursor'),scope);
     let beforeNumber:number|null=null;

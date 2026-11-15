@@ -102,14 +102,18 @@ export async function readScope<T>(projectId:string,userId:string,work:(client:P
  FROM project p JOIN workspace w ON w.id=p.workspace_id JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 CROSS JOIN clock c WHERE p.id=$1 AND m.role IN('owner','admin','editor','viewer')`,[projectId,userId])).rows[0];if(!scope)throw absent();
  const result=await work(client,scope);if(Buffer.byteLength(JSON.stringify(result),'utf8')>2097152)throw new FoundationError(503,'The replay page is too large.');return result;
  });}
-export async function listSessionReplays(projectId:string,userId:string,params:URLSearchParams){if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1||params.toString().length>2048)throw invalid();const bound={projectId,list:'replays'},cursor=readContentCursor(params.get('cursor'),bound);return readScope(projectId,userId,async(client,scope)=>{
+export async function listSessionReplays(projectId:string,userId:string,params:URLSearchParams){return readScope(projectId,userId,async(client,scope)=>{
+ // Read after the access check, so a caller without access gets the same 404 whatever the query.
+ if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1||params.toString().length>2048)throw invalid();const bound={projectId,list:'replays'},cursor=readContentCursor(params.get('cursor'),bound);
  // The shared wire cursor rounds to milliseconds; keyset against its native retained anchor.
  if(cursor){const anchor=(await client.query('SELECT created_at FROM session_recording WHERE project_id=$1 AND id=$2 AND sampled AND created_at>=$3',[projectId,cursor.id,scope.cutoff])).rows[0];if(!anchor||anchor.created_at.toISOString()!==cursor.at)throw invalid();}
  const {rows}=await client.query<Row>(`SELECT * FROM session_recording WHERE project_id=$1 AND sampled AND created_at>=$2 AND created_at<$3
  AND ($4::uuid IS NULL OR(created_at,id)<(SELECT created_at,id FROM session_recording WHERE project_id=$1 AND id=$4)) ORDER BY created_at DESC,id DESC LIMIT 21`,[projectId,scope.cutoff,scope.at,cursor?.id??null]);
  return{role:scope.role,asOf:scope.at,retainedFrom:scope.cutoff,items:rows.slice(0,20).map(row=>summary(row)),nextCursor:rows.length>20?contentCursor({id:rows[19].id,createdAt:rows[19].created_at},bound):null};
  });}
-export async function getSessionReplay(projectId:string,userId:string,recordingId:string,params:URLSearchParams,chunks=false){if(!z.uuid().safeParse(recordingId).success||[...params.keys()].some(k=>!chunks||k!=='after')||params.getAll('after').length>1)throw invalid();const after=params.get('after');if(after!==null&&!/^(0|[1-9]\d{0,3})$/.test(after)||after!==null&&Number(after)>=replayLimits.chunks)throw invalid();return readScope(projectId,userId,async(client,scope)=>{
+export async function getSessionReplay(projectId:string,userId:string,recordingId:string,params:URLSearchParams,chunks=false){return readScope(projectId,userId,async(client,scope)=>{
+ // Read after the access check, so a caller without access gets the same 404 whatever the query.
+ if(!z.uuid().safeParse(recordingId).success||[...params.keys()].some(k=>!chunks||k!=='after')||params.getAll('after').length>1)throw invalid();const after=params.get('after');if(after!==null&&!/^(0|[1-9]\d{0,3})$/.test(after)||after!==null&&Number(after)>=replayLimits.chunks)throw invalid();
  // Metadata and chunk page use one MVCC statement: concurrent upload cannot mix their generations.
  type Stored={sequence:number;final:boolean;sha256:string;data:string};
  const row=(await client.query<Row&{page:Stored[];result_expired:boolean}>(`SELECT r.*,r.created_at<$4::timestamptz AS result_expired,COALESCE((SELECT json_agg(c ORDER BY c.sequence) FROM(
