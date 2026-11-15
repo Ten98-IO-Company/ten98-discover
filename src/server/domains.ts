@@ -206,9 +206,12 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
       throw new FoundationError(409, 'Create a new DNS proof before verifying.');
     }
     // Rows stored before a suffix was refused are re-checked, so the proof lookup only queries public DNS names.
+    // The canonical domain cannot be removed, so its message points at the website address instead.
     let hostname: string | null = null;
     try { hostname = normalizeDomainHost(row.hostname); } catch { /* Refused below. */ }
-    if (hostname !== row.hostname) throw new FoundationError(400, 'This hostname is not a public DNS name. Remove it and add a public hostname.');
+    if (hostname !== row.hostname) throw new FoundationError(400, row.role === 'canonical'
+      ? 'This website’s address is not a public hostname. Change the website address to a public hostname, then verify again.'
+      : 'This hostname is not a public DNS name. Remove it and add a public hostname.');
     return { hostname, hash: row.challenge_hash };
   });
   // Never hold a workspace transaction open across an external DNS request.

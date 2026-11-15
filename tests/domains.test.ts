@@ -99,22 +99,31 @@ test('the ownership proof only queries a stored hostname that still passes publi
   const databaseKey = Symbol.for('ten98-discover.database');
   const globals = globalThis as typeof globalThis & { [databaseKey]?: unknown };
   const prior = globals[databaseKey];
-  let hostname = '';
+  let hostname = '', role = 'serving';
   const client = { release() {}, async query(sql: string) {
     const rows = (values: unknown[]) => ({ rows: values, rowCount: values.length });
     if (sql.startsWith('SELECT workspace_id FROM project')) return rows([{ workspace_id: randomUUID() }]);
     if (sql.startsWith('SELECT p.id,p.origin')) return rows([{ id: randomUUID(), origin: 'https://example.com' }]);
-    if (sql.startsWith('SELECT * FROM project_domain')) return rows([{ id: randomUUID(), hostname, role: 'serving', challenge_hash: 'a'.repeat(64), challenge_expires_at: new Date(Date.now() + 60_000) }]);
+    if (sql.startsWith('SELECT * FROM project_domain')) return rows([{ id: randomUUID(), hostname, role, challenge_hash: 'a'.repeat(64), challenge_expires_at: new Date(Date.now() + 60_000) }]);
     return rows([]);
   } };
   globals[databaseKey] = { pool: { connect: async () => client } };
   try {
     const names: string[] = [];
     const lookup = async (name: string) => { names.push(name); throw Object.assign(new Error('No record.'), { code: 'ENOTFOUND' }); };
-    for (hostname of ['printer.lan', 'wiki.corp', 'db.private', 'host.intranet', 'host.internal', '10.0.0.1', 'intranet']) {
-      await assert.rejects(verifyDomain(randomUUID(), randomUUID(), randomUUID(), {}, lookup), (error: unknown) => error instanceof FoundationError && error.status === 400, hostname);
+    // A canonical domain cannot be removed, so its refusal points at the website address instead of removal.
+    const removable = 'This hostname is not a public DNS name. Remove it and add a public hostname.';
+    const refusal = { serving: removable, redirect_alias: removable,
+      canonical: 'This website’s address is not a public hostname. Change the website address to a public hostname, then verify again.' };
+    for (const [storedRole, message] of Object.entries(refusal)) {
+      role = storedRole;
+      for (hostname of ['printer.lan', 'wiki.corp', 'db.private', 'host.intranet', 'host.internal', '10.0.0.1', 'intranet']) {
+        await assert.rejects(verifyDomain(randomUUID(), randomUUID(), randomUUID(), {}, lookup),
+          (error: unknown) => error instanceof FoundationError && error.status === 400 && error.message === message, `${storedRole} ${hostname}`);
+      }
     }
     assert.deepEqual(names, []);
+    role = 'serving';
     hostname = 'www.example.com';
     await assert.rejects(verifyDomain(randomUUID(), randomUUID(), randomUUID(), {}, lookup), (error: unknown) => error instanceof FoundationError && error.status === 422);
     assert.deepEqual(names, ['_ten98-challenge.www.example.com']);
