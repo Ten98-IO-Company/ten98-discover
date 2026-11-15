@@ -45,8 +45,7 @@
     "styling": 55
   },
   "src/components/AnnotationsPanel.tsx": {
-    "element": 64,
-    "styling": 50
+    "element": 1
   },
   "src/components/AttributionPanel.tsx": {
     "stylesheet": 1,
