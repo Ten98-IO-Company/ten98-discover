@@ -26,8 +26,9 @@ type Caller = {cookie: string} | {token: string};
 type Case = {name: string; method: 'GET' | 'POST'; path: string; valid: URLSearchParams | Record<string, unknown>; invalid?: URLSearchParams | unknown[] | Buffer; memberStatus?: number};
 
 const json = (value: unknown) => Buffer.from(JSON.stringify(value));
-// Larger than every workspace and website body limit except a report save (6,400,000 bytes), which has its own case below.
-const oversize = json({padding: 'x'.repeat(200 * 1024)});
+// Larger than every workspace and website body limit (prompts and context take 262,144 bytes) except a report save
+// (6,400,000 bytes), which has its own case below.
+const oversize = json({padding: 'x'.repeat(300 * 1024)});
 
 /**
  * A signed-in non-member of the target workspace gets the same 404 whatever the request carries, members keep their field errors,
@@ -146,9 +147,13 @@ export async function runAccessOrderChecks(options: Options) {
       const refusal = JSON.stringify({error: workspace ? 'Workspace not found or unavailable.' : 'Project not found or unavailable.'});
       for (const [name, shape] of shapes) {
         if (sweepExceptions.has(`${shape.method} ${route}`)) continue;
-        const {status, body} = await send(path, shape, outsider);
         swept++;
-        if (status !== 404 || shape.method !== 'HEAD' && body !== refusal) failures.push(`${name} ${route}: ${status} ${body.slice(0, 160)}`);
+        try {
+          const {status, body} = await send(path, shape, outsider);
+          if (status !== 404 || shape.method !== 'HEAD' && body !== refusal) failures.push(`${name} ${route}: ${status} ${body.slice(0, 160)}`);
+        } catch (error) {
+          failures.push(`${name} ${route}: no answer, ${error instanceof Error ? `${error.message} ${String((error as {cause?: unknown}).cause ?? '')}` : String(error)}`);
+        }
       }
     }
     if (failures.length) console.log(`FAIL ${failures.length} of ${swept} requests from a non-member did not get the 404:\n${failures.slice(0, 80).join('\n')}`);
@@ -158,8 +163,11 @@ export async function runAccessOrderChecks(options: Options) {
 
   /**
    * Writes from an editor, a viewer, a read-only API key of the workspace and a key of another workspace, each with a valid body
-   * and a JSON array. Expected statuses are [valid, invalid], recorded from the server before the dispatcher checked membership
-   * first; the change must not move any of them. Runs in its own workspace so a write an editor may make touches no other fixture.
+   * and a JSON array. Expected statuses are [valid, invalid]. The first eight rows were recorded from the server before the
+   * dispatcher checked membership first (CI run 43746662282) and must not move. The Google row is the one intended change: an
+   * editor's or viewer's JSON array got 400 there before and now gets the owner refusal. The saved keyword list is a read that
+   * a read-only key may make, so one admitted key request passes through the dispatcher check. Runs in its own workspace so a
+   * write an editor may make touches no other fixture.
    */
   async function checkRoleSample() {
     const workspace = randomUUID();
@@ -177,7 +185,7 @@ export async function runAccessOrderChecks(options: Options) {
     const current = JSON.parse((await send(`/api/projects/${project}/analytics-settings`, {method: 'GET'}, owner)).body);
     type Expected = Record<keyof typeof callers, [number, number]>;
     // The shared team controller decides the member removal role after Discover reads the body (sharedControllerRoutes).
-    const rows: {name: string; path: string; valid: () => unknown; expected: Expected}[] = [
+    const rows: {name: string; path: string; valid: () => unknown; expected: Expected; read?: true}[] = [
       {name: 'board delete', path: `/api/workspaces/${workspace}/boards/${randomUUID()}/delete`, valid: () => ({requestId: randomUUID(), revision: 1}),
         expected: {editor: [404, 400], viewer: [404, 404], readKey: [403, 403], otherKey: [403, 403]}},
       {name: 'report delete', path: `/api/projects/${project}/reports/${randomUUID()}/delete`, valid: () => ({revision: 1}),
@@ -189,11 +197,15 @@ export async function runAccessOrderChecks(options: Options) {
       {name: 'website delete', path: `/api/workspaces/${workspace}/projects/${project}/delete`, valid: () => projectDeleteInput.parse({requestId: randomUUID(), revision: 1, confirmation: 'DELETE'}),
         expected: {editor: [404, 404], viewer: [404, 404], readKey: [403, 403], otherKey: [403, 403]}},
       {name: 'member remove', path: `/api/workspaces/${workspace}/members/${randomUUID()}/remove`, valid: () => ({}),
-        expected: {editor: [403, 400], viewer: [403, 400], readKey: [403, 403], otherKey: [403, 403]}},
+        expected: {editor: [404, 400], viewer: [404, 400], readKey: [403, 403], otherKey: [403, 403]}},
       {name: 'prompt create', path: `/api/projects/${project}/prompts/bulk`, valid: () => promptBatch.parse({requestId: randomUUID(), prompts: [{text: 'Role sample prompt'}]}),
         expected: {editor: [201, 400], viewer: [404, 400], readKey: [403, 403], otherKey: [404, 404]}},
       {name: 'audit cancel', path: `/api/projects/${project}/audits/${randomUUID()}/cancel`, valid: () => ({}),
-        expected: {editor: [404, 400], viewer: [404, 400], readKey: [403, 403], otherKey: [403, 403]}},
+        expected: {editor: [403, 400], viewer: [403, 400], readKey: [403, 403], otherKey: [403, 403]}},
+      {name: 'Google connect', path: `/api/projects/${project}/google/connect`, valid: () => ({provider: 'gsc', name: 'Role sample'}),
+        expected: {editor: [404, 404], viewer: [404, 404], readKey: [403, 403], otherKey: [403, 403]}},
+      {name: 'saved keyword list', path: `/api/projects/${project}/saved-keywords/list`, valid: () => ({}), read: true,
+        expected: {editor: [200, 400], viewer: [200, 400], readKey: [200, 400], otherKey: [404, 404]}},
     ];
     const mismatches: string[] = [], observed: string[] = [];
     for (const row of rows) {
@@ -208,7 +220,7 @@ export async function runAccessOrderChecks(options: Options) {
       observed.push(`${row.name}: ${JSON.stringify(seen)}`);
       // Only an editor may write here at all, and only a prompt; nothing in the matrix grants anyone else a write.
       for (const [name, [valid, invalid]] of Object.entries(row.expected)) {
-        assert.ok(invalid >= 400 && (valid >= 400 || name === 'editor' && row.name === 'prompt create'), `${row.name}, ${name}: the recorded matrix grants no write`);
+        assert.ok(invalid >= 400 && (valid >= 400 || row.read || name === 'editor' && row.name === 'prompt create'), `${row.name}, ${name}: the recorded matrix grants no write`);
       }
     }
     assert.equal((await send(`/api/workspaces/${workspace}/projects`, {method: 'GET'}, owner)).body.includes(project), true, 'The role sample website is still there.');
