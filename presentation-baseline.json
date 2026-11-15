@@ -133,10 +133,6 @@
     "element": 5,
     "styling": 1
   },
-  "src/components/PromptDiscoveryPanel.tsx": {
-    "element": 55,
-    "styling": 41
-  },
   "src/components/PromptExecutionsPanel.tsx": {
     "element": 143,
     "styling": 68
