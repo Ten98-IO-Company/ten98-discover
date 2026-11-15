@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import { Button, Field, Fieldset, Inline, Input, Select, Text } from '@ten98/ui';
 
 type RankDepth = 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100;
 type RankPageCap = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
@@ -48,7 +49,6 @@ export type RankTrackingFieldsProps = {
 
 const DEPTHS: readonly RankDepth[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const PAGE_CAPS: readonly RankPageCap[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const SELECT_STYLE: React.CSSProperties = { width: '100%', minWidth: 0 };
 
 export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.Element {
   const {
@@ -70,22 +70,18 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
   const localLocked = !hasCountry || localLocations.loading;
   const localFieldError = hasCountry ? errors.localLocationCode : undefined;
 
+  // Field supplies `<id>-error` and aria-invalid from its `error` prop, so only the hint is linked here.
   const id = (field: string): string => `${prefix}${field}`;
   const hintId = (field: string): string => `${prefix}${field}-hint`;
-  const errorId = (field: string): string => `${prefix}${field}-error`;
-  const describedBy = (...ids: Array<string | false | undefined>): string | undefined => {
-    const joined = ids.filter(Boolean).join(' ');
-    return joined === '' ? undefined : joined;
-  };
 
   let localStatus: React.ReactNode = null;
   if (localLocations.loading) {
     localStatus = 'Loading locations…';
   } else if (localLocations.error) {
     localStatus = (
-      <span role="alert" className="alert">
+      <Text as="span" tone="danger" role="alert">
         {localLocations.error}
-      </span>
+      </Text>
     );
   } else if (localLocations.options.length === 0) {
     localStatus =
@@ -103,292 +99,193 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
   };
 
   return (
-    <fieldset disabled={disabled} className="stack" style={{ minWidth: 0 }}>
-      <legend>Rank tracker targeting</legend>
-      <div className="saved-keyword-filter-grid">
-        <div className="field">
-          <label htmlFor={id('domain')}>Target domain</label>
-          <input
-            id={id('domain')}
-            type="text"
-            value={value.domain}
-            onChange={(event) => onChange({ ...value, domain: event.currentTarget.value })}
-            maxLength={253}
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="example.com"
-            aria-invalid={errors.domain ? true : undefined}
-            aria-describedby={describedBy(hintId('domain'), errors.domain && errorId('domain'))}
-          />
-          <p className="hint" id={hintId('domain')}>
-            Tracks organic results for this domain and its subdomains.
-          </p>
-          {errors.domain ? (
-            <p className="alert" id={errorId('domain')}>
-              {errors.domain}
-            </p>
-          ) : null}
-        </div>
+    <Fieldset legend="Rank tracker targeting" disabled={disabled} layout="grid">
+      <Field label="Target domain" htmlFor={id('domain')} error={errors.domain}>
+        <Input
+          id={id('domain')}
+          type="text"
+          value={value.domain}
+          onChange={(event) => onChange({ ...value, domain: event.currentTarget.value })}
+          maxLength={253}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="example.com"
+          aria-describedby={hintId('domain')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('domain')}>
+          Tracks organic results for this domain and its subdomains.
+        </Text>
+      </Field>
 
-        <div className="field">
-          <label htmlFor={id('countryLocationCode')}>Country or territory</label>
-          <select
-            id={id('countryLocationCode')}
-            style={SELECT_STYLE}
-            value={value.countryLocationCode}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                countryLocationCode: event.currentTarget.value,
-                localLocationCode: '',
-              })
-            }
-            aria-invalid={errors.countryLocationCode ? true : undefined}
-            aria-describedby={describedBy(
-              errors.countryLocationCode && errorId('countryLocationCode'),
+      <Field label="Country or territory" htmlFor={id('countryLocationCode')} error={errors.countryLocationCode}>
+        <Select
+          id={id('countryLocationCode')}
+          value={value.countryLocationCode}
+          options={[
+            { value: '', label: 'Choose a country or territory' },
+            ...countries.map((country) => ({ value: country.code, label: country.label })),
+          ]}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              countryLocationCode: event.currentTarget.value,
+              localLocationCode: '',
+            })
+          }
+        />
+      </Field>
+
+      <Field label="Search targeting" htmlFor={id('targeting')} error={errors.targeting}>
+        <Select
+          id={id('targeting')}
+          value={value.targeting}
+          options={[
+            { value: 'national', label: 'Whole country or territory' },
+            { value: 'local', label: 'City or region' },
+          ]}
+          onChange={(event) => {
+            const targeting = event.currentTarget.value as RankTrackingFieldsValue['targeting'];
+            onChange({ ...value, targeting, localLocationCode: '' });
+          }}
+          aria-describedby={hintId('targeting')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('targeting')}>
+          {isLocal
+            ? 'Choose a provider-supported city or region in that country or territory.'
+            : 'Search from the selected country or territory.'}
+        </Text>
+      </Field>
+
+      {isLocal ? (
+        <>
+          <Inline align="end">
+            <Field label="Find a city or region" htmlFor={id('localLocationQuery')}>
+              <Input
+                id={id('localLocationQuery')}
+                type="text"
+                value={localLocations.query}
+                onChange={(event) => onLocalQueryChange(event.currentTarget.value)}
+                onKeyDown={onLocalQueryKeyDown}
+                maxLength={100}
+                disabled={!hasCountry}
+                aria-describedby={hintId('localLocationCode')}
+              />
+            </Field>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={disabled || localLocked}
+              onClick={onSearchLocalLocations}
+            >
+              Search locations
+            </Button>
+          </Inline>
+
+          <Field label="City or region" htmlFor={id('localLocationCode')} error={localFieldError}>
+            <Select
+              id={id('localLocationCode')}
+              value={value.localLocationCode}
+              options={[
+                { value: '', label: 'Choose a city or region' },
+                ...localLocations.options.map((option) => ({ value: option.code, label: option.label })),
+              ]}
+              onChange={(event) => onChange({ ...value, localLocationCode: event.currentTarget.value })}
+              disabled={localLocked}
+              aria-describedby={hintId('localLocationCode')}
+            />
+            {hasCountry ? (
+              <Text as="div" size="sm" tone="muted" role="status" aria-live="polite" id={hintId('localLocationCode')}>
+                {localStatus}
+              </Text>
+            ) : (
+              <Text as="p" size="sm" tone="muted" id={hintId('localLocationCode')}>
+                Choose a country or territory first.
+              </Text>
             )}
-          >
-            <option value="">Choose a country or territory</option>
-            {countries.map((country) => (
-              <option key={country.code} value={country.code}>
-                {country.label}
-              </option>
-            ))}
-          </select>
-          {errors.countryLocationCode ? (
-            <p className="alert" id={errorId('countryLocationCode')}>
-              {errors.countryLocationCode}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="field">
-          <label htmlFor={id('targeting')}>Search targeting</label>
-          <select
-            id={id('targeting')}
-            style={SELECT_STYLE}
-            value={value.targeting}
-            onChange={(event) => {
-              const targeting = event.currentTarget.value as RankTrackingFieldsValue['targeting'];
-              onChange({ ...value, targeting, localLocationCode: '' });
-            }}
-            aria-invalid={errors.targeting ? true : undefined}
-            aria-describedby={describedBy(hintId('targeting'), errors.targeting && errorId('targeting'))}
-          >
-            <option value="national">Whole country or territory</option>
-            <option value="local">City or region</option>
-          </select>
-          <p className="hint" id={hintId('targeting')}>
-            {isLocal
-              ? 'Choose a provider-supported city or region in that country or territory.'
-              : 'Search from the selected country or territory.'}
-          </p>
-          {errors.targeting ? (
-            <p className="alert" id={errorId('targeting')}>
-              {errors.targeting}
-            </p>
-          ) : null}
-        </div>
-
-        {isLocal ? (
-          <>
-            <div className="field">
-              <label htmlFor={id('localLocationQuery')}>Find a city or region</label>
-              <div className="row">
-                <input
-                  id={id('localLocationQuery')}
-                  type="text"
-                  style={{ minWidth: 0 }}
-                  value={localLocations.query}
-                  onChange={(event) => onLocalQueryChange(event.currentTarget.value)}
-                  onKeyDown={onLocalQueryKeyDown}
-                  maxLength={100}
-                  disabled={!hasCountry}
-                  aria-describedby={hintId('localLocationCode')}
-                />
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={disabled || localLocked}
-                  onClick={onSearchLocalLocations}
-                >
-                  Search locations
-                </button>
-              </div>
-            </div>
-
-            <div className="field">
-              <label htmlFor={id('localLocationCode')}>City or region</label>
-              <select
-                id={id('localLocationCode')}
-                style={SELECT_STYLE}
-                value={value.localLocationCode}
-                onChange={(event) =>
-                  onChange({ ...value, localLocationCode: event.currentTarget.value })
-                }
-                disabled={localLocked}
-                aria-invalid={localFieldError ? true : undefined}
-                aria-describedby={describedBy(
-                  hintId('localLocationCode'),
-                  localFieldError && errorId('localLocationCode'),
-                )}
+            {localLocations.hasMore ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={disabled || localLocked}
+                onClick={onLoadMoreLocalLocations}
               >
-                <option value="">Choose a city or region</option>
-                {localLocations.options.map((option) => (
-                  <option key={option.code} value={option.code}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              {localFieldError ? (
-                <p className="alert" id={errorId('localLocationCode')}>
-                  {localFieldError}
-                </p>
-              ) : null}
-              {hasCountry ? (
-                <div role="status" aria-live="polite" className="hint" id={hintId('localLocationCode')}>
-                  {localStatus}
-                </div>
-              ) : (
-                <p className="hint" id={hintId('localLocationCode')}>Choose a country or territory first.</p>
-              )}
-              {localLocations.hasMore ? (
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={disabled || localLocked}
-                  onClick={onLoadMoreLocalLocations}
-                >
-                  Load more locations
-                </button>
-              ) : null}
-            </div>
-          </>
-        ) : null}
+                Load more locations
+              </Button>
+            ) : null}
+          </Field>
+        </>
+      ) : null}
 
-        <div className="field">
-          <label htmlFor={id('languageCode')}>Language</label>
-          <select
-            id={id('languageCode')}
-            style={SELECT_STYLE}
-            value={value.languageCode}
-            onChange={(event) => onChange({ ...value, languageCode: event.currentTarget.value })}
-            aria-invalid={errors.languageCode ? true : undefined}
-            aria-describedby={describedBy(
-              hintId('languageCode'),
-              errors.languageCode && errorId('languageCode'),
-            )}
-          >
-            <option value="">Choose a language</option>
-            {languages.map((language) => (
-              <option key={language.code} value={language.code}>
-                {language.label}
-              </option>
-            ))}
-          </select>
-          <p className="hint" id={hintId('languageCode')}>
-            Choose the language used for this search.
-          </p>
-          {errors.languageCode ? (
-            <p className="alert" id={errorId('languageCode')}>
-              {errors.languageCode}
-            </p>
-          ) : null}
-        </div>
+      <Field label="Language" htmlFor={id('languageCode')} error={errors.languageCode}>
+        <Select
+          id={id('languageCode')}
+          value={value.languageCode}
+          options={[
+            { value: '', label: 'Choose a language' },
+            ...languages.map((language) => ({ value: language.code, label: language.label })),
+          ]}
+          onChange={(event) => onChange({ ...value, languageCode: event.currentTarget.value })}
+          aria-describedby={hintId('languageCode')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('languageCode')}>
+          Choose the language used for this search.
+        </Text>
+      </Field>
 
-        <div className="field">
-          <label htmlFor={id('devices')}>Devices</label>
-          <select
-            id={id('devices')}
-            style={SELECT_STYLE}
-            value={value.devices}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                devices: event.currentTarget.value as RankTrackingFieldsValue['devices'],
-              })
-            }
-            aria-invalid={errors.devices ? true : undefined}
-            aria-describedby={describedBy(hintId('devices'), errors.devices && errorId('devices'))}
-          >
-            <option value="desktop">Desktop</option>
-            <option value="mobile">Mobile</option>
-            <option value="both">Desktop and mobile</option>
-          </select>
-          <p className="hint" id={hintId('devices')}>
-            Desktop and mobile are separate checks.
-          </p>
-          {errors.devices ? (
-            <p className="alert" id={errorId('devices')}>
-              {errors.devices}
-            </p>
-          ) : null}
-        </div>
+      <Field label="Devices" htmlFor={id('devices')} error={errors.devices}>
+        <Select
+          id={id('devices')}
+          value={value.devices}
+          options={[
+            { value: 'desktop', label: 'Desktop' },
+            { value: 'mobile', label: 'Mobile' },
+            { value: 'both', label: 'Desktop and mobile' },
+          ]}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              devices: event.currentTarget.value as RankTrackingFieldsValue['devices'],
+            })
+          }
+          aria-describedby={hintId('devices')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('devices')}>
+          Desktop and mobile are separate checks.
+        </Text>
+      </Field>
 
-        <div className="field">
-          <label htmlFor={id('depth')}>Requested results</label>
-          <select
-            id={id('depth')}
-            style={SELECT_STYLE}
-            value={String(value.depth)}
-            onChange={(event) =>
-              onChange({ ...value, depth: Number(event.currentTarget.value) as RankDepth })
-            }
-            aria-invalid={errors.depth ? true : undefined}
-            aria-describedby={describedBy(hintId('depth'), errors.depth && errorId('depth'))}
-          >
-            {DEPTHS.map((depth) => (
-              <option key={depth} value={depth}>
-                {`${depth} results`}
-              </option>
-            ))}
-          </select>
-          <p className="hint" id={hintId('depth')}>
-            Ask for up to this many search results; the page limit may stop retrieval earlier.
-          </p>
-          {errors.depth ? (
-            <p className="alert" id={errorId('depth')}>
-              {errors.depth}
-            </p>
-          ) : null}
-        </div>
+      <Field label="Requested results" htmlFor={id('depth')} error={errors.depth}>
+        <Select
+          id={id('depth')}
+          value={String(value.depth)}
+          options={DEPTHS.map((depth) => ({ value: String(depth), label: `${depth} results` }))}
+          onChange={(event) => onChange({ ...value, depth: Number(event.currentTarget.value) as RankDepth })}
+          aria-describedby={hintId('depth')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('depth')}>
+          Ask for up to this many search results; the page limit may stop retrieval earlier.
+        </Text>
+      </Field>
 
-        <div className="field">
-          <label htmlFor={id('maxCrawlPages')}>Maximum pages</label>
-          <select
-            id={id('maxCrawlPages')}
-            style={SELECT_STYLE}
-            value={String(value.maxCrawlPages)}
-            onChange={(event) =>
-              onChange({ ...value, maxCrawlPages: Number(event.currentTarget.value) as RankPageCap })
-            }
-            aria-invalid={errors.maxCrawlPages ? true : undefined}
-            aria-describedby={describedBy(
-              hintId('maxCrawlPages'),
-              errors.maxCrawlPages && errorId('maxCrawlPages'),
-            )}
-          >
-            {PAGE_CAPS.map((pages) => (
-              <option key={pages} value={pages}>
-                {pages === 1 ? '1 page' : `${pages} pages`}
-              </option>
-            ))}
-          </select>
-          <p className="hint" id={hintId('maxCrawlPages')}>
-            Limits how many search-result pages the provider may fetch per keyword and device.
-          </p>
-          {errors.maxCrawlPages ? (
-            <p className="alert" id={errorId('maxCrawlPages')}>
-              {errors.maxCrawlPages}
-            </p>
-          ) : null}
-        </div>
+      <Field label="Maximum pages" htmlFor={id('maxCrawlPages')} error={errors.maxCrawlPages}>
+        <Select
+          id={id('maxCrawlPages')}
+          value={String(value.maxCrawlPages)}
+          options={PAGE_CAPS.map((pages) => ({ value: String(pages), label: pages === 1 ? '1 page' : `${pages} pages` }))}
+          onChange={(event) =>
+            onChange({ ...value, maxCrawlPages: Number(event.currentTarget.value) as RankPageCap })
+          }
+          aria-describedby={hintId('maxCrawlPages')}
+        />
+        <Text as="p" size="sm" tone="muted" id={hintId('maxCrawlPages')}>
+          Limits how many search-result pages the provider may fetch per keyword and device.
+        </Text>
+      </Field>
 
-        <p className="hint" id={id('closing-hint')}>
-          Save these settings, then run a rank check when ready.
-        </p>
-      </div>
-    </fieldset>
+      <Text as="p" size="sm" tone="muted" id={id('closing-hint')}>
+        Save these settings, then run a rank check when ready.
+      </Text>
+    </Fieldset>
   );
 }

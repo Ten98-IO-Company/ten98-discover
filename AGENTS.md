@@ -1,4 +1,4 @@
-# ten98-monitor contributor rules
+# ten98-discover contributor rules
 
 Shared architecture and dependency declarations are maintained in [ten98-code-system](https://github.com/Ten98-IO-Company/ten98-code-system), installed as `node_modules/@ten98/runtime/README.md` and `architecture.json`. Reuse its server primitives and the existing @ten98/ui presentation package. `pnpm check:architecture` runs in the normal test and build gates. Existing authorization, identity and provider-request contracts below remain required.
 

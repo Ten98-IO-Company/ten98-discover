@@ -88,7 +88,7 @@ test('createSetup writes a private env with well-formed secrets', () => {
   assert.ok(env.DATABASE_URL === `postgresql://ten98:${env.POSTGRES_PASSWORD}@postgres:5432/ten98`);
   assert.ok(env.DEPLOYMENT_MODE === GOOD.mode && env.APP_URL === GOOD.url);
   assert.ok(env.APP_PORT === GOOD.port && env.COMPOSE_PROJECT_NAME === GOOD.project);
-  assert.ok(env.TEN98_IMAGE === `ten98-monitor:${GOOD.project}`);
+  assert.ok(env.TEN98_IMAGE === `ten98-discover:${GOOD.project}`);
   if (process.platform !== 'win32') {
     assert.ok((lstatSync(join(d, '.env')).mode & 0o777) === 0o600);
   }
@@ -117,6 +117,20 @@ test('an older env file that still defines BOOTSTRAP_TOKEN keeps working', () =>
   writeFileSync(join(d, '.env'), readFileSync(join(d, '.env'), 'utf8') + `BOOTSTRAP_TOKEN=${'c'.repeat(64)}\n`);
   const v = readSetup(d) as Record<string, unknown>;
   assert.ok(v.mode === GOOD.mode && v.url === GOOD.url && v.port === GOOD.port && v.project === GOOD.project);
+});
+
+test('an env file written before the ten98-discover rename keeps working; other images are refused', () => {
+  const d = tmp();
+  createSetup(d, GOOD);
+  const current = readFileSync(join(d, '.env'), 'utf8');
+  assert.ok(current.includes(`TEN98_IMAGE=ten98-discover:${GOOD.project}\n`));
+  writeFileSync(join(d, '.env'), current.replace(`TEN98_IMAGE=ten98-discover:${GOOD.project}`, `TEN98_IMAGE=ten98-monitor:${GOOD.project}`));
+  const v = readSetup(d) as Record<string, unknown>;
+  assert.ok(v.mode === GOOD.mode && v.url === GOOD.url && v.port === GOOD.port && v.project === GOOD.project);
+  for (const image of [`ten98-monitor:other`, `ten98-discover:other`, `ten98-monitor:${GOOD.project}-x`, `example.com/ten98-monitor:${GOOD.project}`]) {
+    writeFileSync(join(d, '.env'), current.replace(`TEN98_IMAGE=ten98-discover:${GOOD.project}`, `TEN98_IMAGE=${image}`));
+    assert.throws(() => readSetup(d), /missing or invalid/, image);
+  }
 });
 
 test('symlink env file is refused', (t: TestContext) => {

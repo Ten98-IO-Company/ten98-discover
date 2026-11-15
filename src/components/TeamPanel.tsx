@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime/browser';
-import { Alert, Banner, Button, Field, Inline, Input, Select, useConfirmDialog } from '@ten98/ui';
+import { Alert, Banner, Button, Card, DataTable, EmptyState, Field, Heading, Inline, Input, Select, Stack, Text, Textarea, useConfirmDialog, type DataColumn } from '@ten98/ui';
 import { assignableRoles, defaultInviteRole, invitationExpiry, inviteResultText, inviteRoleOptions, roleLabel } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
@@ -256,8 +256,10 @@ function TeamPanelContent(props: TeamPanelProps) {
     runInviteAction(action);
   }
 
-  function changeRole(m: Member, role: Role) {
+  async function changeRole(m: Member, role: Role) {
     if (role === m.role) return;
+    // A role change alters who may do what, so it is confirmed like removal; the select stays on the saved role until then.
+    if (!await confirm({ title: `Change ${m.name}'s role to ${roleLabel(role)}?`, description: `${m.name} (${m.email}) is ${roleLabel(m.role)} now. The new role applies immediately.`, confirmLabel: `Make ${roleLabel(role)}` })) return;
     void runMutation(`Could not change the role of ${m.name}`, async signal => {
       await api<unknown>(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(m.userId)}/role`,
@@ -314,231 +316,197 @@ function TeamPanelContent(props: TeamPanelProps) {
   if (!data) {
     if (loading) {
       return (
-        <p role='status' className='dim'>
+        <Text as='p' role='status' tone='muted'>
           Loading team…
-        </p>
+        </Text>
       );
     }
     return (
-      <div className='alert' role='alert'>
-        <p>{error}</p>
-        <button type='button' className='btn' onClick={() => setReload(k => k + 1)}>
-          Try again
-        </button>
-      </div>
+      <Alert tone='danger' role='alert' actions={<Button type='button' variant='secondary' onClick={() => setReload(k => k + 1)}>Try again</Button>}>
+        {error}
+      </Alert>
     );
   }
 
   const solo = data.members.length === 1 && data.members[0].userId === userId;
+  const memberColumns: DataColumn<Member>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      render: m => (
+        <>
+          {m.name}
+          {m.userId === userId && <Text as='span' tone='muted'> (you)</Text>}
+        </>
+      ),
+    },
+    { key: 'email', header: 'Email', wrap: true, render: m => m.email },
+    {
+      key: 'role',
+      header: 'Role',
+      render: m => canManage && canManageMember(m) ? (
+        <Select
+          aria-label={`Role for ${m.name}`}
+          value={m.role}
+          disabled={busy}
+          width='auto'
+          onChange={e => void changeRole(m, e.target.value as Role)}
+          options={roleOptions.map(r => ({ value: r, label: roleLabel(r) }))}
+        />
+      ) : roleLabel(m.role),
+    },
+    ...(canManage ? [{
+      key: 'actions',
+      header: 'Actions',
+      render: (m: Member) => canManageMember(m) ? (
+        <Button type='button' variant='secondary' disabled={busy} onClick={() => void removeMember(m)}>
+          Remove
+        </Button>
+      ) : null,
+    }] : []),
+  ];
+  const invitationColumns: DataColumn<Invitation>[] = [
+    { key: 'email', header: 'Email', wrap: true, render: inv => inv.email },
+    { key: 'role', header: 'Role', render: inv => roleLabel(inv.role) },
+    {
+      key: 'expires',
+      header: 'Expires',
+      render: inv => <Text as='time' dateTime={inv.expiresAt} title={formatDate(inv.expiresAt)}>{invitationExpiry(inv.expiresAt)}</Text>,
+    },
+    ...(canManage ? [{
+      key: 'actions',
+      header: 'Actions',
+      render: (inv: Invitation) => canManageInvite(inv) ? (
+        <Inline gap={2} wrap>
+          {data.emailConfigured === true && (
+            <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend email to ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'resend', invitation: inv })}>
+              Resend email
+            </Button>
+          )}
+          <Button type='button' variant='secondary' disabled={busy} aria-label={`New link for ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'new-link', invitation: inv })}>
+            New link
+          </Button>
+          <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>
+            Revoke
+          </Button>
+        </Inline>
+      ) : null,
+    }] : []),
+  ];
 
   return (
-    <div aria-busy={busy || loading}>
-      {loading && <p className='dim' role='status'>Refreshing team…</p>}
-      <div className='proj-head'>
-        <h2>{data.workspace.name}</h2>
-        <p className='dim'>Your role: {roleLabel(data.role)}</p>
-        <button type='button' className='btn' disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh team</button>
-      </div>
+    <Stack gap={4} aria-busy={busy || loading}>
+      {loading && <Text as='p' tone='muted' role='status'>Refreshing team…</Text>}
+      <Inline gap={3} align='center' justify='between'>
+        <Stack gap={1}>
+          <Heading level={2}>{data.workspace.name}</Heading>
+          <Text as='p' tone='muted'>Your role: {roleLabel(data.role)}</Text>
+        </Stack>
+        <Button type='button' variant='secondary' disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh team</Button>
+      </Inline>
 
       {error && (
-        <div className='alert' role='alert'>
+        <Alert tone='danger' role='alert'>
           {error}
-        </div>
+        </Alert>
       )}
 
-      <section className='card' aria-labelledby='members-heading'>
-        <h2 id='members-heading'>Members</h2>
-        {canManage && inviteRoles.length > 0 && (
-          <form onSubmit={submitInvite} aria-label='Invite a member'>
-            <Inline gap={2} align='end' wrap>
-              <Field label='Email address' htmlFor='invite-email' style={{ flex: '1 1 14rem', minInlineSize: 0 }}>
-                <Input
-                  id='invite-email'
-                  type='email'
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  placeholder='name@example.com'
-                  maxLength={254}
-                  autoComplete='off'
-                  required
-                  disabled={busy}
+      <Card as='section' title='Members' headingLevel={2}>
+        <Stack gap={3}>
+          {canManage && inviteRoles.length > 0 && (
+            <Stack as='form' gap={2} onSubmit={submitInvite} aria-label='Invite a member'>
+              <Inline gap={2} align='end' wrap>
+                <Field label='Email address' htmlFor='invite-email'>
+                  <Input
+                    id='invite-email'
+                    type='email'
+                    value={inviteEmail}
+                    onChange={e => setInviteEmail(e.target.value)}
+                    placeholder='name@example.com'
+                    maxLength={254}
+                    autoComplete='off'
+                    required
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label='Role' htmlFor='invite-role'>
+                  <Select
+                    id='invite-role'
+                    value={inviteRole}
+                    onChange={e => setInviteRole(e.target.value as Role)}
+                    disabled={busy}
+                    options={inviteRoles.map(option => ({ value: option.value, label: `${option.label} — ${option.description}` }))}
+                  />
+                </Field>
+                <Button type='submit' disabled={busy || !inviteEmail.trim()}>Invite</Button>
+              </Inline>
+              <Text as='p' size='sm' tone='muted'>Invitation links expire after 7 days.</Text>
+            </Stack>
+          )}
+          {inviteLink && (
+            <Alert tone='info' role='status'>
+              <Stack gap={2}>
+                <Text as='p'>{inviteResultText(inviteLink)}{inviteLink.kind === 'create' ? '' : ' It expires after 7 days.'}</Text>
+                <Inline gap={2} wrap>
+                  <Button type='button' variant='secondary' onClick={() => void copyInvite()}>
+                    {copied ? 'Copied' : 'Copy link'}
+                  </Button>
+                  <Button type='button' variant='ghost' onClick={() => setInviteLink(null)}>
+                    Dismiss
+                  </Button>
+                </Inline>
+                <Textarea
+                  readOnly
+                  rows={3}
+                  value={inviteLink.url}
+                  aria-label='Invitation link'
+                  onFocus={e => e.currentTarget.select()}
                 />
-              </Field>
-              <Field label='Role' htmlFor='invite-role' style={{ flex: '1 1 14rem', minInlineSize: 0 }}>
-                <Select
-                  id='invite-role'
-                  value={inviteRole}
-                  onChange={e => setInviteRole(e.target.value as Role)}
-                  disabled={busy}
-                  options={inviteRoles.map(option => ({ value: option.value, label: `${option.label} — ${option.description}` }))}
-                />
-              </Field>
-              <Button type='submit' disabled={busy || !inviteEmail.trim()}>Invite</Button>
-            </Inline>
-            <p className='hint'>Invitation links expire after 7 days.</p>
-          </form>
-        )}
-        {inviteLink && (
-          <div className='banner' role='status'>
-            <p>{inviteResultText(inviteLink)}{inviteLink.kind === 'create' ? '' : ' It expires after 7 days.'}</p>
-            <div className='row'>
-              <button type='button' className='btn' onClick={() => void copyInvite()}>
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-              <button type='button' className='btn ghost' onClick={() => setInviteLink(null)}>
-                Dismiss
-              </button>
-            </div>
-            <textarea
-              className='snippet'
-              style={{ width: '100%', resize: 'vertical' }}
-              readOnly
-              rows={3}
-              value={inviteLink.url}
-              aria-label='Invitation link'
-              onFocus={e => e.currentTarget.select()}
-            />
-            <p className='hint'>
-              If copying does not work, select the link and copy it manually. For security it is only shown here,
-              once.
-            </p>
-          </div>
-        )}
-        {data.members.length === 0 ? (
-          <div className='empty'>
-            <p>
-              <strong>No members found.</strong>
-            </p>
-            <p>People who join this workspace will appear here.</p>
-          </div>
-        ) : (
-          <div className='table-wrap'>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  {canManage && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {data.members.map(m => (
-                  <tr key={m.userId}>
-                    <td>
-                      {m.name}
-                      {m.userId === userId && <span className='dim'> (you)</span>}
-                    </td>
-                    <td>{m.email}</td>
-                    <td>
-                      {canManage && canManageMember(m) ? (
-                        <select
-                          aria-label={`Role for ${m.name}`}
-                          value={m.role}
-                          disabled={busy}
-                          onChange={e => changeRole(m, e.target.value as Role)}
-                        >
-                          {roleOptions.map(r => (
-                            <option key={r} value={r}>
-                              {roleLabel(r)}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        roleLabel(m.role)
-                      )}
-                    </td>
-                    {canManage && (
-                      <td>
-                        {canManageMember(m) && (
-                          <button type='button' className='btn' disabled={busy} onClick={() => void removeMember(m)}>
-                            Remove
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {solo && <p className='dim'>You’re the only member. Invite people to share dashboards and reports.</p>}
-      </section>
+                <Text as='p' size='sm' tone='muted'>
+                  If copying does not work, select the link and copy it manually. For security it is only shown here,
+                  once.
+                </Text>
+              </Stack>
+            </Alert>
+          )}
+          {data.members.length === 0 ? (
+            <EmptyState title='No members found.' description='People who join this workspace will appear here.' />
+          ) : (
+            <DataTable ariaLabel='Members' responsive='stack' searchable={false} sortable={false} pagination={false} columns={memberColumns} rows={data.members} rowKey={m => m.userId} />
+          )}
+          {solo && <Text as='p' tone='muted'>You’re the only member. Invite people to share dashboards and reports.</Text>}
+        </Stack>
+      </Card>
 
-      <section className='card' aria-labelledby='pending-heading'>
-        <h2 id='pending-heading'>Pending invitations</h2>
-        {data.invitations.length === 0 ? (
-          <div className='empty'>
-            <p>
-              <strong>No pending invitations.</strong>
-            </p>
-            <p>
-              {canManage
+      <Card as='section' title='Pending invitations' headingLevel={2}>
+        <Stack gap={3}>
+          {data.invitations.length === 0 ? (
+            <EmptyState
+              title='No pending invitations.'
+              description={canManage
                 ? 'Invite someone above to add them to this workspace.'
                 : 'Invitations that have not been accepted yet will appear here.'}
-            </p>
-          </div>
-        ) : (
-          <div className='table-wrap'>
-            <table>
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Expires</th>
-                  {canManage && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {data.invitations.map(inv => (
-                  <tr key={inv.id}>
-                    <td>{inv.email}</td>
-                    <td>{roleLabel(inv.role)}</td>
-                    <td><time dateTime={inv.expiresAt} title={formatDate(inv.expiresAt)}>{invitationExpiry(inv.expiresAt)}</time></td>
-                    {canManage && (
-                      <td>
-                        {canManageInvite(inv) && (
-                          <Inline gap={2} wrap>
-                            {data.emailConfigured === true && (
-                              <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend email to ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'resend', invitation: inv })}>
-                                Resend email
-                              </Button>
-                            )}
-                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New link for ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'new-link', invitation: inv })}>
-                              New link
-                            </Button>
-                            <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>
-                              Revoke
-                            </Button>
-                          </Inline>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {attempt && (
-          <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
-            <Button type='button' variant='secondary' disabled={busy} onClick={() => runInviteAction(attempt)}>Retry same request</Button>
-            <Button type='button' variant='ghost' disabled={busy} onClick={() => setAttempt(null)}>Dismiss</Button>
-          </Inline>}>
-            The {attempt.kind === 'resend' ? 'resend' : 'new link'} request for {attempt.invitation.email} was not confirmed. The
-            previous link may already have stopped working. Retry the same request to get a working link.
-          </Alert>
-        )}
-      </section>
+            />
+          ) : (
+            <DataTable ariaLabel='Pending invitations' responsive='stack' searchable={false} sortable={false} pagination={false} columns={invitationColumns} rows={data.invitations} rowKey={inv => inv.id} />
+          )}
+          {attempt && (
+            <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
+              <Button type='button' variant='secondary' disabled={busy} onClick={() => runInviteAction(attempt)}>Retry same request</Button>
+              <Button type='button' variant='ghost' disabled={busy} onClick={() => setAttempt(null)}>Dismiss</Button>
+            </Inline>}>
+              The {attempt.kind === 'resend' ? 'resend' : 'new link'} request for {attempt.invitation.email} was not confirmed. The
+              previous link may already have stopped working. Retry the same request to get a working link.
+            </Alert>
+          )}
+        </Stack>
+      </Card>
 
       {canManage && (
-        <section className='card'>
-          <h2>Rename workspace</h2>
-          <form onSubmit={submitRename}>
-            <div className='field'>
-              <label htmlFor='ws-rename'>Workspace name</label>
-              <input
+        <Card as='section' title='Rename workspace' headingLevel={2}>
+          <Stack as='form' gap={3} onSubmit={submitRename}>
+            <Field label='Workspace name' htmlFor='ws-rename'>
+              <Input
                 id='ws-rename'
                 value={name}
                 onChange={e => setName(e.target.value)}
@@ -546,55 +514,67 @@ function TeamPanelContent(props: TeamPanelProps) {
                 required
                 disabled={busy}
               />
-            </div>
-            <button
-              type='submit'
-              className='btn primary'
-              disabled={busy || !name.trim() || name.trim() === data.workspace.name}
-            >
-              Rename workspace
-            </button>
-          </form>
-        </section>
+            </Field>
+            <Inline gap={2}>
+              <Button
+                type='submit'
+                disabled={busy || !name.trim() || name.trim() === data.workspace.name}
+              >
+                Rename workspace
+              </Button>
+            </Inline>
+          </Stack>
+        </Card>
       )}
 
       {myRole === 'owner' && (
-        <section className='card' aria-labelledby='two-factor-heading'>
-          <h2 id='two-factor-heading'>Two-factor requirement</h2>
-          {data.workspace.twoFactorRequired
-            ? <Banner tone='warning' icon='shield' live>Members must turn on two-factor authentication before opening this workspace’s data.</Banner>
-            : <p id='two-factor-status' role='status'>Members can open this workspace without two-factor authentication.</p>}
-          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={() => void toggleTwoFactor()}>
-            {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
-          </button>
-        </section>
+        <Card as='section' title='Two-factor requirement' headingLevel={2}>
+          <Stack gap={3}>
+            {data.workspace.twoFactorRequired
+              ? <Banner tone='warning' icon='shield' live>Members must turn on two-factor authentication before opening this workspace’s data.</Banner>
+              : <Text as='p' id='two-factor-status' role='status'>Members can open this workspace without two-factor authentication.</Text>}
+            <Inline gap={2}>
+              <Button type='button' variant='secondary' aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={() => void toggleTwoFactor()}>
+                {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
+              </Button>
+            </Inline>
+          </Stack>
+        </Card>
       )}
 
       {myRole === 'owner' && (
-        <section className='card' aria-labelledby='ownership-heading'>
-          <h2 id='ownership-heading'>Transfer your ownership</h2>
-          <p>Choose an existing member to become an owner. You will become an administrator and lose owner-only controls. Other owners keep their roles.</p>
-          <form onSubmit={submitTransfer}>
-            <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
-              <legend className='sr-only'>New workspace owner</legend>
-              <div className='field'>
-                <label htmlFor='transfer-owner'>New owner</label>
-                <select id='transfer-owner' value={transferTo} required onChange={e => { setTransferTo(e.target.value); setTransferEmail(''); }}>
-                  <option value=''>Choose a team member</option>
-                  {data.members.filter(member => member.userId !== userId).map(member => <option key={member.userId} value={member.userId}>{member.name} ({member.email})</option>)}
-                </select>
-              </div>
-              {transferTarget && <div className='field'>
-                <label htmlFor='transfer-confirm'>Type {transferTarget.email} to confirm</label>
-                <input id='transfer-confirm' type='email' value={transferEmail} onChange={e => setTransferEmail(e.target.value)} maxLength={254} autoComplete='off' required aria-describedby='transfer-effect'/>
-                <p id='transfer-effect' className='hint'>{transferTarget.name} will control this workspace’s provider credentials, security and members. Your pending administrator invitations will be revoked.</p>
-              </div>}
-              <button className='btn' type='submit' disabled={busy || !transferTarget || transferEmail.trim().toLowerCase() !== transferTarget.email.toLowerCase()}>Transfer ownership and become administrator</button>
-            </fieldset>
-          </form>
-        </section>
+        <Card as='section' title='Transfer your ownership' headingLevel={2}>
+          <Stack gap={3}>
+            <Text as='p'>Choose an existing member to become an owner. You will become an administrator and lose owner-only controls. Other owners keep their roles.</Text>
+            <Stack as='form' gap={3} onSubmit={submitTransfer}>
+              <Stack as='fieldset' gap={3} disabled={busy} aria-label='New workspace owner'>
+                <Field label='New owner' htmlFor='transfer-owner'>
+                  <Select
+                    id='transfer-owner'
+                    value={transferTo}
+                    required
+                    onChange={e => { setTransferTo(e.target.value); setTransferEmail(''); }}
+                    options={[
+                      { value: '', label: 'Choose a team member' },
+                      ...data.members.filter(member => member.userId !== userId).map(member => ({ value: member.userId, label: `${member.name} (${member.email})` })),
+                    ]}
+                  />
+                </Field>
+                {transferTarget && (
+                  <Field label={`Type ${transferTarget.email} to confirm`} htmlFor='transfer-confirm'>
+                    <Input id='transfer-confirm' type='email' value={transferEmail} onChange={e => setTransferEmail(e.target.value)} maxLength={254} autoComplete='off' required aria-describedby='transfer-effect' />
+                    <Text as='p' id='transfer-effect' size='sm' tone='muted'>{transferTarget.name} will control this workspace’s provider credentials, security and members. Your pending administrator invitations will be revoked.</Text>
+                  </Field>
+                )}
+                <Inline gap={2}>
+                  <Button variant='secondary' type='submit' disabled={busy || !transferTarget || transferEmail.trim().toLowerCase() !== transferTarget.email.toLowerCase()}>Transfer ownership and become administrator</Button>
+                </Inline>
+              </Stack>
+            </Stack>
+          </Stack>
+        </Card>
       )}
       {confirmDialog}
-    </div>
+    </Stack>
   );
 }

@@ -4,200 +4,147 @@
     "styling": 118
   },
   "src/components/AIContentCoveragePanel.tsx": {
-    "element": 203,
+    "element": 195,
     "styling": 35
   },
   "src/components/AIContentSupportPanel.tsx": {
-    "element": 173,
-    "styling": 38
-  },
-  "src/components/AIInsightsPanel.tsx": {
-    "element": 5,
-    "styling": 9
+    "element": 135,
+    "styling": 33
   },
   "src/components/AIInsightsView.tsx": {
-    "element": 196,
-    "styling": 149
+    "element": 176,
+    "styling": 144
   },
   "src/components/AIQueryAnalysisPanel.tsx": {
-    "element": 158,
-    "styling": 35
+    "element": 153,
+    "styling": 30
   },
   "src/components/AISearchPanel.tsx": {
     "stylesheet": 1,
-    "element": 174,
-    "styling": 48
+    "element": 150,
+    "styling": 45
   },
   "src/components/AccountPreferencesPanel.tsx": {
-    "element": 67,
-    "styling": 35
+    "styling": 1
   },
   "src/components/AccountSecurityPanel.tsx": {
     "element": 69,
     "styling": 46
   },
   "src/components/AiSuggestionsPanel.tsx": {
-    "element": 186,
-    "styling": 138
-  },
-  "src/components/AnalysisCriteriaFields.tsx": {
-    "element": 50,
-    "styling": 16
+    "element": 146,
+    "styling": 120
   },
   "src/components/AnalyticsPanel.tsx": {
     "stylesheet": 1,
-    "element": 313,
+    "element": 311,
     "styling": 176
   },
-  "src/components/AnalyticsResetPanel.tsx": {
-    "element": 16,
-    "styling": 17
-  },
   "src/components/AnalyticsSettingsPanel.tsx": {
-    "element": 125,
-    "styling": 92
+    "element": 83,
+    "styling": 55
   },
   "src/components/AnnotationsPanel.tsx": {
-    "element": 68,
-    "styling": 53
-  },
-  "src/components/ApiKeysPanel.tsx": {
-    "element": 72,
-    "styling": 51
+    "element": 1
   },
   "src/components/AttributionPanel.tsx": {
     "stylesheet": 1,
-    "element": 97,
-    "styling": 29
+    "element": 95,
+    "styling": 28
   },
   "src/components/BoardsPanel.tsx": {
-    "element": 292,
+    "element": 290,
     "styling": 147
   },
-  "src/components/CitationAnalysisPanel.tsx": {
-    "element": 1,
-    "styling": 1
-  },
   "src/components/CitationAnalysisView.tsx": {
-    "element": 286,
+    "element": 280,
     "styling": 251
   },
-  "src/components/CitationSpecializationsPanel.tsx": {
-    "element": 1,
-    "styling": 1
-  },
   "src/components/CitationSpecializationsView.tsx": {
-    "element": 202,
-    "styling": 216
+    "element": 168,
+    "styling": 179
   },
   "src/components/ContextPanel.tsx": {
-    "element": 139,
-    "styling": 108
+    "element": 1
   },
   "src/components/ConversionsPanel.tsx": {
-    "element": 148,
-    "styling": 79
+    "element": 147,
+    "styling": 78
   },
   "src/components/DestinationsPanel.tsx": {
     "element": 175,
     "styling": 127
   },
   "src/components/DomainResearchPanel.tsx": {
-    "element": 254,
-    "styling": 105
+    "element": 249,
+    "styling": 101
   },
   "src/components/DomainsPanel.tsx": {
-    "element": 133,
+    "element": 120,
     "styling": 84
   },
   "src/components/ExplorerFilters.tsx": {
-    "element": 119,
+    "element": 115,
     "styling": 42
   },
   "src/components/ExplorerPanel.tsx": {
-    "element": 346,
-    "styling": 201
-  },
-  "src/components/GeographyAttribution.tsx": {
-    "element": 3,
-    "styling": 1
+    "element": 318,
+    "styling": 197
   },
   "src/components/GeographyCard.tsx": {
     "stylesheet": 1,
-    "element": 81,
+    "element": 79,
     "styling": 43
   },
-  "src/components/GoogleAppPanel.tsx": {
-    "element": 39,
-    "styling": 29
-  },
   "src/components/GoogleInspectionPanel.tsx": {
-    "element": 39,
-    "styling": 18
+    "element": 7
   },
   "src/components/GoogleReportsPanel.tsx": {
-    "element": 176,
-    "styling": 118
+    "element": 168,
+    "styling": 115
   },
   "src/components/HeatmapsPanel.tsx": {
-    "element": 111,
+    "element": 96,
     "styling": 47
   },
   "src/components/JourneysPanel.tsx": {
     "stylesheet": 1,
-    "element": 114,
-    "styling": 47
+    "styling": 45,
+    "element": 103
   },
   "src/components/KeywordResearchPanel.tsx": {
-    "element": 174,
-    "styling": 80
+    "element": 140,
+    "styling": 76
   },
   "src/components/OidcPanel.tsx": {
-    "element": 175,
+    "element": 169,
     "styling": 101
   },
-  "src/components/OidcRecoveryPanel.tsx": {
-    "element": 55,
-    "styling": 26
-  },
   "src/components/OpenRouterModelPicker.tsx": {
-    "element": 34,
-    "styling": 16
-  },
-  "src/components/ProjectDeletePanel.tsx": {
-    "element": 16,
-    "styling": 18
-  },
-  "src/components/PromptDiscoveryPanel.tsx": {
-    "element": 57,
-    "styling": 41
+    "element": 5,
+    "styling": 1
   },
   "src/components/PromptExecutionsPanel.tsx": {
-    "element": 181,
-    "styling": 81
+    "element": 143,
+    "styling": 68
   },
   "src/components/PromptRecurringPanel.tsx": {
-    "element": 65,
-    "styling": 29
+    "element": 3
   },
   "src/components/PromptsPanel.tsx": {
     "element": 152,
     "styling": 108
   },
   "src/components/ProviderPanel.tsx": {
-    "element": 139,
-    "styling": 84
+    "element": 120,
+    "styling": 65
   },
   "src/components/RankCheckResults.tsx": {
-    "element": 102,
+    "element": 101,
     "styling": 55
   },
-  "src/components/RankCheckView.tsx": {
-    "element": 64,
-    "styling": 45
-  },
   "src/components/RankHistoryView.tsx": {
-    "element": 124,
+    "element": 120,
     "styling": 73
   },
   "src/components/RankReportingView.tsx": {
@@ -205,15 +152,8 @@
     "styling": 94
   },
   "src/components/RankScheduleView.tsx": {
-    "element": 100,
-    "styling": 62
-  },
-  "src/components/RankTrackingFields.tsx": {
-    "element": 64,
-    "styling": 41
-  },
-  "src/components/RankTrackingPanel.tsx": {
-    "element": 2
+    "element": 95,
+    "styling": 61
   },
   "src/components/RankTrackingView.tsx": {
     "element": 196,
@@ -221,80 +161,68 @@
   },
   "src/components/RealtimePanel.tsx": {
     "stylesheet": 1,
-    "element": 109,
-    "styling": 56
+    "element": 103,
+    "styling": 54
   },
   "src/components/ReportsPanel.tsx": {
-    "element": 101,
-    "styling": 60
+    "element": 99,
+    "styling": 54
   },
   "src/components/RetentionPanel.tsx": {
-    "element": 70,
+    "element": 68,
     "styling": 78
   },
   "src/components/RetentionReportPanel.tsx": {
     "stylesheet": 1,
-    "element": 116,
-    "styling": 55
+    "element": 110,
+    "styling": 54
   },
   "src/components/RevenuePanel.tsx": {
     "stylesheet": 1,
-    "element": 242,
-    "styling": 91
-  },
-  "src/components/SavedKeywordFilterFields.tsx": {
-    "element": 76,
-    "styling": 29
+    "element": 233,
+    "styling": 84
   },
   "src/components/SavedKeywordRefreshPanel.tsx": {
-    "element": 59,
-    "styling": 27
+    "element": 2
   },
   "src/components/SavedKeywordsPanel.tsx": {
-    "element": 147,
-    "styling": 63
+    "element": 139,
+    "styling": 62
   },
   "src/components/SessionExplorerPanel.tsx": {
-    "element": 5,
-    "styling": 5
+    "styling": 5,
+    "element": 4
   },
   "src/components/SessionReplayPanel.tsx": {
-    "element": 109,
+    "element": 106,
     "styling": 67
   },
   "src/components/SharedBoardPanel.tsx": {
-    "element": 103,
+    "element": 99,
     "styling": 40
   },
   "src/components/SiteAuditPanel.tsx": {
-    "element": 302,
-    "styling": 152
-  },
-  "src/components/TeamPanel.tsx": {
-    "element": 104,
-    "styling": 41
+    "element": 276,
+    "styling": 150
   },
   "src/components/TrackedAssetsPanel.tsx": {
-    "element": 180,
-    "styling": 83
+    "element": 171,
+    "styling": 80
   },
   "src/components/UtmPanel.tsx": {
-    "element": 65,
-    "styling": 28
+    "element": 4
   },
   "src/components/WebPerformancePanel.tsx": {
-    "element": 82,
-    "styling": 53
+    "element": 10
   },
   "src/components/WebsiteSharePanel.tsx": {
-    "element": 50,
-    "styling": 52
+    "element": 1
   },
   "src/routes/__root.tsx": {
     "element": 3
   },
   "src/routes/index.tsx": {
-    "element": 84,
-    "styling": 52
+    "element": 80,
+    "styling": 49
   }
 }

@@ -1,6 +1,6 @@
 import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useId,useRef,useState} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { Stack, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {validSpecializedCitationFilters,validSpecializedCitationNavigation,validSpecializedCitationReport} from '../lib/citation-specialized-report';
@@ -134,5 +134,5 @@ function Controller(props:Props){
   onOpenComparison:id=>{if(!ready())return;const at=state.current,page=at.data!.page,row=page.kind==='evidence'?page.rows.find(r=>r.id===id):null;if(!row)return;const next={comparisonId:row.comparisonId,promptId:row.promptId,selection:at.selection,history:at.history};invalidate();purge();setReceipt(next);}
  };
  if(receipt)return <PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to specialized citations" onUnauthorized={props.onUnauthorized} onEvidenceExpired={({answerIds})=>learn(answerIds)} onBack={()=>{setReceipt(null);void load(receipt.selection,[null],receipt.history);}}/>;
- return <div ref={root} style={{minWidth:0}}><CitationSpecializationsView {...view}/>{confirmDialog}</div>;
+ return <Stack ref={root}><CitationSpecializationsView {...view}/>{confirmDialog}</Stack>;
 }

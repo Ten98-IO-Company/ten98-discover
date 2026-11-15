@@ -4,13 +4,14 @@ import { readFile } from 'node:fs/promises';
 import { transformWithOxc } from 'vite';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type * as React from 'react';
+import { Button, Fieldset } from '@ten98/ui';
 import type { RankTrackingFieldsProps } from '../src/components/RankTrackingFields.tsx';
 
 // Node's native TS runtime does not parse JSX. Use the already-installed JSX transform
 // for this stateless leaf, then inspect its actual React elements and handlers.
 const source = await readFile(new URL('../src/components/RankTrackingFields.tsx', import.meta.url), 'utf8');
 const compiled = (await transformWithOxc(source, 'RankTrackingFields.tsx', { jsx: { runtime: 'automatic' } })).code;
-const moduleText = compiled.replaceAll('"react/jsx-runtime"', JSON.stringify(import.meta.resolve('react/jsx-runtime')));
+const moduleText = compiled.replaceAll('"react/jsx-runtime"', JSON.stringify(import.meta.resolve('react/jsx-runtime'))).replaceAll('"@ten98/ui"', JSON.stringify(import.meta.resolve('@ten98/ui')));
 const { RankTrackingFields } = await import('data:text/javascript;base64,' + Buffer.from(moduleText).toString('base64')) as {
   RankTrackingFields: (props: RankTrackingFieldsProps) => React.JSX.Element;
 };
@@ -41,7 +42,7 @@ test('rank fields preserve controlled raw values, complete catalogs and independ
   const f = fixture(); assert.equal(f.changes.length, 0); assert.equal(f.calls.search, 0);
   assert.equal(f.field('domain').props.value, 'ExAmple.COM ');
   assert.equal(f.field('domain').props.maxLength, 253);
-  assert.deepEqual(nodes(f.field('countryLocationCode')).filter(node => node.type === 'option').map(node => node.props.value), ['', '2840', '250']);
+  assert.deepEqual(f.field('countryLocationCode').props.options.map((option: { value: string }) => option.value), ['', '2840', '250']);
   for (const [name, value] of [['domain', ' Raw.EXAMPLE '], ['languageCode', 'en'], ['devices', 'mobile'], ['depth', '100'], ['maxCrawlPages', '1']] as const) {
     f.field(name).props.onChange({ currentTarget: { value } });
     const actual = f.changes.at(-1)!;
@@ -84,7 +85,7 @@ test('local Enter prevents implicit submit and searches once only when enabled a
     assert.equal(prevented, 1); assert.equal(f.calls.search, !disabled && !!country && !loading && !composing ? 1 : 0);
     assert.equal(f.field('localLocationQuery').props.disabled, !country, 'Typing stays available during loading unless the fieldset disables it.');
     assert.equal(f.tree.props.disabled, disabled);
-    const buttons = f.all.filter(node => node.type === 'button');
+    const buttons = f.all.filter(node => node.type === Button);
     assert.ok(buttons.every(node => node.props.type === 'button' && node.props.disabled === (disabled || !country || loading)));
   }
 });
@@ -97,8 +98,8 @@ test('status distinguishes loading, failure and empty searches; supplied strings
     assert.ok(!renderToStaticMarkup(f.tree).includes('<img'));
   }
   const f = fixture({ localLocations: { ...base.props.localLocations, error: 'Try again' } });
-  f.all.find(node => node.type === 'button' && node.props.children === 'Search locations')!.props.onClick();
-  f.all.find(node => node.type === 'button' && node.props.children === 'Load more locations')!.props.onClick();
+  f.all.find(node => node.type === Button && node.props.children === 'Search locations')!.props.onClick();
+  f.all.find(node => node.type === Button && node.props.children === 'Load more locations')!.props.onClick();
   assert.deepEqual(f.calls, { search: 1, more: 1 });
 });
 
@@ -107,9 +108,9 @@ test('all hints and descriptions have unique scoped IDs; fieldset can shrink on 
   const all = [...first.all, ...second.all], ids = all.map(node => node.props.id).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
   for (const node of all) {
-    if (String(node.props.className).split(' ').includes('hint')) assert.ok(node.props.id, 'Every hint needs its deterministic ID.');
+    if (node.props.tone === 'muted' && node.props.size === 'sm') assert.ok(node.props.id, 'Every hint needs its deterministic ID.');
     for (const id of String(node.props['aria-describedby'] ?? '').split(' ').filter(Boolean)) assert.ok(ids.includes(id), id);
   }
-  assert.equal(first.field('domain').props['aria-invalid'], true);
-  assert.equal(first.tree.props.style?.minWidth, 0);
+  assert.equal(first.all.find(node => node.props.htmlFor === 'fixture-domain')?.props.error, 'Check this domain', 'Field supplies aria-invalid and the error id.');
+  assert.equal(first.tree.type, Fieldset, 'The shared Fieldset shrinks on mobile.');
 });

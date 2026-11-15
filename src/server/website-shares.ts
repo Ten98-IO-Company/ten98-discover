@@ -71,7 +71,7 @@ export async function revokeWebsiteShare(projectId:unknown,userId:unknown,shareI
   if(receipt.replayed)return writeResult(client,project,receipt.result,true);
   // Public readers never lock the grant row, so revocation never waits behind them; it is irreversible and idempotent.
   if(!(await client.query('SELECT 1 FROM project_share WHERE id=$1 AND project_id=$2 FOR UPDATE',[share,project])).rowCount)throw missing();
-  await client.query('UPDATE project_share SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1',[share]);
+  await client.query('UPDATE project_share SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1 AND project_id=$2',[share,project]);
   const ack={requestId:input.requestId,operation:'revoke' as const,shareId:share};await receipt.save(ack);return writeResult(client,project,ack,false);
  });
 }

@@ -1,5 +1,5 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {Disclosure} from '@ten98/ui';
+import {Alert,Button,Card,Checkbox,DataTable,Disclosure,Field,FormActions,FormGrid,Grid,Heading,Inline,Input,Stack,Text,saveFile} from '@ten98/ui';
 import {ApiError,errMsg} from '../lib/api';
 import {analyticsFieldLimit} from '../lib/analytics-dimensions';
 import {buildUtmParams,utmFields,utmFilterFields,validUtmResult,type UtmField} from '../lib/utm-report';
@@ -57,45 +57,42 @@ export function UtmPanel({projectId,userId,onUnauthorized}:{projectId:string;use
   }
   function download(field:UtmField,panel:Panel){
     if(scopeIdentity!==identity||blocked.current||!panel.result||!panel.params)return;
-    let url:string|undefined;
-    try{url=URL.createObjectURL(new Blob([panel.result.csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`utm-${field}-${panel.result.range.from}-${panel.result.range.to}.csv`;link.click();}
+    try{saveFile(`utm-${field}-${panel.result.range.from}-${panel.result.range.to}.csv`,panel.result.csv,'text/csv;charset=utf-8');}
     catch(cause){setError(errMsg(cause));}
-    finally{if(url)URL.revokeObjectURL(url);}
   }
   const visible=scopeIdentity===identity?panels:emptyPanels(),appliedParams=new URLSearchParams(scopeIdentity===identity?applied:'');
-  return <section className="stack utm-report" aria-label="UTM reports">
-    <div><h2>UTM reports</h2><p className="hint">Compare recorded campaign tags across pageviews. Each panel counts only pageviews with a nonempty value for that field; the five populations overlap.</p></div>
-    <form className="card stack" onSubmit={apply} aria-label="UTM report scope">
-      <div className="explorer-toolbar utm-toolbar">
-        <div><label htmlFor={`${uid}-from`}>From</label><input id={`${uid}-from`} type="date" required max={draft.to} value={draft.from} onChange={e=>patch({from:e.target.value})}/></div>
-        <div><label htmlFor={`${uid}-to`}>To</label><input id={`${uid}-to`} type="date" required min={draft.from} value={draft.to} onChange={e=>patch({to:e.target.value})}/></div>
-        <div><label htmlFor={`${uid}-zone`}>Time zone</label><input id={`${uid}-zone`} required list={`${uid}-zones`} value={draft.timeZone} onChange={e=>patch({timeZone:e.target.value})}/><datalist id={`${uid}-zones`}>{TIMEZONES.map(zone=><option key={zone} value={zone}/>)}</datalist></div>
-      </div>
-      <Disclosure summary="Exact filters" variant="plain"><div className="stack"><p className="hint">Enabled filters must all match. Origin must be an exact HTTP(S) origin without a path. Other blank enabled values match an empty stored value; each panel still requires its own nonempty tag.</p>{utmFilterFields.map(field=><div className="row" key={field}><label className="row"><input type="checkbox" checked={draft.filters[field].on} onChange={e=>patch({filters:{...draft.filters,[field]:{...draft.filters[field],on:e.target.checked}}})}/>Enable {labelOf(FILTERS,field)}</label><div style={{minWidth:0,flex:'1 1 180px'}}><label htmlFor={`${uid}-${field}`}>{labelOf(FILTERS,field)} equals</label><input id={`${uid}-${field}`} disabled={!draft.filters[field].on} maxLength={analyticsFieldLimit(field)} value={draft.filters[field].value} onChange={e=>patch({filters:{...draft.filters,[field]:{...draft.filters[field],value:e.target.value}}})}/></div></div>)}</div></Disclosure>
-      <div className="row"><button className="btn primary" type="submit" disabled={busy}>{busy?'Loading reports…':denied?'Reload access and apply':applied&&!unapplied?'Refresh reports':'Apply reports'}</button></div>
-      {error&&<p className="alert" role="alert">{error}</p>}{unapplied&&<p className="hint" role="status">Unapplied changes. Results and CSV still describe the applied scope below.</p>}
-    </form>
-    {appliedParams.has('from')&&<div className="card stack" aria-label="Applied UTM scope"><h3>Applied scope</h3><p>{appliedParams.get('from')} to {appliedParams.get('to')} · {appliedParams.get('timeZone')} · Pageviews</p>{utmFilterFields.filter(field=>appliedParams.has(field)).map(field=><p className="hint" key={field}>{labelOf(FILTERS,field)} equals <bdi>{JSON.stringify(appliedParams.get(field))}</bdi></p>)}<p className="hint">Shares use all observed pageviews tagged with that field, including values outside its top 100 table. They are not shares of all traffic or visitors.</p></div>}
-    <div className="utm-panels">{utmFields.map(([field,label])=>{
+  return <Stack as="section" aria-label="UTM reports">
+    <Stack gap={1}><Heading level={2} size="lg">UTM reports</Heading><Text tone="muted" size="sm">Compare recorded campaign tags across pageviews. Each panel counts only pageviews with a nonempty value for that field; the five populations overlap.</Text></Stack>
+    <Card><Stack as="form" onSubmit={apply} aria-label="UTM report scope">
+      <FormGrid>
+        <Field label="From" htmlFor={`${uid}-from`}><Input id={`${uid}-from`} type="date" required max={draft.to} value={draft.from} onChange={e=>patch({from:e.target.value})}/></Field>
+        <Field label="To" htmlFor={`${uid}-to`}><Input id={`${uid}-to`} type="date" required min={draft.from} value={draft.to} onChange={e=>patch({to:e.target.value})}/></Field>
+        <Field label="Time zone" htmlFor={`${uid}-zone`}><Input id={`${uid}-zone`} required list={`${uid}-zones`} value={draft.timeZone} onChange={e=>patch({timeZone:e.target.value})}/><datalist id={`${uid}-zones`}>{TIMEZONES.map(zone=><option key={zone} value={zone}/>)}</datalist></Field>
+      </FormGrid>
+      <Disclosure summary="Exact filters" variant="plain"><Stack><Text tone="muted" size="sm">Enabled filters must all match. Origin must be an exact HTTP(S) origin without a path. Other blank enabled values match an empty stored value; each panel still requires its own nonempty tag.</Text>{utmFilterFields.map(field=><Inline key={field} align="end"><Checkbox label={`Enable ${labelOf(FILTERS,field)}`} checked={draft.filters[field].on} onChange={e=>patch({filters:{...draft.filters,[field]:{...draft.filters[field],on:e.target.checked}}})}/><Field label={`${labelOf(FILTERS,field)} equals`} htmlFor={`${uid}-${field}`}><Input id={`${uid}-${field}`} disabled={!draft.filters[field].on} maxLength={analyticsFieldLimit(field)} value={draft.filters[field].value} onChange={e=>patch({filters:{...draft.filters,[field]:{...draft.filters[field],value:e.target.value}}})}/></Field></Inline>)}</Stack></Disclosure>
+      <FormActions><Button variant="primary" type="submit" disabled={busy}>{busy?'Loading reports…':denied?'Reload access and apply':applied&&!unapplied?'Refresh reports':'Apply reports'}</Button></FormActions>
+      {error&&<Alert tone="danger" role="alert">{error}</Alert>}{unapplied&&<Text tone="muted" size="sm" role="status">Unapplied changes. Results and CSV still describe the applied scope below.</Text>}
+    </Stack></Card>
+    {appliedParams.has('from')&&<Card aria-label="Applied UTM scope" title="Applied scope" headingLevel={3}><Stack><Text>{appliedParams.get('from')} to {appliedParams.get('to')} · {appliedParams.get('timeZone')} · Pageviews</Text>{utmFilterFields.filter(field=>appliedParams.has(field)).map(field=><Text key={field} tone="muted" size="sm">{labelOf(FILTERS,field)} equals <bdi>{JSON.stringify(appliedParams.get(field))}</bdi></Text>)}<Text tone="muted" size="sm">Shares use all observed pageviews tagged with that field, including values outside its top 100 table. They are not shares of all traffic or visitors.</Text></Stack></Card>}
+    <Grid columns={2}>{utmFields.map(([field,label])=>{
       const panel=visible[field],result=panel.result,total=result?.totals.pageViews,rows=result?.breakdown.groups??[];
-      return <section key={field} className="card stack utm-panel" aria-labelledby={`${uid}-${field}-heading`} aria-busy={panel.phase==='loading'}>
-        <h3 id={`${uid}-${field}-heading`}>{label}</h3>
-        {panel.phase==='idle'&&<p className="hint">Choose dates and apply reports to view this campaign field.</p>}
-        {panel.phase==='loading'&&<p role="status">Loading {label.toLowerCase()}…</p>}
-        {panel.phase==='error'&&<><p className="alert" role="alert">{panel.error}</p><button className="btn" type="button" disabled={busy||denied} onClick={()=>void load([field],applied)}>Retry {label.toLowerCase()}</button></>}
+      return <Card key={field} as="section" title={label} headingLevel={3} aria-busy={panel.phase==='loading'}><Stack>
+        {panel.phase==='idle'&&<Text tone="muted" size="sm">Choose dates and apply reports to view this campaign field.</Text>}
+        {panel.phase==='loading'&&<Text role="status">Loading {label.toLowerCase()}…</Text>}
+        {panel.phase==='error'&&<><Alert tone="danger" role="alert">{panel.error}</Alert><Button type="button" variant="secondary" disabled={busy||denied} onClick={()=>void load([field],applied)}>Retry {label.toLowerCase()}</Button></>}
         {panel.phase==='ready'&&result&&<>
-          <p><strong>{total===null?'Unavailable':total} {total===null?'':'tagged pageviews'}</strong></p>
-          {result.coverage.status!=='complete'&&<p className="banner" role="status">{result.coverage.status==='unavailable'?'This history is no longer retained. Unavailable is not zero; choose a more recent range.':'Partial retained history. Counts and shares describe only observed tagged pageviews, not the missing history.'}</p>}
-          <p className="hint">{result.range.from} to {result.range.to} · {result.range.timeZone}. {result.coverage.retainedFrom?`Retained from ${result.coverage.retainedFrom}.`:'No retention boundary.'}</p>
-          {total!==null&&total===0&&<p className="hint">No retained pageviews match these filters with a nonempty {label.toLowerCase()} tag.</p>}
+          <Text weight="semibold">{total===null?'Unavailable':total} {total===null?'':'tagged pageviews'}</Text>
+          {result.coverage.status!=='complete'&&<Alert tone="warning" variant="banner" role="status">{result.coverage.status==='unavailable'?'This history is no longer retained. Unavailable is not zero; choose a more recent range.':'Partial retained history. Counts and shares describe only observed tagged pageviews, not the missing history.'}</Alert>}
+          <Text tone="muted" size="sm">{result.range.from} to {result.range.to} · {result.range.timeZone}. {result.coverage.retainedFrom?`Retained from ${result.coverage.retainedFrom}.`:'No retention boundary.'}</Text>
+          {total!==null&&total===0&&<Text tone="muted" size="sm">No retained pageviews match these filters with a nonempty {label.toLowerCase()} tag.</Text>}
           {total!==null&&total!==undefined&&total>0&&<><PropertyShares items={rows.map(row=>({key:JSON.stringify(['utm',row.value]),label:row.value as string,count:row.events}))} total={total} label={`${label} tagged-pageview shares`} noun="tagged pageviews"/>
-            <p className="hint">Showing all {rows.length} returned values of {result.breakdown.totalGroups}. {result.breakdown.truncated?`${total-result.breakdown.returnedGroupEvents!} tagged pageviews across ${result.breakdown.totalGroups!-rows.length} other values are omitted from the exact table and CSV breakdown.`:'No matching values were omitted.'} The ring combines smaller returned values; the exact table below does not.</p>
-            <div className="table-wrap" tabIndex={0} role="region" aria-label={`${label} exact values`}><table><thead><tr><th>{label}</th><th>Tagged pageviews</th><th>Share of tagged pageviews</th></tr></thead><tbody>{rows.map(row=><tr key={row.value as string}><td><bdi>{row.value as string}</bdi></td><td>{row.events}</td><td>{(row.events/total*100).toFixed(1)}%</td></tr>)}</tbody></table></div>
+            <Text tone="muted" size="sm">Showing all {rows.length} returned values of {result.breakdown.totalGroups}. {result.breakdown.truncated?`${total-result.breakdown.returnedGroupEvents!} tagged pageviews across ${result.breakdown.totalGroups!-rows.length} other values are omitted from the exact table and CSV breakdown.`:'No matching values were omitted.'} The ring combines smaller returned values; the exact table below does not.</Text>
+            <DataTable stickyHeader ariaLabel={`${label} exact values`} searchable={false} sortable={false} pagination={false} rows={rows} rowKey={row=>row.value as string} columns={[{key:'value',header:label,wrap:true,render:row=><bdi>{row.value as string}</bdi>},{key:'events',header:'Tagged pageviews',numeric:true},{key:'share',header:'Share of tagged pageviews',numeric:true,render:row=>`${(row.events/total*100).toFixed(1)}%`}]}/>
           </>}
-          <button className="btn" type="button" onClick={()=>download(field,panel)}>Download {label.toLowerCase()} CSV</button>
-          <p className="hint dim">Includes the applied dates, filters, daily rows and returned campaign values.</p>
+          <Button type="button" variant="secondary" onClick={()=>download(field,panel)}>Download {label.toLowerCase()} CSV</Button>
+          <Text tone="muted" size="sm">Includes the applied dates, filters, daily rows and returned campaign values.</Text>
         </>}
-      </section>;
-    })}</div>
-  </section>;
+      </Stack></Card>;
+    })}</Grid>
+  </Stack>;
 }

@@ -1,6 +1,6 @@
 // Adapted from Elmo 3c673d0253d01ae030fa41519f62ad7e54f2281b / apps/web/src/lib/editorial-domains.ts
 // Copyright (c) 2026 Blue Whale Software, LLC. MIT; see THIRD_PARTY_NOTICES.md.
-// Kept server-only in ten98-monitor; upstream provenance comments are retained.
+// Kept server-only in ten98-discover; upstream provenance comments are retained.
 // Editorial / news / trade-press / magazine / blog publisher domains, used to
 // classify AI citations into the "editorial" source category.
 export const EDITORIAL_DOMAINS: string[] = [

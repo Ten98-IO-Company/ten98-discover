@@ -15,7 +15,7 @@
 # explicit `docker compose run --rm web node src/server/cli.ts migrate`, e.g. after taking a backup.
 
 x-app: &app
-  image: ${TEN98_IMAGE:-ten98-monitor:foundation}
+  image: ${TEN98_IMAGE:-ten98-discover:foundation}
   build: .
   init: true # proper signal handling for graceful shutdown
   # Least privilege: the app runs as the image's unprivileged node user and writes only to /data/artifacts and /tmp.

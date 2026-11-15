@@ -264,8 +264,10 @@ export async function publishBoardShare(workspaceId:unknown,userId:unknown,board
 export async function revokeBoardShare(workspaceId:unknown,userId:unknown,boardId:unknown,shareId:unknown,raw:unknown):Promise<BoardShareWriteResult>{
  const bid=parse(uuid,boardId),sid=parse(uuid,shareId),input=parse(boardShareRevoke,raw);
  return withBoardWorkspace(workspaceId,userId,true,async(c,wid,uid,role)=>{shareManager(role);const receipt=await shareReceipt(c,wid,uid,input.requestId,'revoke',{boardId:bid,shareId:sid,...input});if(receipt.ack)return shareAcknowledged(c,wid,bid,role,receipt.ack,true);
-  const old=(await c.query<ShareRow>('SELECT * FROM board_share WHERE board_id=$1 AND id=$2 FOR UPDATE',[bid,sid])).rows[0];if(!old)throw missing();if(old.revision!==input.revision)throw conflict();const revision=old.revoked_at?old.revision:Math.min(2147483647,old.revision+1);
-  await c.query('UPDATE board_share SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revision=$3,updated_at=clock_timestamp() WHERE board_id=$1 AND id=$2',[bid,sid,revision]);
+  // The board must be in this workspace before its share is read, so another workspace's ids answer like made-up ones.
+  const board=await find(c,wid,bid);if(!board)throw missing();
+  const old=(await c.query<ShareRow>('SELECT s.* FROM board_share s JOIN custom_board b ON b.id=s.board_id WHERE b.workspace_id=$1 AND b.id=$2 AND s.id=$3 FOR UPDATE OF s',[wid,board.id,sid])).rows[0];if(!old)throw missing();if(old.revision!==input.revision)throw conflict();const revision=old.revoked_at?old.revision:Math.min(2147483647,old.revision+1);
+  await c.query('UPDATE board_share s SET revoked_at=COALESCE(s.revoked_at,clock_timestamp()),revision=$4,updated_at=clock_timestamp() FROM custom_board b WHERE b.id=s.board_id AND b.workspace_id=$1 AND s.board_id=$2 AND s.id=$3',[wid,board.id,sid,revision]);
   return shareAcknowledged(c,wid,bid,role,await receipt.save(sid,revision,old.board_revision),false);
  });
 }

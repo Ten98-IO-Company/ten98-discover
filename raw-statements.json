@@ -1,0 +1,414 @@
+{
+  "src/server/account-closure-retention.ts": {
+    "count": 14,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/account-closure.ts": {
+    "count": 11,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/account-security.ts": {
+    "count": 53,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/advanced-predicates.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-content-coverage.ts": {
+    "count": 4,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-content-support-worker.ts": {
+    "count": 12,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/ai-content-support.ts": {
+    "count": 31,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-opportunities-execution.ts": {
+    "count": 7,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/ai-opportunities-recovery.ts": {
+    "count": 2,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/ai-opportunities-retention.ts": {
+    "count": 5,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/ai-opportunities-rows.ts": {
+    "count": 5,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-opportunities-source.ts": {
+    "count": 4,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-opportunities-worker.ts": {
+    "count": 14,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/ai-opportunities.ts": {
+    "count": 6,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-search.ts": {
+    "count": 56,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/ai-suggestion-worker.ts": {
+    "count": 17,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/ai-suggestions.ts": {
+    "count": 27,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/analytics-export.ts": {
+    "count": 12,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/analytics-reset.ts": {
+    "count": 10,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/analytics-scope.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/analytics-tags.ts": {
+    "count": 4,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/analytics.ts": {
+    "count": 11,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/annotations.ts": {
+    "count": 9,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/api-keys.ts": {
+    "count": 10,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/api.ts": {
+    "count": 35,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/attribution.ts": {
+    "count": 8,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/auth.ts": {
+    "count": 11,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/board-activity.ts": {
+    "count": 6,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/boards.ts": {
+    "count": 53,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/cli.ts": {
+    "count": 5,
+    "reason": "Operator CLI probes (health, migrate, restore checks) over raw SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4). Migration commands are replaced by the generated drizzle-kit baseline in step 6."
+  },
+  "src/server/cloudflare-connections.ts": {
+    "count": 18,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/cohorts.ts": {
+    "count": 10,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/collection-origins.ts": {
+    "count": 2,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/destinations.ts": {
+    "count": 22,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/domain-redirects.ts": {
+    "count": 22,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/domain-research.ts": {
+    "count": 41,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/domains.ts": {
+    "count": 17,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/email-suppression.ts": {
+    "count": 4,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/explorer.ts": {
+    "count": 20,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/funnels.ts": {
+    "count": 10,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/google-api.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/google-inspection.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/google-jobs.ts": {
+    "count": 19,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/google-retention.ts": {
+    "count": 4,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/google.ts": {
+    "count": 41,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/identity-links.ts": {
+    "count": 5,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/instance-operators.ts": {
+    "count": 8,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/jobs.ts": {
+    "count": 15,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/journeys.ts": {
+    "count": 8,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/keyword-research.ts": {
+    "count": 41,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/keyword-retention.ts": {
+    "count": 8,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/mcp-tools.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/native-analytics.ts": {
+    "count": 24,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/native-identify.ts": {
+    "count": 14,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/oidc.ts": {
+    "count": 59,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/paid-work-archive.ts": {
+    "count": 5,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/project-context.ts": {
+    "count": 40,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/project-delete.ts": {
+    "count": 15,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/prompt-citation-specializations.ts": {
+    "count": 3,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/prompt-citations.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/prompt-execution-retention.ts": {
+    "count": 8,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/prompt-execution.ts": {
+    "count": 45,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/prompt-insights-comparison.ts": {
+    "count": 1,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/prompt-insights.ts": {
+    "count": 11,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/prompt-recurring.ts": {
+    "count": 38,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/prompts.ts": {
+    "count": 10,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/provider-account-identity.ts": {
+    "count": 13,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/provider-requests.ts": {
+    "count": 10,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/providers.ts": {
+    "count": 24,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/rank-distribution.ts": {
+    "count": 8,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/rank-execution.ts": {
+    "count": 12,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/rank-history.ts": {
+    "count": 9,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/rank-matrix.ts": {
+    "count": 7,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/rank-reconciliation.ts": {
+    "count": 1,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/rank-recurring.ts": {
+    "count": 21,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/rank-retention.ts": {
+    "count": 7,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/rank-scheduling.ts": {
+    "count": 9,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/rank-tracking.ts": {
+    "count": 15,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/rank-worker.ts": {
+    "count": 47,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/realtime.ts": {
+    "count": 7,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/replay-heatmaps.ts": {
+    "count": 37,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/reports.ts": {
+    "count": 21,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/restore-quarantine.ts": {
+    "count": 13,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/retention-report.ts": {
+    "count": 9,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/retention.ts": {
+    "count": 68,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/revenue.ts": {
+    "count": 9,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/saved-keyword-refresh.ts": {
+    "count": 12,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/saved-keywords.ts": {
+    "count": 39,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/segments.ts": {
+    "count": 6,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/session-explorer.ts": {
+    "count": 20,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/session-property-retention.ts": {
+    "count": 4,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/session-replay.ts": {
+    "count": 30,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/site-analysis.ts": {
+    "count": 24,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/site-audit-access.ts": {
+    "count": 14,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/site-audit-recurring.ts": {
+    "count": 17,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/site-audit-retention.ts": {
+    "count": 12,
+    "reason": "Bounded retention and erasure deletes in hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), then moved under row-level security with its table group in step 5."
+  },
+  "src/server/site-audit-worker.ts": {
+    "count": 43,
+    "reason": "Job, claim and provider-request SQL (idempotency, request identity, recovery) in hand-written statements; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), preserving the request-identity contract."
+  },
+  "src/server/site-audits.ts": {
+    "count": 49,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/teams.ts": {
+    "count": 1,
+    "reason": "Identity and authorization SQL (sessions, factors, keys, operators, provider credentials) in hand-written transactions; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4), reviewed at the top tier and moved onto row-level security in step 5."
+  },
+  "src/server/tracked-assets.ts": {
+    "count": 56,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/web-performance.ts": {
+    "count": 14,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/website-shares.ts": {
+    "count": 15,
+    "reason": "Hand-written SQL; converts to typed Drizzle queries in Brief 4 step 4, one module per change after the books pilot (gap 4)."
+  },
+  "src/server/workspace-team.ts": {
+    "count": 3,
+    "reason": "Transaction wrapper (BEGIN/COMMIT/ROLLBACK) around the shared team controller; replaced by the framework scoped transaction in Brief 4 steps 4-5 (gap 6)."
+  }
+}

@@ -56,11 +56,11 @@ export async function runOidcChecks(options: Options): Promise<void> {
   const fixture = createServer(async (request, response) => {
     const url = new URL(request.url!, authentik);
     response.setHeader('content-type', 'application/json');
-    if (url.pathname === '/application/o/ten98-monitor/.well-known/openid-configuration') response.end(JSON.stringify(discovery('ten98-monitor', 'RS256')));
+    if (url.pathname === '/application/o/ten98-discover/.well-known/openid-configuration') response.end(JSON.stringify(discovery('ten98-discover', 'RS256')));
     // Without a selected signing key Authentik signs with HS256 and the client secret and advertises only that.
     else if (url.pathname === '/application/o/no-signing-key/.well-known/openid-configuration') response.end(JSON.stringify(discovery('no-signing-key', 'HS256')));
-    else if (url.pathname === '/application/o/ten98-monitor/jwks/') response.end(JSON.stringify({ keys: [jwk] }));
-    else if (url.pathname === '/application/o/ten98-monitor/end-session/') {
+    else if (url.pathname === '/application/o/ten98-discover/jwks/') response.end(JSON.stringify({ keys: [jwk] }));
+    else if (url.pathname === '/application/o/ten98-discover/end-session/') {
       // Authentik refuses a return address without id_token_hint; otherwise it runs the provider's invalidation flow.
       endSessions.push(url.searchParams);
       if (url.searchParams.has('post_logout_redirect_uri') && !url.searchParams.has('id_token_hint')) { response.writeHead(400); response.end('{}'); return; }
@@ -88,7 +88,7 @@ export async function runOidcChecks(options: Options): Promise<void> {
   });
   await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve));
   const address = fixture.address(); assert.ok(address && typeof address !== 'string');
-  authentik = `http://127.0.0.1:${address.port}`; issuer = `${authentik}/application/o/ten98-monitor/`;
+  authentik = `http://127.0.0.1:${address.port}`; issuer = `${authentik}/application/o/ten98-discover/`;
 
   async function call(path: string, browser: Browser, body?: unknown, expected = 200, origin = options.appUrl) {
     const headers = new Headers({ cookie: [...browser].map(([key, value]) => `${key}=${value}`).join('; ') });

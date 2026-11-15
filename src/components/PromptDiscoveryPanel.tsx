@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
-import { Disclosure, useConfirmDialog } from '@ten98/ui'
+import {Alert, Button, Card, Checkbox, Disclosure, Field, Grid, Heading, Inline, Input, Option, Select, Stack, StatusLine, Text, useConfirmDialog} from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
@@ -17,14 +17,13 @@ const contextSchema = z.object({
 });
 type Context = z.infer<typeof contextSchema>;
 const intentNames: Record<PromptDiscoveryIntent, string> = {learn: 'Learn about a topic', compare: 'Compare options', choose: 'Choose a solution', use: 'Use a solution'};
-const control = {minHeight: 44, width: '100%', minWidth: 0};
 const normalize = (value: string) => value.trim().replace(/\s+/gu, ' ');
 
 export function PromptDiscoveryPanel(props: Props) {
   return <DiscoveryPanel key={props.projectId} {...props}/>;
 }
 function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
-  const id = useId(), heading = useRef<HTMLHeadingElement>(null), errorFocus = useRef<HTMLParagraphElement>(null);
+  const id = useId(), heading = useRef<HTMLHeadingElement>(null), errorFocus = useRef<HTMLElement>(null);
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [topic, setTopic] = useState(''), [audience, setAudience] = useState(''), [intent, setIntent] = useState<PromptDiscoveryIntent>('learn');
   const [context, setContext] = useState<Context | null>(null), [loading, setLoading] = useState(true), [readError, setReadError] = useState(''), [lost, setLost] = useState(false);
@@ -82,7 +81,7 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
     event.preventDefault();
     try {
       const next = buildPromptQuestions({topic, audience, intent, brand, competitor: competitorName});
-      if (questions.length && !await confirm({title: 'Replace the current starter questions?', description: 'Your selections will reset.', confirmLabel: 'Replace questions', danger: false})) return;
+      if (questions.length && !await confirm({title: 'Replace the current starter questions?', description: 'Your selections will reset.', confirmLabel: 'Replace questions', danger: false, initialFocus: 'cancel'})) return;
       setQuestions(next); setSelected(next.map((_, index) => index)); setGenerated({signature, topic: normalize(topic)}); setError('');
     } catch (cause) { setError(errMsg(cause)); }
   }
@@ -92,25 +91,41 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
     onUse(questions.filter((_, index) => selected.includes(index)), generated.topic);
   }
 
-  return <section className="card stack" aria-label="Prompt discovery">
-    <div className="row between"><div><h2 ref={heading} tabIndex={-1}>Discover prompts</h2></div><button className="btn ghost" style={{minHeight: 44}} type="button" onClick={() => { if (confirmLeave()) { leaving.current = true; onBack(); } }}>Back to saved prompts</button></div>
-    <p>Create starter questions in English, then review and save them. Free to use; these questions do not represent measured search demand.</p>
-    {loading && <p role="status">Loading saved topics and competitors…</p>}
-    {readError && <div className="banner"><p role="alert">{readError}</p>{!lost && <button className="btn ghost" type="button" style={{minHeight: 44}} disabled={loading} onClick={() => void loadContext()}>Reload saved topics</button>}</div>}
-    {!lost && <>
-      <form className="stack" noValidate onSubmit={build}>
-        <div className="field"><label htmlFor={id + '-topic'}>Topic</label><input id={id + '-topic'} value={topic} maxLength={100} required style={control} onChange={event => setTopic(event.target.value)} placeholder="For example, customer support software"/><p className="hint">Product, service or subject. Up to 100 characters.</p>{topic.trim().length > 100 && <p role="alert">Shorten this saved topic to 100 characters before building questions.</p>}</div>
-        {!!topics.length && <div className="field"><label htmlFor={id + '-saved-topic'}>Saved page topics</label><select id={id + '-saved-topic'} value="" style={control} onChange={event => setTopic(event.target.value)}><option value="">Choose a saved topic</option>{topics.map(value => <option key={value} value={value}>{value}</option>)}</select><p className="hint">Replaces the Topic field.</p></div>}
-        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,240px),1fr))', gap: 'var(--space-3, 12px)'}}>
-          <div className="field"><label htmlFor={id + '-audience'}>Audience (optional)</label><input id={id + '-audience'} value={audience} maxLength={100} style={control} onChange={event => setAudience(event.target.value)} placeholder="For example, small businesses"/></div>
-          <div className="field"><label htmlFor={id + '-intent'}>Question intent</label><select id={id + '-intent'} value={intent} style={control} onChange={event => setIntent(event.target.value as PromptDiscoveryIntent)}>{promptDiscoveryIntents.map(value => <option key={value} value={value}>{intentNames[value]}</option>)}</select></div>
-        </div>
-        {context && <Disclosure summary="Optional saved context" variant="plain"><div className="stack"><label style={{display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, overflowWrap: 'anywhere'}}><input type="checkbox" checked={includeBrand} onChange={event => setIncludeBrand(event.target.checked)}/>Include saved brand: {context.profile.name}</label>{!!context.competitors.length && <div className="field"><label htmlFor={id + '-competitor'}>Competitor (optional)</label><select id={id + '-competitor'} value={competitorId} style={control} onChange={event => setCompetitorId(event.target.value)}><option value="">No competitor</option>{context.competitors.map(value => <option key={value.id} value={value.id}>{value.name || value.primaryDomain}</option>)}</select></div>}<p className="hint">Selected names are added to the questions.</p></div></Disclosure>}
-        {error && <p className="alert" role="alert" ref={errorFocus} tabIndex={-1}>{error}</p>}
-        <div className="row"><button type="submit" className="btn primary" style={{minHeight: 44}}>Build starter questions</button></div>
-      </form>
-      {generated && <div className="card stack" aria-label="Starter questions"><h3>Choose starter questions</h3><p>Edit selected questions before saving. Saving does not run them or start tracking.</p>{stale && <p className="banner" role="status">Inputs changed. Rebuild the questions to continue.</p>}<div className="row"><button className="btn ghost" type="button" style={{minHeight: 44}} onClick={() => setSelected(questions.map((_, index) => index))}>Select all</button><button className="btn ghost" type="button" style={{minHeight: 44}} onClick={() => setSelected([])}>Clear selection</button></div>{questions.map((question, index) => <label key={index} className="card" style={{display: 'flex', alignItems: 'flex-start', gap: 12, minHeight: 44, padding: 'var(--space-3, 12px)', overflowWrap: 'anywhere'}}><input type="checkbox" checked={selected.includes(index)} onChange={event => setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index))}/><span>{question}</span></label>)}<div className="row"><button className="btn primary" type="button" style={{minHeight: 44}} disabled={stale || selected.length === 0} onClick={review}>Review selected prompts</button><span className="hint">{selected.length} selected</span></div></div>}
-    </>}
-    {confirmDialog}
-  </section>;
+  return <Card as="section" aria-label="Prompt discovery">
+    <Stack>
+      <Inline justify="between"><Heading level={2} ref={heading} tabIndex={-1}>Discover prompts</Heading><Button variant="ghost" type="button" onClick={() => { if (confirmLeave()) { leaving.current = true; onBack(); } }}>Back to saved prompts</Button></Inline>
+      <Text>Create starter questions in English, then review and save them. Free to use; these questions do not represent measured search demand.</Text>
+      {loading && <StatusLine busy>Loading saved topics and competitors…</StatusLine>}
+      {readError && <Stack><Alert tone="danger" variant="banner">{readError}</Alert>{!lost && <Inline><Button variant="ghost" type="button" disabled={loading} onClick={() => void loadContext()}>Reload saved topics</Button></Inline>}</Stack>}
+      {!lost && <>
+        <Stack as="form" noValidate onSubmit={build}>
+          <Field label="Topic" htmlFor={id + '-topic'} description="Product, service or subject. Up to 100 characters.">
+            <Input id={id + '-topic'} value={topic} maxLength={100} required onChange={event => setTopic(event.target.value)} placeholder="For example, customer support software"/>
+          </Field>
+          {topic.trim().length > 100 && <Alert tone="danger" variant="inline">Shorten this saved topic to 100 characters before building questions.</Alert>}
+          {!!topics.length && <Field label="Saved page topics" htmlFor={id + '-saved-topic'} description="Replaces the Topic field.">
+            <Select id={id + '-saved-topic'} value="" onChange={event => setTopic(event.target.value)}><Option value="">Choose a saved topic</Option>{topics.map(value => <Option key={value} value={value}>{value}</Option>)}</Select>
+          </Field>}
+          <Grid columns="auto" minItemWidth="md">
+            <Field label="Audience (optional)" htmlFor={id + '-audience'}><Input id={id + '-audience'} value={audience} maxLength={100} onChange={event => setAudience(event.target.value)} placeholder="For example, small businesses"/></Field>
+            <Field label="Question intent" htmlFor={id + '-intent'}><Select id={id + '-intent'} value={intent} onChange={event => setIntent(event.target.value as PromptDiscoveryIntent)}>{promptDiscoveryIntents.map(value => <Option key={value} value={value}>{intentNames[value]}</Option>)}</Select></Field>
+          </Grid>
+          {context && <Disclosure summary="Optional saved context" variant="plain"><Stack><Checkbox checked={includeBrand} onChange={event => setIncludeBrand(event.target.checked)} label={`Include saved brand: ${context.profile.name}`}/>{!!context.competitors.length && <Field label="Competitor (optional)" htmlFor={id + '-competitor'}><Select id={id + '-competitor'} value={competitorId} onChange={event => setCompetitorId(event.target.value)}><Option value="">No competitor</Option>{context.competitors.map(value => <Option key={value.id} value={value.id}>{value.name || value.primaryDomain}</Option>)}</Select></Field>}<Text tone="muted" size="sm">Selected names are added to the questions.</Text></Stack></Disclosure>}
+          {error && <Stack ref={errorFocus} tabIndex={-1}><Alert tone="danger">{error}</Alert></Stack>}
+          <Inline><Button type="submit" variant="primary">Build starter questions</Button></Inline>
+        </Stack>
+        {generated && <Card aria-label="Starter questions">
+          <Stack>
+            <Heading level={3}>Choose starter questions</Heading>
+            <Text>Edit selected questions before saving. Saving does not run them or start tracking.</Text>
+            {stale && <Alert tone="warning" variant="inline" role="status">Inputs changed. Rebuild the questions to continue.</Alert>}
+            <Inline><Button variant="ghost" type="button" onClick={() => setSelected(questions.map((_, index) => index))}>Select all</Button><Button variant="ghost" type="button" onClick={() => setSelected([])}>Clear selection</Button></Inline>
+            {questions.map((question, index) => <Checkbox key={index} label={question} checked={selected.includes(index)} onChange={event => setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index))}/>)}
+            <Inline><Button variant="primary" type="button" disabled={stale || selected.length === 0} onClick={review}>Review selected prompts</Button><Text as="span" tone="muted" size="sm">{selected.length} selected</Text></Inline>
+          </Stack>
+        </Card>}
+      </>}
+      {confirmDialog}
+    </Stack>
+  </Card>;
 }

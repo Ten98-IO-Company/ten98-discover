@@ -1,6 +1,6 @@
 // Adapted from Elmo 3c673d0253d01ae030fa41519f62ad7e54f2281b / apps/web/src/lib/domain-categories.server.ts
 // Copyright (c) 2026 Blue Whale Software, LLC. MIT; see THIRD_PARTY_NOTICES.md.
-// Kept server-only in ten98-monitor; upstream provenance comments are retained.
+// Kept server-only in ten98-discover; upstream provenance comments are retained.
 // Server-only domain classification. Holds the large hardcoded domain lists
 // (including the ~25k-entry editorial set) and `categorizeDomain`. Importing
 // this from a client module would bloat the browser bundle — keep it confined to
