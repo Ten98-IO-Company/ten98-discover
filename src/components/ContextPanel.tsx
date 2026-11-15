@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import { Button, DataTable, Field, Heading, Inline, Input, Select, Sheet, Stack, Tabs, Text, Textarea, useConfirmDialog } from '@ten98/ui'
+import { Alert, Button, Card, DataTable, Fieldset, Field, Heading, Inline, Input, Select, Sheet, Stack, StatusLine, Tabs, Text, Textarea, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api, ApiError, errMsg} from '../lib/api';
 import {SiteAnalysisPanel} from './SiteAnalysisPanel';
@@ -31,7 +31,6 @@ type Op =
   | {kind:'remove-persona'|'remove-competitor'|'remove-key-page'|'remove-research';id:string};
 type Attempt = {revision:number;requestId:string;updates:Op[]};
 const lines = (value:string) => [...new Set(value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean))];
-const prose = {whiteSpace:'pre-wrap',overflowWrap:'anywhere'} as const;
 function date(value:string) {const parsed=new Date(value);return Number.isNaN(parsed.getTime())?value:parsed.toLocaleString();}
 
 export function ContextPanel(props:{workspaceId:string;projectId:string;userId:string;headerBottom:number;onUnauthorized:()=>void}) {
@@ -142,21 +141,20 @@ function ContextPanelInner({workspaceId,projectId,userId,headerBottom,onUnauthor
   const recovery=<>{retry&&<Inline wrap><Button variant="primary" type="button" disabled={!!busy} onClick={()=>void save(retry)}>Retry same save</Button><Button variant="ghost" type="button" disabled={!!busy} onClick={()=>void load(true)}>Discard attempt and reload</Button></Inline>}{conflict&&<Stack gap={2}><Text>Your form is unchanged. Reloading discards the draft and shows the latest saved data.</Text><Button variant="secondary" type="button" disabled={!!busy} onClick={()=>void load(true)}>Reload saved data (discard draft)</Button></Stack>}</>;
   const personas=data?.personas??[];
   const businessEditor=():Editor=>({kind:'business',name:data!.profile.name,aliases:data!.profile.aliases.join('\n'),sections:Object.fromEntries((Object.keys(sectionTitles) as SectionKey[]).map(key=>[key,data!.sections.find(row=>row.key===key)?.content??''])) as Record<SectionKey,string>});
-  return <section className="card" aria-label="Project context" style={{overflowWrap:'anywhere'}}>
-    <div className="row between"><div><h2>Project context</h2><p className="hint">Shared knowledge for this project.</p></div><Inline wrap>{data&&<SiteAnalysisPanel workspaceId={workspaceId} projectId={projectId} userId={userId} contextRevision={data.revision} onSaved={()=>void load()} onUnauthorized={onUnauthorized} disabled={!!editor||blocked}/>}{!editor&&<Button variant="ghost" type="button" disabled={!!busy} onClick={()=>void load(true)}>Refresh</Button>}</Inline></div>
-    {busy&&!editor&&<p role="status" className="dim">{busy}…</p>}
-    {notice&&!editor&&<p role="status" className="banner">{notice}</p>}
-    {error&&!editor&&<div className="alert" role="alert"><p>{error}</p>{!data&&!busy&&<Button variant="secondary" type="button" onClick={()=>void load()}>Retry loading</Button>}{recovery}</div>}
+  return <Card as="section" headingLevel={2} aria-label="Project context" title="Project context" description="Shared knowledge for this project." actions={<Inline wrap>{data&&<SiteAnalysisPanel workspaceId={workspaceId} projectId={projectId} userId={userId} contextRevision={data.revision} onSaved={()=>void load()} onUnauthorized={onUnauthorized} disabled={!!editor||blocked}/>}{!editor&&<Button variant="ghost" type="button" disabled={!!busy} onClick={()=>void load(true)}>Refresh</Button>}</Inline>}>
+    <Stack gap={3}>
+    {busy&&!editor&&<StatusLine busy>{busy}…</StatusLine>}
+    {notice&&!editor&&<Alert variant="banner" tone="success">{notice}</Alert>}
+    {error&&!editor&&<Stack gap={2}><Alert tone="danger">{error}</Alert>{!data&&!busy&&<Inline><Button variant="secondary" type="button" onClick={()=>void load()}>Retry loading</Button></Inline>}{recovery}</Stack>}
     {data&&<>
-      <p className="footnote">Saved revision {data.revision} · {canEdit?'You can edit this context.':'Read-only access.'}</p>
-
+      <Text size="sm" tone="muted">Saved revision {data.revision} · {canEdit?'You can edit this context.':'Read-only access.'}</Text>
       <Tabs label="Project context sections" value={tab} onValueChange={setTab} items={[
         {value:'brand',label:'Brand',content:<Stack gap={4}>
-        <div className="row between" style={{marginTop:12}}><div><h3>{data.profile.name}</h3>{data.profile.aliases.length>0&&<p className="dim">Aliases: {data.profile.aliases.join(', ')}</p>}</div>{canEdit&&<Button type="button" variant="secondary" disabled={blocked} onClick={()=>open(businessEditor())}>Edit business context</Button>}</div>
-        {(Object.keys(sectionTitles) as SectionKey[]).map(key=><div key={key} style={{marginBottom:16}}><h4>{sectionTitles[key]}</h4><p style={prose} className={data.sections.some(row=>row.key===key)?undefined:'dim'}>{data.sections.find(row=>row.key===key)?.content??'Not added yet.'}</p></div>)}
-        <div className="row between"><h3>Custom sections ({data.customSections.length}/20)</h3>{canEdit&&<Button type="button" variant="ghost" disabled={blocked||data.customSections.length>=20} onClick={()=>open({kind:'section',key:'',title:'',content:'',existing:false})}>Add custom section</Button>}</div>
-        {data.customSections.length===0&&<p className="dim">No custom sections yet.</p>}
-        {data.customSections.map(row=><div key={row.key} style={{marginBottom:16}}><h4>{row.title??row.key}</h4><p style={prose}>{row.content}</p><p className="hint">Updated {date(row.updatedAt)}</p>{canEdit&&<div className="row"><Button variant="ghost" type="button" disabled={blocked} onClick={()=>open({kind:'section',key:row.key,title:row.title??row.key.slice(7),content:row.content,existing:true})}>Edit {row.title??row.key}</Button><Button variant="ghost" type="button" disabled={blocked||!!editor} onClick={()=>remove({kind:'remove-section',key:row.key},'this custom section')}>Delete {row.title??row.key}</Button></div>}</div>)}
+        <Inline justify="between"><Stack gap={1}><Heading level={3} size="sm">{data.profile.name}</Heading>{data.profile.aliases.length>0&&<Text tone="muted">Aliases: {data.profile.aliases.join(', ')}</Text>}</Stack>{canEdit&&<Button type="button" variant="secondary" disabled={blocked} onClick={()=>open(businessEditor())}>Edit business context</Button>}</Inline>
+        {(Object.keys(sectionTitles) as SectionKey[]).map(key=><Stack key={key} gap={1}><Heading level={4} size="sm">{sectionTitles[key]}</Heading><Text preserveWhitespace tone={data.sections.some(row=>row.key===key)?'default':'muted'}>{data.sections.find(row=>row.key===key)?.content??'Not added yet.'}</Text></Stack>)}
+        <Inline justify="between"><Heading level={3} size="sm">Custom sections ({data.customSections.length}/20)</Heading>{canEdit&&<Button type="button" variant="ghost" disabled={blocked||data.customSections.length>=20} onClick={()=>open({kind:'section',key:'',title:'',content:'',existing:false})}>Add custom section</Button>}</Inline>
+        {data.customSections.length===0&&<Text tone="muted">No custom sections yet.</Text>}
+        {data.customSections.map(row=><Stack key={row.key} gap={1}><Heading level={4} size="sm">{row.title??row.key}</Heading><Text preserveWhitespace>{row.content}</Text><Text size="sm" tone="muted">Updated {date(row.updatedAt)}</Text>{canEdit&&<Inline><Button variant="ghost" type="button" disabled={blocked} onClick={()=>open({kind:'section',key:row.key,title:row.title??row.key.slice(7),content:row.content,existing:true})}>Edit {row.title??row.key}</Button><Button variant="ghost" type="button" disabled={blocked||!!editor} onClick={()=>remove({kind:'remove-section',key:row.key},'this custom section')}>Delete {row.title??row.key}</Button></Inline>}</Stack>)}
         </Stack>},
         {value:'competitors',label:'Competitors',content:<Stack gap={4}>
           <Heading level={3} size="sm">Competitors ({data.competitors.length}/100)</Heading>
@@ -195,17 +193,17 @@ function ContextPanelInner({workspaceId,projectId,userId,headerBottom,onUnauthor
         </Stack>
         </Stack>},
         {value:'notes',label:'Notes',content:<Stack gap={4}><Heading level={3} size="sm">Research log</Heading>
-<p className="hint">Authored notes are retained until explicitly deleted.</p>{canEdit&&<Button variant="secondary" type="button" disabled={blocked} onClick={()=>open({kind:'research',summary:''})}>Add research note</Button>}
-        {data.researchLog.length===0?<p className="dim">No research notes saved.</p>:data.researchLog.map(row=><div key={row.id} style={{marginTop:16}}><strong>{row.entryDate} UTC</strong><p style={prose}>{row.summary}</p><p className="hint">Author ID: {row.createdBy}</p>{canEdit&&<Button variant="ghost" type="button" disabled={blocked||!!editor} onClick={()=>remove({kind:'remove-research',id:row.id},'this research note')}>Delete note from {row.entryDate}</Button>}</div>)}
-        {data.researchLogNextCursor&&<Button variant="secondary" type="button" disabled={blocked} onClick={()=>void older()}>Load older entries</Button>}
-<Heading level={3} size="sm">Report template summaries</Heading><p className="hint">Read-only previews from Reports.</p>{data.reportTemplates.length===0?<p className="dim">No report templates saved.</p>:data.reportTemplates.map(row=><div key={row.id} style={{marginTop:12}}><h3>{row.name}</h3><p style={prose}>{row.preview}</p>{row.truncated&&<p className="hint">Preview shortened to 200 characters.</p>}</div>)}{data.reportTemplatesTruncated&&<p className="hint">Showing the latest 20 templates. Open Reports to browse all templates.</p>}</Stack>}
+<Text size="sm" tone="muted">Authored notes are retained until explicitly deleted.</Text>{canEdit&&<Inline><Button variant="secondary" type="button" disabled={blocked} onClick={()=>open({kind:'research',summary:''})}>Add research note</Button></Inline>}
+        {data.researchLog.length===0?<Text tone="muted">No research notes saved.</Text>:data.researchLog.map(row=><Stack key={row.id} gap={1}><Text as="span" weight="semibold">{row.entryDate} UTC</Text><Text preserveWhitespace>{row.summary}</Text><Text size="sm" tone="muted">Author ID: {row.createdBy}</Text>{canEdit&&<Inline><Button variant="ghost" type="button" disabled={blocked||!!editor} onClick={()=>remove({kind:'remove-research',id:row.id},'this research note')}>Delete note from {row.entryDate}</Button></Inline>}</Stack>)}
+        {data.researchLogNextCursor&&<Inline><Button variant="secondary" type="button" disabled={blocked} onClick={()=>void older()}>Load older entries</Button></Inline>}
+<Heading level={3} size="sm">Report template summaries</Heading><Text size="sm" tone="muted">Read-only previews from Reports.</Text>{data.reportTemplates.length===0?<Text tone="muted">No report templates saved.</Text>:data.reportTemplates.map(row=><Stack key={row.id} gap={1}><Heading level={3} size="sm">{row.name}</Heading><Text preserveWhitespace>{row.preview}</Text>{row.truncated&&<Text size="sm" tone="muted">Preview shortened to 200 characters.</Text>}</Stack>)}{data.reportTemplatesTruncated&&<Text size="sm" tone="muted">Showing the latest 20 templates. Open Reports to browse all templates.</Text>}</Stack>},
       ]}/>
       {editor&&canEdit&&<Sheet open modal={false} topInset={headerBottom} width="sm" onClose={()=>void closeEditor()} closeDisabled={!!busy} busy={busy==='Saving changes'} unconfirmed={retry?error:undefined} error={!retry&&error?error:undefined} recovery={retry||conflict?recovery:undefined}
         actions={<Button variant="ghost" type="button" disabled={!!busy} onClick={()=>void load(true)}>Refresh</Button>}
         title={editor.kind==='business'?'Edit business context':editor.kind==='section'?'Custom section':editor.kind==='persona'?'Persona':editor.kind==='competitor'?'Competitor':editor.kind==='key-page'?'Key page':'Add research note'}>
       <form ref={formRef} onSubmit={submit} aria-label="Edit project context">
-        {notice&&<p role="status" className="banner">{notice}</p>}
-        <fieldset disabled={blocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
+        {notice&&<Alert variant="banner" tone="success">{notice}</Alert>}
+        <Fieldset legend="Project context fields" hideLegend disabled={blocked}>
           {editor.kind==='business'&&<>
             <Field label="Brand name" htmlFor="context-field-1"><Input id="context-field-1" required maxLength={120} value={editor.name} onChange={e=>setEditor({...editor,name:e.target.value})}/></Field>
             <Field label="Brand aliases, one per line" htmlFor="context-field-2" description="Up to 20 aliases, each at most 120 characters."><Textarea id="context-field-2" aria-label="Brand aliases, one per line" maxLength={2440} value={editor.aliases} onChange={e=>setEditor({...editor,aliases:e.target.value})}/></Field>
@@ -229,16 +227,17 @@ function ContextPanelInner({workspaceId,projectId,userId,headerBottom,onUnauthor
           </>}
           {editor.kind==='key-page'&&<>
             <Field label="Page URL" htmlFor="context-field-11" description="HTTP(S) only. Query values are stored; remove secrets before saving. The URL stays fixed after creation."><Input id="context-field-11" type="url" required readOnly={editor.existing} maxLength={2048} placeholder="https://example.com/page" value={editor.url} onChange={e=>setEditor({...editor,url:e.target.value})}/></Field>
-            <Field label="Page role" htmlFor="context-field-12"><Select id="context-field-12" aria-label="Page role" value={editor.role} onChange={e=>setEditor({...editor,role:e.target.value as KeyPage['role']})}><option value="other">Other</option><option value="hub">Hub</option><option value="spoke">Spoke</option><option value="money">Money page</option></Select></Field>
+            <Field label="Page role" htmlFor="context-field-12"><Select id="context-field-12" aria-label="Page role" value={editor.role} onChange={e=>setEditor({...editor,role:e.target.value as KeyPage['role']})} options={[{value:'other',label:'Other'},{value:'hub',label:'Hub'},{value:'spoke',label:'Spoke'},{value:'money',label:'Money page'}]}/></Field>
             <Field label="Page topic" htmlFor="context-field-13"><Input id="context-field-13" maxLength={200} value={editor.topic} onChange={e=>setEditor({...editor,topic:e.target.value})}/></Field>
             <Field label="Page notes" htmlFor="context-field-14"><Textarea id="context-field-14" aria-label="Page notes" maxLength={500} value={editor.notes} onChange={e=>setEditor({...editor,notes:e.target.value})}/></Field>
           </>}
           {editor.kind==='research'&&<Field label="Research summary" htmlFor="context-field-15" description="Up to 1,000 characters. The server records the UTC date and author."><Textarea id="context-field-15" aria-label="Research summary" required maxLength={1000} value={editor.summary} onChange={e=>setEditor({...editor,summary:e.target.value})}/></Field>}
           <Button variant="primary" type="submit">Save changes</Button>
-        </fieldset>
+        </Fieldset>
         <Button variant="ghost" type="button" disabled={!!busy} onClick={()=>void closeEditor()}>Cancel</Button>
       </form></Sheet>}
     </>}
     {confirmDialog}
-  </section>;
+    </Stack>
+  </Card>;
 }
