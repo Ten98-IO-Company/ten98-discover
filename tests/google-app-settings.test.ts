@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, test } from 'node:test';
 import { FoundationError } from '../src/server/auth.ts';
-import { getGoogleApp } from '../src/server/google.ts';
+import { getGoogleApp, saveGoogleApp } from '../src/server/google.ts';
+import { InputError } from '../src/server/validation.ts';
 
 // Synthetic configuration only: the fake pool below answers every query and no database connection is opened.
 Object.assign(process.env, { APP_URL: 'http://localhost:3000', DATABASE_URL: 'postgresql://synthetic:synthetic@127.0.0.1:9/unused_google_app_unit', AUTH_SECRET: 'google-app-unit-auth-only-'.repeat(3), BOOTSTRAP_TOKEN: 'google-app-unit-bootstrap-only-'.repeat(3), ANALYTICS_NETWORK_MODE: 'off' });
@@ -33,5 +34,27 @@ test('workspace owners, members without rights and users with no workspace are r
   for (const userId of [owner, viewer, unassigned]) {
     await assert.rejects(getGoogleApp(userId), (error: unknown) => error instanceof FoundationError && error.status === 403, userId);
   }
+  assert.equal(appQueries, 0);
+});
+
+test('a non-operator gets the same 403 for an invalid or a valid Google app body, before the body is read', async () => {
+  const bodies: Record<string, () => Promise<unknown>> = {
+    valid: async () => ({ revision: 3, clientId: '123-fixture.apps.googleusercontent.com', clientSecret: 'fixture-secret', enabled: true, testing: false }),
+    invalid: async () => ({ revision: -1, clientId: 'not-a-client-id', extra: true }),
+    unreadable: async () => { throw new InputError(415, 'content-type must be application/json'); },
+  };
+  for (const userId of [owner, viewer, unassigned]) {
+    const answers = new Set<string>();
+    for (const [name, body] of Object.entries(bodies)) {
+      let read = false;
+      const error = await saveGoogleApp(userId, () => { read = true; return body(); }).then(() => undefined, (failure: unknown) => failure);
+      assert.ok(error instanceof FoundationError && error.status === 403, `${userId} ${name}`);
+      assert.equal(read, false, `${userId} ${name}`);
+      answers.add(`${error.status} ${error.message}`);
+    }
+    assert.equal(answers.size, 1);
+  }
+  // Control: the operator's invalid body still reaches field validation.
+  await assert.rejects(saveGoogleApp(operator, bodies.invalid), (error: unknown) => error instanceof FoundationError && error.status === 400);
   assert.equal(appQueries, 0);
 });

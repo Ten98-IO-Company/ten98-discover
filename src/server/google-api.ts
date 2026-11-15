@@ -28,7 +28,7 @@ export async function handleGoogle(request: Request, bearer?: { userId: string; 
   const session = bearer ? null : await googleSignedIn(request), userId = bearer?.userId ?? session!.user.id;
   await requireWorkspaceFactor(path, userId);
   await limit(`google:${request.method === 'GET' ? 'read' : 'write'}:${userId}`, request.method === 'GET' ? 120 : 30);
-  if (path === '/api/google/app') return json(request.method === 'GET' ? await getGoogleApp(userId) : await saveGoogleApp(userId, await readJson(request)));
+  if (path === '/api/google/app') return json(request.method === 'GET' ? await getGoogleApp(userId) : await saveGoogleApp(userId, () => readJson(request)));
   if (!project) return json({ error: 'Not found.' }, 404);
   const [, projectId, operation = ''] = project;
   if (operation === '' && request.method === 'GET') { strictQuery([]); return json(await listGoogleConnections(projectId, userId, bearer?.token)); }
