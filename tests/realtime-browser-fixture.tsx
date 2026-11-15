@@ -12,7 +12,7 @@ function Frame(){
   const [menuOpen,setMenuOpen]=React.useState(false);
   if(!shellMode)return <main style={{maxWidth:1100,margin:'20px auto',padding:'0 16px',minWidth:0}}><Outlet/></main>;
   // Canonical shell composition with synthetic scope; this does not exercise native authentication.
-  return <AppShell navigation={{open:menuOpen,onOpenChange:setMenuOpen}} sidebar={<nav aria-label="Synthetic application navigation">Ten98 Discover</nav>} topbar={<AppTopbar wrap menuToggle breadcrumb={{icon:'folder',scope:'QA E2E 2026-11-02',current:'Live visitors'}} search={<SearchField variant="topbar" label="Find a tool" hideLabel placeholder="Find a tool…" value="" onValueChange={()=>{}}/>} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name="QA" email="qa@example.test"><button type="button">Profile</button></AccountMenu>}/>}>
+  return <AppShell navigation={{open:menuOpen,onOpenChange:setMenuOpen}} sidebar={<nav aria-label="Synthetic application navigation">Ten98 Discover</nav>} topbar={<AppTopbar wrap menuToggle breadcrumb={{icon:'folder',scope:'QA E2E 2026-11-02',current:'Live visitors'}} search={<SearchField variant="topbar" label="Find a tool" hideLabel placeholder="Find a tool…" value="" onValueChange={()=>{}}/>} actions={<AccountMenu name="QA" email="qa@example.test"><button type="button">Profile</button></AccountMenu>}/>}>
     <Stack gap={6}><PageHeader title="Overview" description="QA E2E 2026-11-02 · https://realtime.example"/><SectionNav label="Overview pages" items={['Dashboard','Live','Explore','Latest events','Page speed'].map(label=>({id:label,label,href:'#',current:label==='Live'}))}/><Outlet/></Stack>
   </AppShell>;
 }
