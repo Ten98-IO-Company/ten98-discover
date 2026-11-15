@@ -470,7 +470,7 @@ function TeamPanelContent(props: TeamPanelProps) {
           {data.members.length === 0 ? (
             <EmptyState title='No members found.' description='People who join this workspace will appear here.' />
           ) : (
-            <DataTable ariaLabel='Members' columns={memberColumns} rows={data.members} rowKey={m => m.userId} />
+            <DataTable ariaLabel='Members' responsive='stack' searchable={false} sortable={false} pagination={false} columns={memberColumns} rows={data.members} rowKey={m => m.userId} />
           )}
           {solo && <Text as='p' tone='muted'>You’re the only member. Invite people to share dashboards and reports.</Text>}
         </Stack>
@@ -486,7 +486,7 @@ function TeamPanelContent(props: TeamPanelProps) {
                 : 'Invitations that have not been accepted yet will appear here.'}
             />
           ) : (
-            <DataTable ariaLabel='Pending invitations' columns={invitationColumns} rows={data.invitations} rowKey={inv => inv.id} />
+            <DataTable ariaLabel='Pending invitations' responsive='stack' searchable={false} sortable={false} pagination={false} columns={invitationColumns} rows={data.invitations} rowKey={inv => inv.id} />
           )}
           {attempt && (
             <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
