@@ -127,6 +127,32 @@ test('report styles refuse escapes and unbalanced text, and keep only same-docum
   assert.deepEqual(svg,[{fill:'url(#g)'},{fill:'blue'},{fill:'url(#g) red',stroke:'none'}]);
 });
 
+test('report styles read strings as text, not functions, and still drop escaped strings',()=>{
+  const kept='content:"Total (EUR)";font-family:"Foo (Bar)", \'Baz (Qux)\', serif;quotes:"(" ")"';
+  assert.equal(styleOf(`<p style="${kept.replaceAll('"','&quot;')}">x</p>`).inline,kept);
+  assert.equal(styleOf(`<style>p{${kept}}</style>`).sheet,`p{${kept}}`);
+  for(const dropped of ['content:"a" url(https://external.invalid/a.png)','background:url("https://external.invalid/a.png")','content:"\\28 x"','content:"(" image-set("a.png" 1x)'])
+    assert.equal(styleOf(`<style>p{color:red;${dropped}}</style>`).sheet,'p{color:red}',dropped);
+});
+
+test('report styles keep prefixed gradients, path() and env(), and drop @page, @property and @scope',()=>{
+  const kept='background:-webkit-linear-gradient(top, #fff, #000);background-image:-moz-repeating-radial-gradient(circle, red, blue 10%);'
+    +'clip-path:path("M0 0 L10 10 Z");padding-left:env(safe-area-inset-left, 8px)';
+  assert.equal(styleOf(`<style>p{${kept}}</style>`).sheet,`p{${kept}}`);
+  for(const rule of ['@page{margin:1cm}','@property --size{syntax:"<length>";inherits:false;initial-value:0px}','@scope (.card){img{border:0}}'])
+    assert.equal(styleOf(`<style>${rule}p{color:red}</style>`).sheet,'p{color:red}',rule);
+});
+
+test('report style sanitising stays linear on long identifiers, hyphen runs and unclosed parentheses',()=>{
+  const run=330000;
+  const source=`<p style="color:${'a'.repeat(run)}">a</p><style>p{b:${'-'.repeat(run)}}q{c:${'b'.repeat(run/10)} (}</style><p style="x:${'('.repeat(run)}">b</p>`;
+  assert.ok(Buffer.byteLength(source)<1048576 && Buffer.byteLength(source)>1000000);
+  const started=performance.now();
+  sanitizeReportHtml(source);
+  // Before the identifier-start lookbehind, an 80 KB identifier alone took about 20 seconds.
+  assert.ok(performance.now()-started<2000,`sanitising took ${Math.round(performance.now()-started)} ms`);
+});
+
 test('harmless report styles for colour, size and layout survive unchanged',()=>{
   const inline='display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:calc(var(--gap) * 2);color:rgb(10 20 30 / 50%);'
     +'background:linear-gradient(90deg, #fff, hsl(0 0% 90%));transform:translateX(-50%) rotate(2deg);font:600 14px/1.4 "Segoe UI", system-ui, sans-serif;'

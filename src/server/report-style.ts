@@ -6,13 +6,14 @@
 /** CSS functions that compute colours, lengths, shapes or transforms and never fetch a resource. */
 const allowedFunctions = new Set([
   'rgb','rgba','hsl','hsla','hwb','lab','lch','oklab','oklch','color','color-mix','light-dark',
-  'calc','min','max','clamp','round','mod','rem','abs','sign','sin','cos','tan','asin','acos','atan','atan2','pow','sqrt','hypot','log','exp','var',
+  'calc','min','max','clamp','round','mod','rem','abs','sign','sin','cos','tan','asin','acos','atan','atan2','pow','sqrt','hypot','log','exp','var','env',
   'linear-gradient','radial-gradient','conic-gradient','repeating-linear-gradient','repeating-radial-gradient','repeating-conic-gradient',
+  ...['-webkit-','-moz-'].flatMap(prefix=>['linear-gradient','radial-gradient','repeating-linear-gradient','repeating-radial-gradient'].map(name=>prefix+name)),
   'translate','translatex','translatey','translatez','translate3d','scale','scalex','scaley','scalez','scale3d',
   'rotate','rotatex','rotatey','rotatez','rotate3d','skew','skewx','skewy','matrix','matrix3d','perspective',
   'blur','brightness','contrast','drop-shadow','grayscale','hue-rotate','invert','opacity','saturate','sepia',
   'cubic-bezier','steps','linear','repeat','minmax','fit-content','counter','counters',
-  'inset','circle','ellipse','polygon','rect','xywh',
+  'inset','circle','ellipse','polygon','rect','xywh','path',
 ]);
 const blockedProperties = new Set(['behavior','-moz-binding']);
 /** At-rules whose block is a rule list. Every other at-rule (@import, @font-face, @namespace, ...) is dropped. */
@@ -21,7 +22,12 @@ const keyframesAtRules = new Set(['keyframes','-webkit-keyframes']);
 const maxAtRuleDepth = 8;
 // Selectors and at-rule preludes cannot fetch, but loader-shaped text is refused there too.
 const loaderText = /(?:url|image|image-set|cross-fade|element|src|expression)\s*\(/iu;
-const functionName = /([-\w\u{80}-\u{10FFFF}]+)\s*\(/gu;
+// The lookbehind starts a match only at the beginning of an identifier; without it a long
+// identifier is rescanned from every position inside it, which is quadratic.
+const functionName = /(?<![-\w\u{80}-\u{10FFFF}])([-\w\u{80}-\u{10FFFF}]+)\s*\(/gu;
+// Values reaching the function check have complete strings with no escapes, so a string is
+// exactly quote to quote and can never be a function token.
+const quoted = /"[^"\n]*"|'[^'\n]*'/gu;
 const fragmentUrl = /url\(\s*#[A-Za-z_][\w-]*\s*\)/giu;
 // CSS whitespace is space, tab, LF, CR and FF. Escapes, other control characters, markup and braces are refused.
 const unsafeText = /[\\<{}\u0000-\u0008\u000b\u000e-\u001f\u007f]/u;
@@ -61,7 +67,8 @@ function readUntil(css:string, start:number, stops:string) {
 }
 
 function safeValue(value:string, fragmentUrls=false) {
-  const checked=fragmentUrls ? value.replace(fragmentUrl,' ') : value;
+  const unquoted=value.replace(quoted,'""');
+  const checked=fragmentUrls ? unquoted.replace(fragmentUrl,' ') : unquoted;
   for (const [,name] of checked.matchAll(functionName)) if (!allowedFunctions.has(name.toLowerCase())) return false;
   return true;
 }
