@@ -87,6 +87,8 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   const initial = await expect('/api/account/security', primary, 200);
   assert.equal(initial.user.twoFactorEnabled, false);
   assert.equal(initial.hasPassword, true);
+  // R requires two-factor, but without a factor there is nothing to turn off, so the turn-off explanation stays null.
+  assert.equal(initial.twoFactorRequirement, null, 'A member without a factor gets no turn-off explanation.');
   assert.ok(initial.sessions.some((session: { current: boolean }) => session.current));
   assert.ok(initial.sessions.every((session: Record<string, unknown>) => !('token' in session) && !('ipAddress' in session)), 'Session list must not reveal bearer credentials.');
 
@@ -376,7 +378,7 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Two-factor own fixture',$3,gen_random_uuid(),'infinity')", [ownProject, ownWorkspace.id, `https://${randomUUID()}.two-factor.integration.test`]);
   assert.deepEqual(await expect(`/api/workspaces/${ownWorkspace.id}/projects`, outsider, 404), { error: 'Workspace not found or unavailable.' });
   assert.deepEqual(await expect(`/api/projects/${ownProject}/events`, outsider, 404), { error: 'Project not found or unavailable.' });
-  await expect('/api/account/security', primary, 200);
+  assert.equal((await expect('/api/account/security', primary, 200)).twoFactorRequirement, null, 'Once the factor is off, required workspaces give no turn-off explanation.');
   assert.equal((await expect('/api/account/two-factor/enable', primary, 400, { password: 'incorrect password' })).error, 'The current password was not accepted.');
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
   await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
