@@ -106,6 +106,7 @@ export async function runGoogleChecks(browserCheck?: (fixture: GoogleBrowserFixt
   try {
     await withGoogleTransportForTests(transport, async () => {
       assert.equal((await call('/api/google/app', appInput, viewer)).response.status, 403);
+      assert.equal((await call('/api/google/app', undefined, viewer)).response.status, 403);
       const app = await call('/api/google/app', appInput); assert.equal(app.response.status, 200);
       assert.equal(JSON.stringify(app.data).includes(clientSecret), false);
       assert.equal((await call('/api/google/app', appInput)).response.status, 409);

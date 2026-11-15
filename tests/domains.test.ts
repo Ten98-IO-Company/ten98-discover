@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Resolver } from 'node:dns/promises';
 import test from 'node:test';
 import { FoundationError } from '../src/server/auth.ts';
-import { hasDomainProof, lookupDomainTxt, normalizeDomainHost, normalizePublicHostname } from '../src/server/domains.ts';
+import { hasDomainProof, lookupDomainTxt, normalizeDomainHost, normalizePublicHostname, verifyDomain } from '../src/server/domains.ts';
 
 test('domain normalization preserves the exact host and canonicalizes IDNs', () => {
   assert.equal(normalizeDomainHost('Alias.Example.COM.'), 'alias.example.com');
@@ -85,4 +85,38 @@ test('successful DNS lookup clears its deadline without cancelling completed wor
   assert.deepEqual(await lookupDomainTxt('_ten98-challenge.success.example.com'), [['mocked TXT']]);
   context.mock.timers.tick(5000);
   assert.equal(cancel.mock.callCount(), 0);
+});
+
+test('internal-looking suffixes are refused while public names that merely contain them stay valid', () => {
+  for (const host of ['lan', 'printer.lan', 'corp', 'mail.corp', 'intranet', 'wiki.intranet', 'private', 'db.private', 'NAS.LAN.', 'a.b.home.arpa', 'host.internal', 'host.local', 'app.localhost'])
+    for (const normalize of [normalizeDomainHost, normalizePublicHostname])
+      assert.throws(() => normalize(host), error => error instanceof FoundationError && error.status === 400, host);
+  for (const host of ['lan.example.com', 'corp.example.com', 'private.example.com', 'intranet.example.com', 'example.corporate', 'example.plan', 'example.lane'])
+    assert.equal(normalizeDomainHost(host), host);
+});
+
+test('the ownership proof only queries a stored hostname that still passes public-name normalization', async () => {
+  const databaseKey = Symbol.for('ten98-discover.database');
+  const globals = globalThis as typeof globalThis & { [databaseKey]?: unknown };
+  const prior = globals[databaseKey];
+  let hostname = '';
+  const client = { release() {}, async query(sql: string) {
+    const rows = (values: unknown[]) => ({ rows: values, rowCount: values.length });
+    if (sql.startsWith('SELECT workspace_id FROM project')) return rows([{ workspace_id: randomUUID() }]);
+    if (sql.startsWith('SELECT p.id,p.origin')) return rows([{ id: randomUUID(), origin: 'https://example.com' }]);
+    if (sql.startsWith('SELECT * FROM project_domain')) return rows([{ id: randomUUID(), hostname, role: 'serving', challenge_hash: 'a'.repeat(64), challenge_expires_at: new Date(Date.now() + 60_000) }]);
+    return rows([]);
+  } };
+  globals[databaseKey] = { pool: { connect: async () => client } };
+  try {
+    const names: string[] = [];
+    const lookup = async (name: string) => { names.push(name); throw Object.assign(new Error('No record.'), { code: 'ENOTFOUND' }); };
+    for (hostname of ['printer.lan', 'wiki.corp', 'db.private', 'host.intranet', 'host.internal', '10.0.0.1', 'intranet']) {
+      await assert.rejects(verifyDomain(randomUUID(), randomUUID(), randomUUID(), {}, lookup), (error: unknown) => error instanceof FoundationError && error.status === 400, hostname);
+    }
+    assert.deepEqual(names, []);
+    hostname = 'www.example.com';
+    await assert.rejects(verifyDomain(randomUUID(), randomUUID(), randomUUID(), {}, lookup), (error: unknown) => error instanceof FoundationError && error.status === 422);
+    assert.deepEqual(names, ['_ten98-challenge.www.example.com']);
+  } finally { if (prior === undefined) delete globals[databaseKey]; else globals[databaseKey] = prior; }
 });

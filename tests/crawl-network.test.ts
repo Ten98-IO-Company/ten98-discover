@@ -68,7 +68,7 @@ test('URL and all-answer DNS boundaries block mixed/private/special addresses be
     for(const raw of ['https://127.0.0.1/','https://user:pass@example.com/','https://example.com:8443/','http://169.254.169.254/','https://127.1/','file:///private','https://example.com/'+ 'a'.repeat(2048)])invalid(await fetchCrawlDocument(raw,'html'),'blocked');
     invalid(await fetchCrawlDocument('https://example.com/','other' as CrawlDocumentKind),'blocked');assert.equal(state.requests,0);
   });
-  for(const spec of [{v4:['1.1.1.1','10.0.0.1']},{v4:[],v6:[]},{v4:Array(33).fill('1.1.1.1')},{v4:['1.1.1.1'],v6:['::ffff:1.1.1.1']},{v4:['1.1.1.1'],v6:['2001:db8::1']},{v4:['invalid']}])await fixture(spec,async state=>{invalid(await fetch(),'blocked');assert.equal(state.requests,0);});
+  for(const spec of [{v4:['1.1.1.1','10.0.0.1']},{v4:[],v6:[]},{v4:Array(33).fill('1.1.1.1')},{v4:['1.1.1.1'],v6:['::ffff:1.1.1.1']},{v4:['1.1.1.1'],v6:['2001:db8::1']},{v4:['168.63.129.16']},{v4:['1.1.1.1'],v6:['2::1']},{v4:['1.1.1.1'],v6:['2002:a00:1::1']},{v4:['invalid']}])await fixture(spec,async state=>{invalid(await fetch(),'blocked');assert.equal(state.requests,0);});
   await fixture({dnsError:true},async state=>{const result=await fetch();invalid(result,'dns_error');assert.ok(!JSON.stringify(result).includes('private'));assert.equal(state.requests,0);});
   await fixture({peer:'8.8.8.8'},async state=>{invalid(await fetch(),'peer_mismatch');assert.equal(state.reads,0);assert.equal(state.requestDestroyed,true);});
   await fixture({peer:'::ffff:1.1.1.1',body:Buffer.from('ok')},async()=>assert.equal((await fetch()).complete,true));

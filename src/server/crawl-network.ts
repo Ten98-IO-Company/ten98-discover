@@ -6,7 +6,7 @@ import {Readable,Transform,Writable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createGunzip} from 'node:zlib';
 import {pinnedPeer,redirectUrl,resolveRedirectHost} from './domain-redirect-network.ts';
-import {publicNetworkAddress} from '@ten98/runtime';
+import {publicTargetAddress} from './public-target-address.ts';
 import {shopifyCrawlerHeadersFor,type ShopifyCrawlerAccess} from '@ten98/runtime';
 
 export type CrawlDocumentKind='html'|'robots'|'sitemap';
@@ -147,7 +147,10 @@ async function requestDocument(url:URL,address:{address:string;family:4|6},kind:
   }).finally(()=>agent.destroy());
 }
 
-/** Transient bytes/headers only: this neither follows redirects nor establishes crawl permission or scope. */
+/**
+ * Transient bytes/headers only: this neither follows redirects nor establishes crawl permission or scope. The request
+ * runs in the calling (audit worker) process; only parsing of the returned bytes happens in the isolated parser child.
+ */
 export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,signal?:AbortSignal,authorizeShopify?:()=>Promise<ShopifyCrawlerAccess|null>):Promise<CrawlDocumentObservation> {
   const started=performance.now(),controller=new AbortController();let timedOut=false,accessFailure=false;
   const timer=setTimeout(()=>{timedOut=true;controller.abort();},TOTAL_MS);
@@ -161,7 +164,7 @@ export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,si
     try{addresses=await resolveRedirectHost(url.hostname.replace(/^\[|\]$/g,''),controller.signal);}catch{throw failure('dns_error');}
     finally{observation.dnsMs=Math.round(performance.now()-dnsStarted);}
     controller.signal.throwIfAborted();
-    if(addresses.length<1||addresses.length>32||addresses.some(a=>isIP(a.address)!==a.family||!publicNetworkAddress(a.address)))throw failure('blocked');
+    if(addresses.length<1||addresses.length>32||addresses.some(a=>isIP(a.address)!==a.family||!publicTargetAddress(a.address)))throw failure('blocked');
     // Recheck the selected credential after DNS and pacing, immediately before native dispatch.
     let access:ShopifyCrawlerAccess|null=null;
     if(authorizeShopify){try{access=await authorizeShopify();}catch(error){accessFailure=true;throw error;}}

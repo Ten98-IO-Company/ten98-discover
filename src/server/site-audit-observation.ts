@@ -42,7 +42,7 @@ function boundedEvidence(source:CrawlEvidence|null):{evidence:AuditEvidence|null
 }
 function mime(value:string|null):string|null {try{return value===null?null:new MIMEType(value).essence;}catch{return null;}}
 
-/** No admission/robots authority here. All markup parsing uses the fixed isolated child and worker-root cwd. */
+/** No admission/robots authority here. The download already ran in this process; only markup parsing uses the fixed isolated child and worker-root cwd. */
 export async function prepareAuditObservation(input:AuditPreparationInput,signal?:AbortSignal):Promise<PreparedAuditObservation> {
   const {kind,download}=input;
   const unavailable=(reason:Extract<PreparedAuditObservation,{status:'unavailable'}>['reason']):PreparedAuditObservation=>({status:'unavailable',kind,reason});
