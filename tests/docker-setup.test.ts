@@ -119,6 +119,20 @@ test('an older env file that still defines BOOTSTRAP_TOKEN keeps working', () =>
   assert.ok(v.mode === GOOD.mode && v.url === GOOD.url && v.port === GOOD.port && v.project === GOOD.project);
 });
 
+test('an env file written before the ten98-discover rename keeps working; other images are refused', () => {
+  const d = tmp();
+  createSetup(d, GOOD);
+  const current = readFileSync(join(d, '.env'), 'utf8');
+  assert.ok(current.includes(`TEN98_IMAGE=ten98-discover:${GOOD.project}\n`));
+  writeFileSync(join(d, '.env'), current.replace(`TEN98_IMAGE=ten98-discover:${GOOD.project}`, `TEN98_IMAGE=ten98-monitor:${GOOD.project}`));
+  const v = readSetup(d) as Record<string, unknown>;
+  assert.ok(v.mode === GOOD.mode && v.url === GOOD.url && v.port === GOOD.port && v.project === GOOD.project);
+  for (const image of [`ten98-monitor:other`, `ten98-discover:other`, `ten98-monitor:${GOOD.project}-x`, `example.com/ten98-monitor:${GOOD.project}`]) {
+    writeFileSync(join(d, '.env'), current.replace(`TEN98_IMAGE=ten98-discover:${GOOD.project}`, `TEN98_IMAGE=${image}`));
+    assert.throws(() => readSetup(d), /missing or invalid/, image);
+  }
+});
+
 test('symlink env file is refused', (t: TestContext) => {
   const d = tmp();
   const target = join(d, 'real.env');

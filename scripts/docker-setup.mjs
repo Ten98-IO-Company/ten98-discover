@@ -118,7 +118,9 @@ export function readSetup(directory) {
       port: env.APP_PORT,
       project: env.COMPOSE_PROJECT_NAME,
     });
-    if (env.TEN98_IMAGE !== `ten98-discover:${v.project}`) fail('bad image selection');
+    // Files written before the ten98-monitor -> ten98-discover rename keep the old tag; deploy.sh exports the new tag,
+    // which overrides .env in Compose, so an older file still resumes. Any other image is refused.
+    if (env.TEN98_IMAGE !== `ten98-discover:${v.project}` && env.TEN98_IMAGE !== `ten98-monitor:${v.project}`) fail('bad image selection');
     // An older file's BOOTSTRAP_TOKEN is ignored: the first account created in the app becomes the owner.
     const secrets = [env.POSTGRES_PASSWORD, env.AUTH_SECRET];
     if (secrets.some((s) => typeof s !== 'string' || !SECRET_RE.test(s)) || new Set(secrets).size !== 2) {
