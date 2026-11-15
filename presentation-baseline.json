@@ -162,10 +162,6 @@
     "element": 101,
     "styling": 55
   },
-  "src/components/RankCheckView.tsx": {
-    "element": 36,
-    "styling": 17
-  },
   "src/components/RankHistoryView.tsx": {
     "element": 120,
     "styling": 73
