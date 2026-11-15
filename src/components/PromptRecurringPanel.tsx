@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {Alert,Button,Card,Checkbox,Field,Fieldset,Grid,Inline,Input,Option,Select,Stack,Text} from '@ten98/ui';
 import {ApiError,errMsg} from '../lib/api';
 import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,type PromptTracker} from '../lib/prompt-recurring';
 import {modelApi,ModelResponseError} from './OpenRouterModelPicker';
@@ -50,37 +51,39 @@ export function PromptRecurringPanel({projectId,userId,role,preparation,onUnauth
  function approve(item:PromptTracker){if(!owner||!fresh||!consent||attempt)return;try{void request(base+'/'+item.id+'/approve',{requestId:crypto.randomUUID(),revision:item.revision,preparationId:preparation!.id,calendar:calendar()});}catch(cause){setError(errMsg(cause));}}
  const items=shown?.items??[],visible=shownPoint&&!items.some(item=>item.id===shownPoint.item.id)?[shownPoint.item,...items]:items;
  const same=(item:PromptTracker)=>!!preparation&&item.definition.promptId===preparation.input.promptId&&item.definition.versionId===preparation.input.versionId&&item.definition.systemText===preparation.input.systemText&&item.definition.maxCompletionTokens===preparation.input.maxCompletionTokens&&JSON.stringify(item.definition.models)===JSON.stringify(preparation.input.models);
- return <details className="card stack prompt-recurring" open={fresh} onToggle={event=>{if(event.currentTarget.open)void request();}}>
+ return <Card><details open={fresh} onToggle={event=>{if(event.currentTarget.open)void request();}}>
   <summary>Recurring prompt tracking</summary>
-  <p>Each scheduled run requests fresh model answers using the saved prompt version, models, system message and output limit. These API answers do not measure consumer web search.</p>
-  <p className="hint">Trackers start paused. Only an owner can approve future requests. Monthly runs use the last calendar day. When clocks change, skipped local times move forward and repeated times use the later occurrence. Missed runs are not backfilled.</p>
-    <div className="row"><label>Tracker collection<select value={status} disabled={busy} onChange={event=>{const filter=event.target.value as typeof status;setStatus(filter);setCursor(null);setData(null);setPoint(null);void request(pageUrl(filter,null));}}><option value="active">Active and paused</option><option value="archived">Archived</option><option value="all">All trackers</option></select></label><button className="btn" type="button" disabled={busy} onClick={()=>void request()}>Refresh recurring status</button></div>
-  <p className="hint">Showing up to 20 trackers per page. Archiving keeps earlier runs and request outcomes.</p>
-  {busy&&<p role="status">Reading or saving recurring status…</p>}{error&&<p role="alert" className="alert">{error}</p>}
-  {attempt&&<div className="banner"><p>Keep this exact request until its result is known. Refreshing status does not start new work.</p><button type="button" className="btn" disabled={busy} onClick={()=>void request(attempt.path===base?pageUrl():attempt.path.replace(/\/(approve|pause|run|archive|restore)$/,''))}>Inspect saved tracker</button><button type="button" className="btn" disabled={busy||!owner} onClick={()=>void request(attempt.path,attempt.body)}>Retry same recurring request</button></div>}
-  {owner&&<form className="stack" onSubmit={create}>
-   <fieldset disabled={busy||!!attempt} style={{border:0,padding:0,minWidth:0}}><legend>Recurring setup</legend>
-    {!fresh&&<p>Choose models and select Schedule above to configure a tracker.</p>}
-    <label>Tracker name<input value={name} onChange={e=>setName(e.target.value)} maxLength={120}/></label>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,140px),1fr))',gap:12,minWidth:0}}>
-     <label>Cadence<select value={interval} onChange={e=>setInterval(e.target.value as typeof interval)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly, month end</option></select></label>
-     <label>Recurring time zone<input value={timezone} maxLength={100} onChange={e=>setZone(e.target.value)}/></label>
-     <label>Local hour<input type="number" min={0} max={23} value={hour} onChange={e=>setHour(e.target.value)}/></label><label>Local minute<input type="number" min={0} max={59} value={minute} onChange={e=>setMinute(e.target.value)}/></label>
-     {interval==='weekly'&&<label>Weekday<select value={weekday} onChange={e=>setWeekday(e.target.value)}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i)=><option key={day} value={i}>{day}</option>)}</select></label>}
-    </div>
-    <label className="row"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I authorize future fresh requests for this definition until paused or approval changes.</label>
-    <p className="hint">Only this saved prompt and model selection will run. Pause the tracker to stop future requests.</p>
-    <button className="btn primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save paused tracker'}</button>
-   </fieldset>
-  </form>}
-  {(shown||shownPoint)&&<div className="stack"><h3>{shown?.items.length??0} trackers on this page</h3>{shownPoint&&!items.some(item=>item.id===shownPoint.item.id)&&<p>Selected tracker outside this page</p>}{visible.map(item=><article className="card stack" key={item.id}>
-   <h4 style={{overflowWrap:'anywhere'}}>{item.name}</h4><p>{item.archivedAt?'Archived':item.enabled?'Enabled':'Paused'} · {item.calendar.interval==='monthly'?'month end':item.calendar.interval} · Next {nextDue(item.nextDueAt,item.calendar.timezone)}</p>
-   <p>{item.definition.models.join(' + ')} · Prompt version <bdi>{item.definition.versionId}</bdi></p>{item.lastStatus&&<p role="status">{item.lastStatus}</p>}
-   {owner&&!item.archivedAt&&<div className="row"><button type="button" className="btn" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/pause',{requestId:crypto.randomUUID(),revision:item.revision})}>Pause {item.name}</button><button type="button" className="btn" disabled={busy||!!attempt||!fresh||!same(item)||!consent} onClick={()=>approve(item)}>Approve and resume {item.name}</button><button type="button" className="btn" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/run',{requestId:crypto.randomUUID(),revision:item.revision})}>Run now {item.name}</button></div>}
-   {owner&&<button type="button" className="btn" disabled={busy||!!attempt} onClick={()=>void request(base+'/'+item.id+'/'+(item.archivedAt?'restore':'archive'),{requestId:crypto.randomUUID(),revision:item.revision})}>{item.archivedAt?'Restore paused':'Archive'} {item.name}</button>}
-   <p className="hint">Pausing stops requests that have not been sent. Requests already sent may still complete; open the original run to cancel remaining requests or check an unconfirmed outcome. Restored trackers need approval before running again.</p>
-   <ul>{item.occurrences.map(o=><li key={o.id}>{o.scheduledFor} · {o.status}{o.reason?' · '+o.reason:''}{o.comparisonId&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>onOpenComparison(o.comparisonId!)}>Open occurrence comparison</button>}</li>)}</ul>
-   <p className="hint">Latest 10 scheduled runs within the saved history period. Request outcomes are kept separately from answers, which may expire.</p>
-  </article>)}{shown&&<div className="row">{cursor&&<button type="button" className="btn" disabled={busy} onClick={()=>{setCursor(null);setPoint(null);void request(pageUrl(status,null));}}>First tracker page</button>}{shown.nextCursor&&<button type="button" className="btn" disabled={busy} onClick={()=>{const next=shown.nextCursor;setCursor(next);setPoint(null);void request(pageUrl(status,next));}}>Next tracker page</button>}</div>}</div>}
- </details>;
+  <Stack>
+  <Text>Each scheduled run requests fresh model answers using the saved prompt version, models, system message and output limit. These API answers do not measure consumer web search.</Text>
+  <Text size="sm" tone="muted">Trackers start paused. Only an owner can approve future requests. Monthly runs use the last calendar day. When clocks change, skipped local times move forward and repeated times use the later occurrence. Missed runs are not backfilled.</Text>
+  <Inline align="end"><Field label="Tracker collection"><Select value={status} disabled={busy} onChange={event=>{const filter=event.target.value as typeof status;setStatus(filter);setCursor(null);setData(null);setPoint(null);void request(pageUrl(filter,null));}}><Option value="active">Active and paused</Option><Option value="archived">Archived</Option><Option value="all">All trackers</Option></Select></Field><Button variant="secondary" type="button" disabled={busy} onClick={()=>void request()}>Refresh recurring status</Button></Inline>
+  <Text size="sm" tone="muted">Showing up to 20 trackers per page. Archiving keeps earlier runs and request outcomes.</Text>
+  {busy&&<Text role="status">Reading or saving recurring status…</Text>}{error&&<Alert tone="danger" role="alert">{error}</Alert>}
+  {attempt&&<Alert variant="banner"><Stack><Text>Keep this exact request until its result is known. Refreshing status does not start new work.</Text><Inline><Button type="button" variant="secondary" disabled={busy} onClick={()=>void request(attempt.path===base?pageUrl():attempt.path.replace(/\/(approve|pause|run|archive|restore)$/,''))}>Inspect saved tracker</Button><Button type="button" variant="secondary" disabled={busy||!owner} onClick={()=>void request(attempt.path,attempt.body)}>Retry same recurring request</Button></Inline></Stack></Alert>}
+  {owner&&<Stack as="form" onSubmit={create}>
+   <Fieldset legend="Recurring setup" disabled={busy||!!attempt}>
+    {!fresh&&<Text>Choose models and select Schedule above to configure a tracker.</Text>}
+    <Field label="Tracker name"><Input value={name} onChange={e=>setName(e.target.value)} maxLength={120}/></Field>
+    <Grid columns="auto" minItemWidth="sm">
+     <Field label="Cadence"><Select value={interval} onChange={e=>setInterval(e.target.value as typeof interval)}><Option value="daily">Daily</Option><Option value="weekly">Weekly</Option><Option value="monthly">Monthly, month end</Option></Select></Field>
+     <Field label="Recurring time zone"><Input value={timezone} maxLength={100} onChange={e=>setZone(e.target.value)}/></Field>
+     <Field label="Local hour"><Input type="number" min={0} max={23} value={hour} onChange={e=>setHour(e.target.value)}/></Field><Field label="Local minute"><Input type="number" min={0} max={59} value={minute} onChange={e=>setMinute(e.target.value)}/></Field>
+     {interval==='weekly'&&<Field label="Weekday"><Select value={weekday} onChange={e=>setWeekday(e.target.value)}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i)=><Option key={day} value={i}>{day}</Option>)}</Select></Field>}
+    </Grid>
+    <Checkbox label="I authorize future fresh requests for this definition until paused or approval changes." checked={consent} onChange={e=>setConsent(e.target.checked)}/>
+    <Text size="sm" tone="muted">Only this saved prompt and model selection will run. Pause the tracker to stop future requests.</Text>
+    <Button variant="primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save paused tracker'}</Button>
+   </Fieldset>
+  </Stack>}
+  {(shown||shownPoint)&&<Stack><Text as="strong" weight="semibold">{shown?.items.length??0} trackers on this page</Text>{shownPoint&&!items.some(item=>item.id===shownPoint.item.id)&&<Text>Selected tracker outside this page</Text>}{visible.map(item=><Card as="article" headingLevel={4} title={item.name} key={item.id}>
+   <Stack><Text>{item.archivedAt?'Archived':item.enabled?'Enabled':'Paused'} · {item.calendar.interval==='monthly'?'month end':item.calendar.interval} · Next {nextDue(item.nextDueAt,item.calendar.timezone)}</Text>
+   <Text>{item.definition.models.join(' + ')} · Prompt version <bdi>{item.definition.versionId}</bdi></Text>{item.lastStatus&&<Text role="status">{item.lastStatus}</Text>}
+   {owner&&!item.archivedAt&&<Inline><Button type="button" variant="secondary" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/pause',{requestId:crypto.randomUUID(),revision:item.revision})}>Pause {item.name}</Button><Button type="button" variant="secondary" disabled={busy||!!attempt||!fresh||!same(item)||!consent} onClick={()=>approve(item)}>Approve and resume {item.name}</Button><Button type="button" variant="secondary" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/run',{requestId:crypto.randomUUID(),revision:item.revision})}>Run now {item.name}</Button></Inline>}
+   {owner&&<Inline><Button type="button" variant="secondary" disabled={busy||!!attempt} onClick={()=>void request(base+'/'+item.id+'/'+(item.archivedAt?'restore':'archive'),{requestId:crypto.randomUUID(),revision:item.revision})}>{item.archivedAt?'Restore paused':'Archive'} {item.name}</Button></Inline>}
+   <Text size="sm" tone="muted">Pausing stops requests that have not been sent. Requests already sent may still complete; open the original run to cancel remaining requests or check an unconfirmed outcome. Restored trackers need approval before running again.</Text>
+   <Stack as="ul">{item.occurrences.map(o=><Inline as="li" key={o.id}><Text as="span">{o.scheduledFor} · {o.status}{o.reason?' · '+o.reason:''}</Text>{o.comparisonId&&<Button type="button" variant="ghost" disabled={busy} onClick={()=>onOpenComparison(o.comparisonId!)}>Open occurrence comparison</Button>}</Inline>)}</Stack>
+   <Text size="sm" tone="muted">Latest 10 scheduled runs within the saved history period. Request outcomes are kept separately from answers, which may expire.</Text></Stack>
+  </Card>)}{shown&&<Inline>{cursor&&<Button type="button" variant="secondary" disabled={busy} onClick={()=>{setCursor(null);setPoint(null);void request(pageUrl(status,null));}}>First tracker page</Button>}{shown.nextCursor&&<Button type="button" variant="secondary" disabled={busy} onClick={()=>{const next=shown.nextCursor;setCursor(next);setPoint(null);void request(pageUrl(status,next));}}>Next tracker page</Button>}</Inline>}</Stack>}
+  </Stack>
+ </details></Card>;
 }
