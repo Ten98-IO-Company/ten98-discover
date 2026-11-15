@@ -31,8 +31,9 @@ export async function resolveCohort(client:PoolClient,projectId:string,userId:st
 }
 
 export async function listCohorts(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
-  if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one cohort list cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one cohort list cursor.');
     await client.query("SET LOCAL statement_timeout='5s'");
     const scope={projectId:project.id,list:'cohorts'},after=readContentCursor(params.get('cursor'),scope);
     const {rows}=await client.query<Row>(`SELECT ${columns} FROM analytics_cohort WHERE project_id=$1

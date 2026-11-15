@@ -65,8 +65,9 @@ export async function enqueueGoogleImport(projectId: string, userId: string, con
 
 export async function readGoogleImport(projectId: string, userId: string, importId: string, offsetValue: unknown, apiToken?: string) {
   googleInput(z.uuid(), importId);
-  const offset = googleInput(z.coerce.number().int().min(0).max(10000), offsetValue ?? 0);
   const run = async (client: PoolClient) => {
+    // Read after the access check, so a caller without access gets the same 404 whatever the query.
+    const offset = googleInput(z.coerce.number().int().min(0).max(10000), offsetValue ?? 0);
     const row = (await client.query<ImportRow>(`SELECT ${importFields} FROM google_import i WHERE id=$1 AND project_id=$2`, [importId, projectId])).rows[0];
     if (!row) throw new FoundationError(404, 'Google report not found or unavailable.');
     const definition = googleReports[row.report];

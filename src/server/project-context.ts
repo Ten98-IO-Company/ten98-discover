@@ -91,7 +91,8 @@ async function researchPage(client:PoolClient,projectId:string,cursorValue:strin
   return {entries:rows.slice(0,20),nextCursor:rows.length>20?contentCursor(rows[19],scope):null};
 }
 export async function getContextResearch(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string) {
-  const cursor=onlyCursor(params);return withContentProject(projectId,userId,false,(client,p)=>researchPage(client,p.id,cursor),apiToken,false,'context:read');
+  // Read after the access check, so a caller without access gets the same 404 whatever the query.
+  return withContentProject(projectId,userId,false,(client,p)=>researchPage(client,p.id,onlyCursor(params)),apiToken,false,'context:read');
 }
 async function contextDto(client:PoolClient,project:ContentProject) {
   const profile=await contentProfile(client,project);
