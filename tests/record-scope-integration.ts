@@ -20,14 +20,15 @@ import {recordCollection, recordRoutes, recordScopeGaps, routeTokens} from './he
 
 type Identity = {id: string; cookie: string};
 type Options = {baseUrl: string; appUrl: string; createIdentity: (workspaceId: string, role: 'owner' | 'viewer') => Promise<Identity>};
-type Call = {method: 'GET' | 'POST'; query?: string; body?: unknown};
+// status: the refusal the route gives a made-up id, when that is not 404.
+type Call = {method: 'GET' | 'POST'; query?: string; body?: unknown; status?: number};
 /** Valid requests per route suffix (the path after the collection), and the record ids that fill its id slots. */
 type Collection = {ids: string[]; slots?: Record<string, string[]>; calls: Record<string, Call[]>};
 
 /**
  * Record routes refuse another workspace's records. Workspace A holds one real record per covered collection; an owner of
  * workspace B calls every record route under B's workspace or website id with A's record ids and a valid body, and must
- * get 404 while every A record stays byte-for-byte unchanged. Routes come from tests/helpers/workspace-routes.ts.
+ * get the exact answer a made-up id gets (404, unless the call names another refusal) while every A record stays unchanged. Routes come from tests/helpers/workspace-routes.ts.
  */
 export async function runRecordScopeChecks(options: Options) {
   const {pool} = getDatabase();
@@ -127,7 +128,8 @@ export async function runRecordScopeChecks(options: Options) {
     'workspaces/api-keys': {ids: [apiKey.id], calls: {'/{uuid}/revoke': [{method: 'POST', body: {}}]}},
     'workspaces/members': {ids: [member.id], calls: {'/{uuid}/role': [{method: 'POST', body: {role: 'admin'}}], '/{uuid}/remove': [{method: 'POST', body: {}}]}},
     'workspaces/invitations': {ids: [invitation.id], calls: {
-      '/{uuid}/revoke': [{method: 'POST', body: {}}], '/{uuid}/resend': [{method: 'POST', body: {}}], '/{uuid}/new-link': [{method: 'POST', body: {}}],
+      // The shared team controller answers a missing invitation like an expired one: 409 for any id it cannot find.
+      '/{uuid}/revoke': [{method: 'POST', body: {}}], '/{uuid}/resend': [{method: 'POST', body: {}, status: 409}], '/{uuid}/new-link': [{method: 'POST', body: {}, status: 409}],
     }},
     'workspaces/projects': {ids: [projectA], calls: {
       '/{uuid}/delete': [{method: 'GET'}, {method: 'POST', body: projectDeleteInput.parse({requestId: randomUUID(), revision: deletion.item!.revision, confirmation: 'DELETE'})}],
@@ -207,11 +209,14 @@ export async function runRecordScopeChecks(options: Options) {
     const ids = [route.startsWith('/api/workspaces/') ? workspaceB : projectB, ...(collection.slots?.[suffix] ?? collection.ids)];
     let slot = 0;
     const path = route.replaceAll(routeTokens.uuid, () => ids[slot++] ?? randomUUID());
+    let madeUpSlot = 0;
+    const madeUpPath = route.replaceAll(routeTokens.uuid, () => madeUpSlot++ ? randomUUID() : ids[0]);
     const calls = collection.calls[suffix];
     if (calls) {
       for (const call of calls) {
-        const {status, text} = await send(path, call);
-        assert.equal(status, 404, `${call.method} ${route}: another workspace's record answered ${status} ${text.slice(0, 200)}`);
+        const foreign = await send(path, call), madeUp = await send(madeUpPath, call);
+        assert.equal(foreign.status, call.status ?? 404, `${call.method} ${route}: another workspace's record answered ${foreign.status} ${foreign.text.slice(0, 200)}`);
+        assert.deepEqual(foreign, madeUp, `${call.method} ${route}: another workspace's record answers like a made-up id`);
       }
       coveredRoutes++;
     } else {
@@ -227,5 +232,5 @@ export async function runRecordScopeChecks(options: Options) {
   }
   assert.deepEqual(await snapshot(), before, 'Workspace A records are unchanged after the sweep.');
   assert.ok(coveredRoutes >= 40, `Expected at least 40 covered record routes, found ${coveredRoutes}.`);
-  console.log(`PASS ${coveredRoutes} record routes (and ${unserved} router-only combinations) refuse another workspace's records with 404; ${listed} routes in ${Object.keys(recordScopeGaps).length} collections are listed as not feasible`);
+  console.log(`PASS ${coveredRoutes} record routes (and ${unserved} router-only combinations) answer another workspace's records exactly like made-up ids; ${listed} routes in ${Object.keys(recordScopeGaps).length} collections are listed as not feasible`);
 }
