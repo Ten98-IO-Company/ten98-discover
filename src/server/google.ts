@@ -49,6 +49,12 @@ export async function googleProjectTransaction<T>(projectId: string, userId: str
   finally { client.release(); }
 }
 
+/** The refusal googleProjectTransaction(…, owner = true) gives, read outside a transaction so a write can settle it before its input. */
+export async function requireGoogleOwner(projectId: string, userId: string) {
+  const access = await getDatabase().pool.query('SELECT m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id WHERE p.id=$1 AND m.user_id=$2', [projectId, userId]);
+  if (access.rows[0]?.role !== 'owner') absent();
+}
+
 export async function googleConnection(client: PoolClient, projectId: string, connectionId: string): Promise<GoogleConnection> {
   googleInput(z.uuid(), connectionId);
   const result = await client.query<GoogleConnection>('SELECT * FROM google_connection WHERE id=$1 AND project_id=$2 FOR UPDATE', [connectionId, projectId]);
