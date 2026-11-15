@@ -1,5 +1,5 @@
 // src/components/SavedKeywordFilterFields.tsx
-import {Disclosure} from '@ten98/ui';
+import {Checkbox, Disclosure, Field, Fieldset, Inline, Input, Option, Select, Stack, Text, Textarea} from '@ten98/ui';
 export type SavedKeywordFilterDraft = {
   search: string; includeTerms: string; excludeTerms: string;
   locationCode: string; languageCode: string; tagIds: string[];
@@ -24,119 +24,96 @@ export function SavedKeywordFilterFields({ value, onChange, tags, disabled = fal
   prefix: string;
 }) {
   const phraseHint = 'One phrase per line. All included phrases must match; excluded phrases must not match.';
+  const set = <K extends keyof SavedKeywordFilterDraft>(key: K, next: SavedKeywordFilterDraft[K]) => onChange({ ...value, [key]: next });
   return (
-    <fieldset className="saved-keyword-filter-grid" disabled={disabled}>
-      <legend>Saved keyword filters</legend>
-      <div className="row">
-        <div className="field">
-          <label htmlFor={`${prefix}-search`}>Search</label>
-          <input id={`${prefix}-search`} type="search" maxLength={200} value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value })} />
-        </div>
-        <div className="field">
-          <label htmlFor={`${prefix}-sort`}>Sort</label>
-          <select id={`${prefix}-sort`} value={value.sort} onChange={(e) => onChange({ ...value, sort: e.target.value as SavedKeywordFilterDraft['sort'] })}>
-            <option value="createdAt">Created</option>
-            <option value="keyword">Keyword</option>
-            <option value="searchVolume">Search volume</option>
-            <option value="cpcUsd">CPC (USD)</option>
-            <option value="competition">Competition</option>
-            <option value="keywordDifficulty">Difficulty</option>
-            <option value="fetchedAt">Last observed</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor={`${prefix}-order`}>Direction</label>
-          <select id={`${prefix}-order`} value={value.order} onChange={(e) => onChange({ ...value, order: e.target.value as SavedKeywordFilterDraft['order'] })}>
-            <option value="desc">Descending</option>
-            <option value="asc">Ascending</option>
-          </select>
-        </div>
-      </div>
+    <Fieldset legend="Saved keyword filters" disabled={disabled}>
+      <Inline align="end">
+        <Field label="Search" htmlFor={`${prefix}-search`}>
+          <Input id={`${prefix}-search`} type="search" maxLength={200} value={value.search} onChange={(e) => set('search', e.target.value)} />
+        </Field>
+        <Field label="Sort" htmlFor={`${prefix}-sort`}>
+          <Select id={`${prefix}-sort`} value={value.sort} onChange={(e) => set('sort', e.target.value as SavedKeywordFilterDraft['sort'])}>
+            <Option value="createdAt">Created</Option>
+            <Option value="keyword">Keyword</Option>
+            <Option value="searchVolume">Search volume</Option>
+            <Option value="cpcUsd">CPC (USD)</Option>
+            <Option value="competition">Competition</Option>
+            <Option value="keywordDifficulty">Difficulty</Option>
+            <Option value="fetchedAt">Last observed</Option>
+          </Select>
+        </Field>
+        <Field label="Direction" htmlFor={`${prefix}-order`}>
+          <Select id={`${prefix}-order`} value={value.order} onChange={(e) => set('order', e.target.value as SavedKeywordFilterDraft['order'])}>
+            <Option value="desc">Descending</Option>
+            <Option value="asc">Ascending</Option>
+          </Select>
+        </Field>
+      </Inline>
       <Disclosure summary="More filters" variant="plain">
-        <div className="field">
-          <label htmlFor={`${prefix}-include-terms`}>Include phrases</label>
-          <textarea id={`${prefix}-include-terms`} rows={3} maxLength={4020} value={value.includeTerms} onChange={(e) => onChange({ ...value, includeTerms: e.target.value })} />
-          <p className="hint">{phraseHint}</p>
-        </div>
-        <div className="field">
-          <label htmlFor={`${prefix}-exclude-terms`}>Exclude phrases</label>
-          <textarea id={`${prefix}-exclude-terms`} rows={3} maxLength={4020} value={value.excludeTerms} onChange={(e) => onChange({ ...value, excludeTerms: e.target.value })} />
-          <p className="hint">{phraseHint}</p>
-        </div>
-        <div className="row">
-          <div className="field">
-            <label htmlFor={`${prefix}-location-code`}>Location code</label>
-            <input id={`${prefix}-location-code`} type="number" min={1} max={2147483647} step={1} value={value.locationCode} onChange={(e) => onChange({ ...value, locationCode: e.target.value })} />
-            <p className="hint">Leave blank for every location.</p>
-          </div>
-          <div className="field">
-            <label htmlFor={`${prefix}-language-code`}>Language code</label>
-            <input id={`${prefix}-language-code`} type="text" maxLength={6} placeholder="en or en-US" value={value.languageCode} onChange={(e) => onChange({ ...value, languageCode: e.target.value })} />
-          </div>
-        </div>
-        <div className="row">
-          <div className="field">
-            <label htmlFor={`${prefix}-min-volume`}>Min search volume</label>
-            <input id={`${prefix}-min-volume`} type="number" min={0} max={9007199254740991} step={1} value={value.minVolume} onChange={(e) => onChange({ ...value, minVolume: e.target.value })} />
-          </div>
-          <div className="field">
-            <label htmlFor={`${prefix}-max-volume`}>Max search volume</label>
-            <input id={`${prefix}-max-volume`} type="number" min={0} max={9007199254740991} step={1} value={value.maxVolume} onChange={(e) => onChange({ ...value, maxVolume: e.target.value })} />
-          </div>
-        </div>
-        <div className="row">
-          <div className="field">
-            <label htmlFor={`${prefix}-min-cpc`}>Min CPC (USD)</label>
-            <input id={`${prefix}-min-cpc`} type="text" inputMode="decimal" maxLength={14} value={value.minCpcUsd} onChange={(e) => onChange({ ...value, minCpcUsd: e.target.value })} />
-            <p className="hint">USD per click; blank means no limit.</p>
-          </div>
-          <div className="field">
-            <label htmlFor={`${prefix}-max-cpc`}>Max CPC (USD)</label>
-            <input id={`${prefix}-max-cpc`} type="text" inputMode="decimal" maxLength={14} value={value.maxCpcUsd} onChange={(e) => onChange({ ...value, maxCpcUsd: e.target.value })} />
-            <p className="hint">USD per click; blank means no limit.</p>
-          </div>
-        </div>
-        <div className="row">
-          <div className="field">
-            <label htmlFor={`${prefix}-min-difficulty`}>Min difficulty</label>
-            <input id={`${prefix}-min-difficulty`} type="number" min={0} max={100} step={1} value={value.minDifficulty} onChange={(e) => onChange({ ...value, minDifficulty: e.target.value })} />
-          </div>
-          <div className="field">
-            <label htmlFor={`${prefix}-max-difficulty`}>Max difficulty</label>
-            <input id={`${prefix}-max-difficulty`} type="number" min={0} max={100} step={1} value={value.maxDifficulty} onChange={(e) => onChange({ ...value, maxDifficulty: e.target.value })} />
-          </div>
-        </div>
-        <div className="field">
-          <label htmlFor={`${prefix}-metrics`}>Metric state</label>
-          <select id={`${prefix}-metrics`} value={value.metrics} onChange={(e) => onChange({ ...value, metrics: e.target.value as SavedKeywordFilterDraft['metrics'] })}>
-            <option value="all">All metrics</option>
-            <option value="available">Available metrics</option>
-            <option value="unavailable">Not observed</option>
-            <option value="expired">Expired metrics</option>
-          </select>
-        </div>
-        <fieldset className="field">
-          <legend>Tags</legend>
-          {tags.length === 0 ? (
-            <p className="hint">Tags appear after you add them to saved keywords.</p>
-          ) : (
-            <>
-              {tags.map((tag) => (
-                <div className="field" key={tag.id}>
-                  <input id={`${prefix}-tag-${tag.id}`} type="checkbox" checked={value.tagIds.includes(tag.id)} onChange={(e) => onChange({
-                    ...value,
-                    tagIds: e.target.checked
+        <Stack>
+          <Field label="Include phrases" htmlFor={`${prefix}-include-terms`} description={phraseHint}>
+            <Textarea id={`${prefix}-include-terms`} rows={3} maxLength={4020} value={value.includeTerms} onChange={(e) => set('includeTerms', e.target.value)} />
+          </Field>
+          <Field label="Exclude phrases" htmlFor={`${prefix}-exclude-terms`} description={phraseHint}>
+            <Textarea id={`${prefix}-exclude-terms`} rows={3} maxLength={4020} value={value.excludeTerms} onChange={(e) => set('excludeTerms', e.target.value)} />
+          </Field>
+          <Inline align="start">
+            <Field label="Location code" htmlFor={`${prefix}-location-code`} description="Leave blank for every location.">
+              <Input id={`${prefix}-location-code`} type="number" min={1} max={2147483647} step={1} value={value.locationCode} onChange={(e) => set('locationCode', e.target.value)} />
+            </Field>
+            <Field label="Language code" htmlFor={`${prefix}-language-code`}>
+              <Input id={`${prefix}-language-code`} type="text" maxLength={6} placeholder="en or en-US" value={value.languageCode} onChange={(e) => set('languageCode', e.target.value)} />
+            </Field>
+          </Inline>
+          <Inline align="start">
+            <Field label="Min search volume" htmlFor={`${prefix}-min-volume`}>
+              <Input id={`${prefix}-min-volume`} type="number" min={0} max={9007199254740991} step={1} value={value.minVolume} onChange={(e) => set('minVolume', e.target.value)} />
+            </Field>
+            <Field label="Max search volume" htmlFor={`${prefix}-max-volume`}>
+              <Input id={`${prefix}-max-volume`} type="number" min={0} max={9007199254740991} step={1} value={value.maxVolume} onChange={(e) => set('maxVolume', e.target.value)} />
+            </Field>
+          </Inline>
+          <Inline align="start">
+            <Field label="Min CPC (USD)" htmlFor={`${prefix}-min-cpc`} description="USD per click; blank means no limit.">
+              <Input id={`${prefix}-min-cpc`} type="text" inputMode="decimal" maxLength={14} value={value.minCpcUsd} onChange={(e) => set('minCpcUsd', e.target.value)} />
+            </Field>
+            <Field label="Max CPC (USD)" htmlFor={`${prefix}-max-cpc`} description="USD per click; blank means no limit.">
+              <Input id={`${prefix}-max-cpc`} type="text" inputMode="decimal" maxLength={14} value={value.maxCpcUsd} onChange={(e) => set('maxCpcUsd', e.target.value)} />
+            </Field>
+          </Inline>
+          <Inline align="start">
+            <Field label="Min difficulty" htmlFor={`${prefix}-min-difficulty`}>
+              <Input id={`${prefix}-min-difficulty`} type="number" min={0} max={100} step={1} value={value.minDifficulty} onChange={(e) => set('minDifficulty', e.target.value)} />
+            </Field>
+            <Field label="Max difficulty" htmlFor={`${prefix}-max-difficulty`}>
+              <Input id={`${prefix}-max-difficulty`} type="number" min={0} max={100} step={1} value={value.maxDifficulty} onChange={(e) => set('maxDifficulty', e.target.value)} />
+            </Field>
+          </Inline>
+          <Field label="Metric state" htmlFor={`${prefix}-metrics`}>
+            <Select id={`${prefix}-metrics`} value={value.metrics} onChange={(e) => set('metrics', e.target.value as SavedKeywordFilterDraft['metrics'])}>
+              <Option value="all">All metrics</Option>
+              <Option value="available">Available metrics</Option>
+              <Option value="unavailable">Not observed</Option>
+              <Option value="expired">Expired metrics</Option>
+            </Select>
+          </Field>
+          <Fieldset legend="Tags">
+            {tags.length === 0 ? (
+              <Text tone="muted" size="sm">Tags appear after you add them to saved keywords.</Text>
+            ) : (
+              <>
+                {tags.map((tag) => (
+                  <Checkbox key={tag.id} id={`${prefix}-tag-${tag.id}`} label={tag.name} checked={value.tagIds.includes(tag.id)} onChange={(e) => set('tagIds',
+                    e.target.checked
                       ? value.tagIds.includes(tag.id) ? value.tagIds : [...value.tagIds, tag.id]
-                      : value.tagIds.filter((id) => id !== tag.id),
-                  })} />
-                  <label htmlFor={`${prefix}-tag-${tag.id}`}>{tag.name}</label>
-                </div>
-              ))}
-              {value.tagIds.length > 0 && <p className="hint">Any selected tag matches.</p>}
-            </>
-          )}
-        </fieldset>
+                      : value.tagIds.filter((id) => id !== tag.id))} />
+                ))}
+                {value.tagIds.length > 0 && <Text tone="muted" size="sm">Any selected tag matches.</Text>}
+              </>
+            )}
+          </Fieldset>
+        </Stack>
       </Disclosure>
-    </fieldset>
+    </Fieldset>
   );
 }

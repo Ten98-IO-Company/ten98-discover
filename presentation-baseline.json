@@ -183,13 +183,8 @@
     "element": 233,
     "styling": 84
   },
-  "src/components/SavedKeywordFilterFields.tsx": {
-    "element": 74,
-    "styling": 29
-  },
   "src/components/SavedKeywordRefreshPanel.tsx": {
-    "element": 53,
-    "styling": 27
+    "element": 2
   },
   "src/components/SavedKeywordsPanel.tsx": {
     "element": 139,
