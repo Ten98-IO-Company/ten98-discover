@@ -1,6 +1,6 @@
 import {readResponseText} from '@ten98/runtime/browser';
 import {useEffect,useRef,useState} from 'react';
-import {Alert,Button,DangerZoneFlow,StatusLine,Text} from '@ten98/ui';
+import {Alert,Button,DangerZoneFlow,Inline,Stack,StatusLine,Text} from '@ten98/ui';
 import {analyticsResetInput,analyticsResetState,analyticsResetResult,type AnalyticsResetInput,type AnalyticsResetState,type AnalyticsResetResult} from '../lib/analytics-reset';
 
 export class ResetError extends Error {readonly status:number;constructor(status:number){super('Reset request unavailable.');this.status=status;}}
@@ -40,8 +40,8 @@ function ResetInner({projectId,disabled=false,authorityOwner='',isCurrent,pendin
  const confirm=()=>{void run(true);};
  // The closed state reads nothing; opening it reads the current reset access before any action is offered.
  if(!open)return <Button variant="ghost" type="button" disabled={disabled||!allowed()} onClick={()=>{if(allowed()){setOpen(true);void run(false);}}}>Reset analytics</Button>;
- return <section className="stack" aria-label="Reset project analytics" aria-busy={busy} style={{minWidth:0,overflowWrap:'anywhere'}}>
-  {verified&&<Text>Website: <strong>{verified.name}</strong></Text>}
+ return <Stack as="section" aria-label="Reset project analytics" aria-busy={busy}>
+  {verified&&<Text>Website: <Text as="strong" weight="semibold">{verified.name}</Text></Text>}
   {result&&verified&&<StatusLine tone="success">Reset accepted. Earlier analytics is unavailable. {verified.cleanup==='pending'?'Stored-data cleanup continues in bounded background batches.':'Stored native data cleanup is complete; bounded retry tombstones may remain.'}</StatusLine>}
   {!result&&<DangerZoneFlow description="The website, tracking key, collection settings and saved configurations stay. Provider reports, Google imports, tracked links/pixels, provider request history and other websites stay separate. Collection can resume under the current policy; previous grants and recording capabilities expire." busy={busy} error={error||undefined}
    disabled={disabled||!verified} messages={{retry:'Retry the same reset'}}
@@ -49,6 +49,6 @@ function ResetInner({projectId,disabled=false,authorityOwner='',isCurrent,pendin
    actions={[{id:'reset-analytics',title:'Reset analytics',description:'This permanently removes earlier native analytics for this website: events, visitor activity, session properties, identity links, performance, recordings and heatmaps. It cannot be undone.',confirmLabel:'Permanently reset analytics',confirmationText:'RESET',retryOnly:true}]}
    onConfirm={confirm}/>}
   {result&&error&&<Alert tone="danger" variant="inline">{error}</Alert>}
-  <div className="row" style={{flexWrap:'wrap'}}><Button variant="secondary" type="button" disabled={busy||!allowed()} onClick={()=>void run(false)}>Reload reset access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close reset</Button></div>
- </section>;
+  <Inline><Button variant="secondary" type="button" disabled={busy||!allowed()} onClick={()=>void run(false)}>Reload reset access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close reset</Button></Inline>
+ </Stack>;
 }
