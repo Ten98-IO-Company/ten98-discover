@@ -262,10 +262,6 @@
     "element": 276,
     "styling": 150
   },
-  "src/components/TeamPanel.tsx": {
-    "element": 93,
-    "styling": 40
-  },
   "src/components/TrackedAssetsPanel.tsx": {
     "element": 171,
     "styling": 80
