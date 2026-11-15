@@ -521,7 +521,7 @@ function DestinationsInner({
       <div className="card">
         <div className="row between">
           <h3>Configured destinations</h3>
-          {(dirty || pendingWrite || conflicted) && <button type="button" className="btn" disabled={loading || mutating} onClick={() => void (async () => { if (await confirm({ title: 'Reload saved settings?', description: 'This replaces your local edits with the saved settings.', confirmLabel: 'Reload saved settings', danger: false })) void refresh(); })()}>Reload saved state</button>}
+          {(dirty || pendingWrite || conflicted) && <button type="button" className="btn" disabled={loading || mutating} onClick={() => void (async () => { if (await confirm({ title: 'Reload saved settings?', description: 'This replaces your local edits with the saved settings.', confirmLabel: 'Reload saved settings', danger: false, initialFocus: 'cancel' })) void refresh(); })()}>Reload saved state</button>}
           <button type="button" className="btn primary" disabled={!dirty || busy} onClick={saveDraft}>
             Save draft
           </button>
