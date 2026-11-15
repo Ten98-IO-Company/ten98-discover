@@ -210,7 +210,7 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
     let hostname: string | null = null;
     try { hostname = normalizeDomainHost(row.hostname); } catch { /* Refused below. */ }
     if (hostname !== row.hostname) throw new FoundationError(400, row.role === 'canonical'
-      ? 'This website’s address is not a public hostname. Change the website address to a public hostname, then verify again.'
+      ? 'This website’s address is not a public hostname. A website’s address cannot be changed, so add the website again with a public hostname.'
       : 'This hostname is not a public DNS name. Remove it and add a public hostname.');
     return { hostname, hash: row.challenge_hash };
   });

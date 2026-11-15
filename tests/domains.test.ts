@@ -114,7 +114,7 @@ test('the ownership proof only queries a stored hostname that still passes publi
     // A canonical domain cannot be removed, so its refusal points at the website address instead of removal.
     const removable = 'This hostname is not a public DNS name. Remove it and add a public hostname.';
     const refusal = { serving: removable, redirect_alias: removable,
-      canonical: 'This website’s address is not a public hostname. Change the website address to a public hostname, then verify again.' };
+      canonical: 'This website’s address is not a public hostname. A website’s address cannot be changed, so add the website again with a public hostname.' };
     for (const [storedRole, message] of Object.entries(refusal)) {
       role = storedRole;
       for (hostname of ['printer.lan', 'wiki.corp', 'db.private', 'host.intranet', 'host.internal', '10.0.0.1', 'intranet']) {
