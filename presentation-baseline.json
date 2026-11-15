@@ -157,8 +157,8 @@
     "styling": 26
   },
   "src/components/OpenRouterModelPicker.tsx": {
-    "element": 29,
-    "styling": 16
+    "element": 5,
+    "styling": 1
   },
   "src/components/PromptDiscoveryPanel.tsx": {
     "element": 55,
