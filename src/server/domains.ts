@@ -9,8 +9,9 @@ import { getDatabase } from './db.ts';
 import { withContentProject } from './project-context.ts';
 
 const DOMAIN_LIMIT = 50;
-// Reserved or special-use names (RFC 2606/6761/6762/8375, ICANN .internal) plus undelegated private-network conventions.
-const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa', 'lan', 'corp', 'intranet', 'private'];
+// Reserved or special-use names (RFC 2606/6761/6762/8375/9476, ICANN .internal) plus undelegated private-network conventions.
+// ponytail: hand-kept list, matching @ten98/runtime's public-hostname list; replace with the shared public-suffix control once it ships.
+const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa', 'alt', 'lan', 'corp', 'intranet', 'private'];
 
 /** Accept a DNS host, never a URL, address, wildcard or DNS-provider record-name shortcut. */
 export function normalizePublicHostname(input: unknown): string {

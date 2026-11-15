@@ -88,10 +88,10 @@ test('successful DNS lookup clears its deadline without cancelling completed wor
 });
 
 test('internal-looking suffixes are refused while public names that merely contain them stay valid', () => {
-  for (const host of ['lan', 'printer.lan', 'corp', 'mail.corp', 'intranet', 'wiki.intranet', 'private', 'db.private', 'NAS.LAN.', 'a.b.home.arpa', 'host.internal', 'host.local', 'app.localhost'])
+  for (const host of ['lan', 'printer.lan', 'corp', 'mail.corp', 'intranet', 'wiki.intranet', 'private', 'db.private', 'NAS.LAN.', 'a.b.home.arpa', 'alt', 'node.alt', 'host.internal', 'host.local', 'app.localhost'])
     for (const normalize of [normalizeDomainHost, normalizePublicHostname])
       assert.throws(() => normalize(host), error => error instanceof FoundationError && error.status === 400, host);
-  for (const host of ['lan.example.com', 'corp.example.com', 'private.example.com', 'intranet.example.com', 'example.corporate', 'example.plan', 'example.lane'])
+  for (const host of ['lan.example.com', 'corp.example.com', 'private.example.com', 'intranet.example.com', 'example.corporate', 'example.plan', 'example.lane', 'alt.example.com', 'example.alto'])
     assert.equal(normalizeDomainHost(host), host);
 });
 
