@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, AuthFrameProvider, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions, useTheme } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, AuthFrameProvider, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions, createThemeScript, useTheme } from '@ten98/ui'
 import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -74,7 +74,10 @@ import { ConversionsPanel } from '../components/ConversionsPanel'
 import { aiInsightsNavigation, aiSearchIntentQuery, readAISearchIntent, readReportIntent, reportTargetKey, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AIInsightsNavigation, AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
-export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: RouteEntry })
+// The shell alone keeps the theme cache (useTheme below), so it alone paints it before the first frame. Public share pages keep
+// the sharer's theme on a light canvas, which is why the script is not on the root route. The router adds ssr.nonce to head
+// scripts, so the script-src policy in __root.tsx admits it without a hash or 'unsafe-inline'.
+export const Route = createFileRoute('/')({ validateSearch: parseNavigation, head: () => ({ scripts: [{ children: createThemeScript() }] }), component: RouteEntry })
 
 function RouteEntry(){
   const location=useLocation(),raw=new URLSearchParams(location.searchStr)

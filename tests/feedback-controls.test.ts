@@ -9,7 +9,7 @@ const components=async()=>(await readdir('src',{recursive:true})).map(name=>name
 
 test('the root route provides transient notifications to every page',async()=>{
  const root=await source('src/routes/__root.tsx');
- assert.match(root,/import \{[^}]*\bToastProvider\b[^}]*\} from '@ten98\/ui';/);
+ assert.match(root,/import \{ToastProvider\} from '@ten98\/ui';/);
  assert.match(root,/<body><ToastProvider><Outlet \/><\/ToastProvider><Scripts \/><\/body>/);
 });
 

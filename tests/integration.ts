@@ -334,8 +334,16 @@ try {
   assert.ok(scriptTags.length >= 2, `${stage}: expected the hydration and module entry script tags, found ${scriptTags.length}`);
   for (const tag of scriptTags) assert.ok(tag.includes(`nonce="${landingNonce}"`), `${stage}: script tag without the header nonce: ${tag}`);
   assert.notEqual(expectDocumentHeaders('/', (await document('/')).response), landingNonce, `${stage}: the nonce must change on every request`);
-  expectDocumentHeaders('/share/boards/<unknown>', (await document(`/share/boards/${randomUUID()}`)).response);
-  expectDocumentHeaders('/share/websites/<unknown>', (await document(`/share/websites/${randomUUID()}`)).response);
+  // The app shell paints the cached theme from <head> before hydration, under this document's nonce (every script tag was checked above).
+  // The public share pages keep the sharer's theme on a light canvas: no theme script, no data-theme on <html>, and the same nonce rules.
+  assert.ok(landing.text.includes('document.__ten98Theme') && landing.text.indexOf('document.__ten98Theme') < landing.text.indexOf('</head>'), `${stage}: the app shell document must carry the theme script in <head>`);
+  for (const share of [{ label: '/share/boards/<unknown>', path: `/share/boards/${randomUUID()}` }, { label: '/share/websites/<unknown>', path: `/share/websites/${randomUUID()}` }]) {
+    const shared = await document(share.path);
+    const sharedNonce = expectDocumentHeaders(share.label, shared.response);
+    for (const tag of shared.text.match(/<script\b[^>]*>/g) ?? []) assert.ok(tag.includes(`nonce="${sharedNonce}"`), `${stage}: ${share.label} script tag without the header nonce: ${tag}`);
+    assert.ok(!shared.text.includes('__ten98Theme'), `${stage}: ${share.label} must not carry the theme script`);
+    assert.ok(!/<html\b[^>]*\bdata-theme/.test(shared.text), `${stage}: ${share.label} must not set data-theme on <html>`);
+  }
   expectDocumentHeaders('/nope', (await document('/nope')).response);
   const tracker = await document('/tracker.js');
   assert.equal(tracker.response.status, 200, `${stage}: GET /tracker.js answered ${tracker.response.status}`);
