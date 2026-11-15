@@ -273,6 +273,20 @@ export async function runBoardChecks(){
      assert.equal(result.status,'ready',card.type);for(const key of ['role','workspaceId','entity','source','sessions','detail','csv','activity','witnesses'])assert.equal(Object.hasOwn(result,key),false,card.type);
     }
     assert.equal(new Set(recipientCards.map(card=>card.type)).size,17);
+    // A manager of another workspace who names this board and share under their own workspace path gets the same 404
+    // as for made-up ids, whatever the revision or request ID, and the share stays live.
+    const strangerCookie=await login(stranger),foreignBoards=config.appUrl+'/api/workspaces/'+foreignWorkspace+'/boards/';
+    const foreignRevoke=async(bid:string,sid:string,revision:number,requestId:string=randomUUID())=>{const response=await handleApi(new Request(foreignBoards+bid+'/shares/'+sid+'/revoke',{method:'POST',headers:{cookie:strangerCookie,origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify({requestId,revision})}));return{status:response.status,body:await response.text()};};
+    const madeUp=await foreignRevoke(randomUUID(),randomUUID(),2);assert.equal(madeUp.status,404);
+    assert.deepEqual(await foreignRevoke(shareBoard.id,randomUUID(),2),madeUp);
+    for(const revision of [2,1,3])assert.deepEqual(await foreignRevoke(shareBoard.id,context.shareId,revision),madeUp,'revision '+revision);
+    const reusedRequest=randomUUID();for(let n=0;n<2;n++)assert.deepEqual(await foreignRevoke(shareBoard.id,context.shareId,2,reusedRequest),madeUp);
+    assert.deepEqual(await foreignRevoke(shareBoard.id,context.shareId,2,published.ack.requestId),madeUp,'Another workspace\'s request ID acknowledges nothing.');
+    for(const revision of [2,1])await assert.rejects(revokeBoardShare(foreignWorkspace,stranger,shareBoard.id,context.shareId,{requestId:randomUUID(),revision}),fail(404));
+    const untouched=(await pool.query<{revoked_at:Date|null;revision:number}>('SELECT revoked_at,revision FROM board_share WHERE id=$1',[context.shareId])).rows[0];assert.equal(untouched.revoked_at,null);assert.equal(untouched.revision,2);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM board_share_request WHERE workspace_id=$1',[foreignWorkspace])).rows[0].n,0);
+    assert.equal((await handleApi(new Request(publicUrl+'/manifest',{headers:publicHeaders}))).status,200);
+    assert.equal((await readPublicBoardCard(context.shareId,input.token,shareCard.id,{grantRevision:2,boardRevision:edited.revision,scope:basicScope})).status,'ready');
     const revoked=await revokeBoardShare(workspace,admin,shareBoard.id,context.shareId,{requestId:randomUUID(),revision:2});assert.ok(revoked.item?.revokedAt);
     assert.equal(await admitted({boardRevision:edited.revision,grantRevision:3}),false);
     await assert.rejects(getPublicBoardManifest(context.shareId,input.token),fail(404));await assert.rejects(readPublicBoardCard(context.shareId,input.token,shareCard.id,{...publicInput,boardRevision:edited.revision,grantRevision:3}),fail(404));
