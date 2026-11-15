@@ -1079,6 +1079,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&!contextRoute[2]&&!url.search) return json(await getProjectContext(contextRoute[1],user.id,apiToken??undefined));
       if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) {
+        await projectAccess(contextRoute[1],user.id);
         // A bearer caller gets the bounded receipt; context:write does not imply context:read at the data level either.
         const saved=await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144),apiToken??undefined);
         return json(apiToken?{revision:saved.revision,replayed:saved.replayed===true}:saved);
@@ -1093,6 +1094,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId,apiToken??undefined));
       if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&!url.search) {
+        await projectAccess(pid,user.id);
         const input=await readJson(request,262144);
         if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input,apiToken??undefined),201);
         if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input,apiToken??undefined));
@@ -1194,7 +1196,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
-        if (match[2] === 'transfer-ownership') return json(await transferOwnership(match[1], user.id, await readJson(request)));
+        if (match[2] === 'transfer-ownership') { await workspaceAccess(match[1], user.id); return json(await transferOwnership(match[1], user.id, await readJson(request))); }
         if (match[2] === 'two-factor') return json(await setTwoFactorRequirement(match[1], user.id, await readJson(request)));
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
         if (match[2] === 'invitations') {
@@ -1248,6 +1250,7 @@ export async function handleApi(request: Request): Promise<Response> {
         return json({ projects: rows.map(row => ({ ...row, eventCount: Number(row.eventCount) })) });
       }
       if (request.method === 'POST') {
+        await workspaceAccess(match[1], user.id);
         const input = projectInput.parse(await readJson(request));
         const client = await getDatabase().pool.connect();
         try {

@@ -52,15 +52,18 @@ export async function readBoardShareRevenue(client:import('pg').PoolClient,conte
  return readRevenue(context.entityId,null,params,'report',null,{client,context});
 }
 async function readRevenue(projectId:string,authority:SessionReadAuthority|null,params:URLSearchParams,route:'report'|'sessions'|'detail',visitorKey:string|null,borrowed?:{client:import('pg').PoolClient;context:BoardShareReadContext}):Promise<RevenueResult>{
- if(!z.uuid().safeParse(projectId).success)throw invalid();projectId=projectId.toLowerCase();const input=revenueQuery(params,route,visitorKey),{query,currency,cursor,pageSize,search,compare}=input;
- const derived=compare?deriveAnalyticsComparison(query,compare)!:null,previousQuery=derived?{...query,from:derived.range.from,to:derived.range.to}:null;
- const scopeHash=canonicalHash(['revenue-page-v1',projectId,query,currency,search,visitorKey]);if(cursor&&(cursor.projectId!==projectId||cursor.scope!==scopeHash||cursor.pageSize!==pageSize))throw invalid();
+ if(!z.uuid().safeParse(projectId).success)throw invalid();projectId=projectId.toLowerCase();
  const client=borrowed?.client??await getDatabase().pool.connect();
  try{
   if(!borrowed)await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');if(borrowed)await boardShareSqlBudget(client,borrowed.context);else await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
   const preliminary=authority?.kind==='api-key'?await authenticateApiKey(authority.token,client):null;let userId=borrowed?JSON.stringify(borrowed.context):authority?.kind==='session'?authority.userId:preliminary!.userId;
   const workspace=borrowed?.context.workspaceId??(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
-  if(!workspace||preliminary&&preliminary.workspaceId!==workspace)throw missing();await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[workspace]);
+  if(!workspace||preliminary&&preliminary.workspaceId!==workspace)throw missing();
+  // Membership is resolved before the query is read, so a non-member gets the same answer whatever the parameters.
+  const input=revenueQuery(params,route,visitorKey),{query,currency,cursor,pageSize,search,compare}=input;
+  const derived=compare?deriveAnalyticsComparison(query,compare)!:null,previousQuery=derived?{...query,from:derived.range.from,to:derived.range.to}:null;
+  const scopeHash=canonicalHash(['revenue-page-v1',projectId,query,currency,search,visitorKey]);if(cursor&&(cursor.projectId!==projectId||cursor.scope!==scopeHash||cursor.pageSize!==pageSize))throw invalid();
+  await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[workspace]);
   const key=authority?.kind==='api-key'?await authorizeApiKey(authority.token,workspace,'analytics:read',client):null;if(key)userId=key.userId;
   const item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null,qualification=item?explorerQuery(new URLSearchParams(item.definition.query)):null;
   await validateAdvancedRegex(client,query.predicates,qualification?.predicates);for(const zone of new Set([query.timeZone,...qualification?[qualification.timeZone]:[]]))if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount)throw invalid();

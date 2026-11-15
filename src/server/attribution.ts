@@ -32,7 +32,7 @@ const usesGeography=(query:ReturnType<typeof explorerQuery>)=>geographyFields.so
 function metadata(expression:string,maximum:number){return `CASE WHEN jsonb_typeof(${expression})='string' THEN CASE WHEN length(${expression}#>>'{}')+length(regexp_replace(${expression}#>>'{}',U&'[\\0001-\\FFFF]','','g'))<=${maximum} THEN ${expression}#>>'{}' END END`;}
 
 export async function projectAttribution(projectId:string,authority:SessionReadAuthority,params:URLSearchParams):Promise<AttributionResult>{
- if(!z.uuid().safeParse(projectId).success)throw bad();projectId=projectId.toLowerCase();const input=attributionQuery(params);
+ if(!z.uuid().safeParse(projectId).success)throw bad();projectId=projectId.toLowerCase();
  const client=await getDatabase().pool.connect();
  try{
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
@@ -41,6 +41,8 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
   let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
   const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
   if(!hint||preliminary&&preliminary.workspaceId!==hint)throw missing();
+  // Membership is resolved before the query is read, so a non-member gets the same answer whatever the parameters.
+  const input=attributionQuery(params);
   await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
   const currentKey=authority.kind==='api-key'?await authorizeApiKey(authority.token,hint,'analytics:read',client):null;if(currentKey)userId=currentKey.userId;
   const query=input.scope,item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null;
