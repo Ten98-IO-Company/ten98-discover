@@ -1,5 +1,5 @@
 import {useEffect,useId,useRef,useState} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { Stack, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {validCarriedCitations,validCitationFilters,validCitationReport,citationSafeHref,citationPublicHost,citationRetainedHost,citationPublishers,citationPageTypes,citationSources,citationOwners,citationChanges} from '../lib/citation-report';
@@ -145,5 +145,5 @@ function Controller(props:Props){
   onPrevious:()=>{if(ready()&&!['page-types','daily'].includes(selection.view)&&s.pages.length>1)void load(selection,s.pages.slice(0,-1));},onNext:()=>{if(ready()&&!['page-types','daily'].includes(selection.view)&&d?.nextCursor)void load(selection,[...s.pages,d.nextCursor]);},onOpenComparison:id=>{if(!ready())return;const row=state.current.data?.page.kind==='evidence'?state.current.data.page.rows.find(r=>r.id===id):null;if(!row)return;const value={comparisonId:row.comparisonId,promptId:row.promptId,selection:state.current.selection,returnTo:state.current.returnTo};invalidate();purge();setReceipt(value);},onTrack:track,
   onTaskChange:next=>{const task=state.current.task;if(!task||busy||locked()||!writer(state.current.role)||task.conflict||!['brand','existing-competitor','new-competitor','category'].includes(next.kind)||!prose(next.competitorName,120)||next.competitorId!==''&&!task.context?.competitors.some(c=>c.id===next.competitorId)||next.publisherCategory!=='automatic'&&!citationPublishers.includes(next.publisherCategory))return;patch({task:{...task,draft:{...next}}});},onSaveTask:()=>{const at=state.current;if(at.reading||at.exporting||locked()||!at.task||!writer(at.role))return;const update=taskUpdate(at.task);if(update&&at.task.context)void save({requestId:crypto.randomUUID(),revision:at.task.context.revision,updates:[update]});},onCancelTask:()=>{const task=s.task;if(task)void (async()=>{if(await discard())void load(task.returnTo);})();}};
  if(receipt)return <PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to citations" onUnauthorized={props.onUnauthorized} onEvidenceExpired={({answerIds})=>learn(answerIds)} onBack={()=>{setReceipt(null);void load(receipt.selection,[null],receipt.returnTo);}}/>;
- return <div ref={root} style={{minWidth:0}}><CitationAnalysisView {...view}/>{confirmDialog}</div>;
+ return <Stack ref={root}><CitationAnalysisView {...view}/>{confirmDialog}</Stack>;
 }

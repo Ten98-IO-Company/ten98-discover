@@ -1,5 +1,5 @@
 import type {RankLocationCoverage} from '../server/dataforseo-rank';
-import { useConfirmDialog } from '@ten98/ui'
+import { Stack, useConfirmDialog } from '@ten98/ui'
 import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -218,8 +218,8 @@ function RankController(props:Props){
   const checkPanel=check&&s.detail?<RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} backLabel={check.returnToSchedule?'Back to schedule':observations?'Back to observations':reporting?'Back to reporting':'Back to tracker'}
     onConfigureSchedule={(quoteId,expiresAt)=>{setCheck(null);setSchedule({quoteId,returnCheck:{...check,mode:'run',runId:quoteId,knownExpiresAt:expiresAt}});}}
     onBack={()=>{setCheck(null);if(check.returnToSchedule)setSchedule({});else if(!observations&&!reporting)void loadDetail(s.detail!.tracker.id,true);}}/>:null;
-  const historyPanel=observations&&s.detail?<div hidden={check!==null||schedule!==null}><RankHistoryPanel {...props} tracker={s.detail.tracker} entryKeywordId={reportKeyword??undefined} backLabel={reporting?'Back to reporting':'Back to tracker'} active={check===null&&schedule===null} onBack={()=>{setObservations(false);setReportKeyword(null);if(!reporting)void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})}/></div>:null;
-  if(reporting&&s.detail)return <><div hidden={observations||check!==null||schedule!==null}><RankReportingPanel {...props} tracker={s.detail.tracker} active={!observations&&check===null&&schedule===null} onBack={()=>{setReporting(false);void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})} onOpenKeyword={id=>{setReportKeyword(id);setObservations(true);}} onCheckHistory={()=>setCheck({generation:++checkGeneration.current,mode:'history'})}/></div>{historyPanel}{schedulePanel??checkPanel}</>;
+  const historyPanel=observations&&s.detail?<Stack hidden={check!==null||schedule!==null}><RankHistoryPanel {...props} tracker={s.detail.tracker} entryKeywordId={reportKeyword??undefined} backLabel={reporting?'Back to reporting':'Back to tracker'} active={check===null&&schedule===null} onBack={()=>{setObservations(false);setReportKeyword(null);if(!reporting)void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})}/></Stack>:null;
+  if(reporting&&s.detail)return <><Stack hidden={observations||check!==null||schedule!==null}><RankReportingPanel {...props} tracker={s.detail.tracker} active={!observations&&check===null&&schedule===null} onBack={()=>{setReporting(false);void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})} onOpenKeyword={id=>{setReportKeyword(id);setObservations(true);}} onCheckHistory={()=>setCheck({generation:++checkGeneration.current,mode:'history'})}/></Stack>{historyPanel}{schedulePanel??checkPanel}</>;
   if(historyPanel)return <>{historyPanel}{schedulePanel??checkPanel}</>;
   if(schedulePanel)return schedulePanel;
   if(checkPanel)return checkPanel;

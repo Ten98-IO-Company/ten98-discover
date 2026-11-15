@@ -1,5 +1,5 @@
 import {useEffect,useId,useRef,useState} from 'react';
-import {SectionNav} from '@ten98/ui';
+import {SectionNav,Stack,Text} from '@ten98/ui';
 import {defaultStringifySearch} from '@tanstack/react-router';
 import type {AIInsightsMode,AIInsightsNavigation} from '../lib/navigation';
 import {ApiError,errMsg} from '../lib/api';
@@ -173,7 +173,7 @@ function Controller(props:Props){
   if(props.onNavigate)props.onNavigate(value);else setLocalNavigation(value);
  }
  const navItems=modes.map(item=>({id:item.id,label:item.label,current:item.id===mode,href:defaultStringifySearch({workspace:props.workspaceId,project:props.projectId,view:'ai-insights',...item.id!=='summary'?{aiInsightsMode:item.id}:{},...!invalid&&(snapshot?.query??navigation.aiInsightsQuery)?{aiInsightsQuery:snapshot?.query??navigation.aiInsightsQuery}:{}}),disabled:item.id!=='summary'&&(invalid||item.id!=='recommendations'&&!snapshot||mode==='summary'&&(busy||dirty)),disabledReason:dirty?'Apply filter changes first.':'Load Answer analysis first.'}));
- let content=navigationCurrent?<AIInsightsView {...view}/>:<p role="status">Opening report…</p>;
+ let content=navigationCurrent?<AIInsightsView {...view}/>:<Text as="p" role="status">Opening report…</Text>;
  if(navigationCurrent&&receipt)content=<PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to answer analysis" initialExpiredAnswerIds={[...expired.current]} initialExpiredInputComparisonIds={[...expiredInputs.current]} onEvidenceExpired={({comparisonId,answerIds,inputIds})=>{for(const id of answerIds)expired.current.add(id);if(inputIds.length)expiredInputs.current.add(comparisonId);}} onUnauthorized={props.onUnauthorized} onBack={()=>{returnFocus.current=receipt.originId;patch({dailyEntity:receipt.dailyEntity,promptSearch:receipt.promptSearch,promptQuery:receipt.promptQuery});setReceipt(null);void load(state.current.applied,[null],receipt.drill);}}/>;
  else if(navigationCurrent&&!invalid&&mode==='recommendations'){
   const scope=opportunitiesScopeSchema.safeParse(filters(requested!));
@@ -184,5 +184,5 @@ function Controller(props:Props){
   const {matcher:_,...scope}=snapshot.filters;
   content=mode==='comparison'?<AIComparisonPanel {...common} filters={snapshot.filters}/>:mode==='citations'?<CitationAnalysisPanel {...common} filters={scope}/>:<CitationSpecializationsPanel {...common} filters={scope}/>;
  }
- return <div className="stack" style={{minWidth:0}}><SectionNav label="API model reports" items={navItems} onSelect={(item,event)=>{event.preventDefault();navigateMode(item.id as AIInsightsMode);}}/>{content}</div>;
+ return <Stack><SectionNav label="API model reports" items={navItems} onSelect={(item,event)=>{event.preventDefault();navigateMode(item.id as AIInsightsMode);}}/>{content}</Stack>;
 }

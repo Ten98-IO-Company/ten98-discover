@@ -11,10 +11,6 @@
     "element": 135,
     "styling": 33
   },
-  "src/components/AIInsightsPanel.tsx": {
-    "element": 2,
-    "styling": 2
-  },
   "src/components/AIInsightsView.tsx": {
     "element": 176,
     "styling": 144
@@ -29,7 +25,6 @@
     "styling": 45
   },
   "src/components/AccountPreferencesPanel.tsx": {
-    "element": 2,
     "styling": 1
   },
   "src/components/AccountSecurityPanel.tsx": {
@@ -70,17 +65,9 @@
     "element": 290,
     "styling": 147
   },
-  "src/components/CitationAnalysisPanel.tsx": {
-    "element": 1,
-    "styling": 1
-  },
   "src/components/CitationAnalysisView.tsx": {
     "element": 280,
     "styling": 251
-  },
-  "src/components/CitationSpecializationsPanel.tsx": {
-    "element": 1,
-    "styling": 1
   },
   "src/components/CitationSpecializationsView.tsx": {
     "element": 168,
@@ -113,10 +100,6 @@
   "src/components/ExplorerPanel.tsx": {
     "element": 318,
     "styling": 197
-  },
-  "src/components/GeographyAttribution.tsx": {
-    "element": 3,
-    "styling": 1
   },
   "src/components/GeographyCard.tsx": {
     "stylesheet": 1,
@@ -204,9 +187,6 @@
     "element": 64,
     "styling": 41
   },
-  "src/components/RankTrackingPanel.tsx": {
-    "element": 2
-  },
   "src/components/RankTrackingView.tsx": {
     "element": 196,
     "styling": 133
@@ -247,8 +227,8 @@
     "styling": 62
   },
   "src/components/SessionExplorerPanel.tsx": {
-    "element": 5,
-    "styling": 5
+    "styling": 5,
+    "element": 4
   },
   "src/components/SessionReplayPanel.tsx": {
     "element": 106,

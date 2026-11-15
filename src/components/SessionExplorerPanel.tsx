@@ -119,7 +119,7 @@ function SessionExplorerInner({projectId,search,onNavigate,onUnauthorized}:Props
   const sourceContext=sourceReturn.current&&scope===activityScope(sourceReturn.current.source)&&(!sourceReturn.current.entryKey||sourceReturn.current.entryKey===entryKey)?sourceReturn.current:null,anchorNav=observedReturn.current?.nav??{...nav,activity:undefined},linkedNav=sourceContext?.nav??{...nav,activity:'identified' as const};
   const listPartial=list?.selection.status==='available'&&(list.coverage.status==='partial'||list.selection.countsAreLowerBounds);
   const backLabel=identified?'Back to observed visitor':sourceContext?'Back to identified activity':lastListNav.current?'Back to sessions':'Open sessions for these dates';
-  return <section className="session-explorer" aria-labelledby={`${uid}-heading`}>
+  return <Stack as="section" className="session-explorer" aria-labelledby={`${uid}-heading`}>
     <Heading level={2} id={`${uid}-heading`} ref={heading} tabIndex={-1}>{identified?'Identified activity':visitorKey?'Observed visitor activity':'Observed visitor keys'}</Heading>
     {nav.sessionInvalid&&<Inline><Button type="button" variant="secondary" onClick={()=>{const fresh=initialDraft(),value=sessionParams(fresh,null);setDraft(fresh);setCohort(null);setSegment(null);setApplied('params'in value?value.params.toString():null);setError('');setListPage(0);setListCursors([null]);lastListNav.current='{}';setAppliedNavigation('{}');updateNavigation({});}}>Open a fresh session list</Button></Inline>}
     {visitorKey?<Card><Stack gap={4}>
@@ -166,7 +166,7 @@ function SessionExplorerInner({projectId,search,onNavigate,onUnauthorized}:Props
         <Card title="Identified activity"><Stack gap={3}>{detail.linkedIdentities.status==='lookup-available'&&<Text>Same explicitly supplied identifier; retained activity only.</Text>}<Text size="sm" tone="muted">{detail.linkedIdentities.limitation}</Text>{detail.linkedIdentities.status==='lookup-available'&&<Inline><Link id={`${uid}-linked-cta`} className="btn" to="/" search={target(linkedNav)} onClick={enterLinked}>{sourceContext?'Back to identified activity':'View linked identified activity in these dates'}</Link></Inline>}</Stack></Card></>}
       {(!linked||linked.selection.status==='available')&&<Pager label={visitorKey?'Activity pagination':'Session pagination'} previousLabel={visitorKey?'Newer activity':'Previous'} nextLabel={visitorKey?'Older activity':'Next'} status={`Page ${resultPage+1} · Showing ${num(list?.rows?.length??detail?.activity?.length??linked?.activity?.length??null)} rows`} onPrevious={busy||!!error||resultPage===0?undefined:()=>page(false)} onNext={busy||!!error||!visible.paging.nextCursor?undefined:()=>page(true)}/>}
     </>}</Stack>
-  </section>;
+  </Stack>;
 }
 type ActivityEvent=NonNullable<SessionDetail['activity']>[number]|NonNullable<LinkedActivity['activity']>[number];
 function Summary({label,items}:{label:string;items:readonly (readonly [string,string])[]}){const id=useId();return <Stack gap={2}><Heading level={3} size="sm" id={id}>{label}</Heading><Inline as="dl" gap={8} aria-labelledby={id}>{items.map(([term,value])=><Stack key={term} gap={1}><Text as="dt" size="sm" tone="muted">{term}</Text><Text as="dd" size="lg" weight="semibold" numeric>{value}</Text></Stack>)}</Inline></Stack>;}
