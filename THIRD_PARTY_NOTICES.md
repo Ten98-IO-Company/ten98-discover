@@ -1236,7 +1236,7 @@ SOFTWARE.
 
 ## Current ten98 shared packages
 
-The current manifest pins the immutable `@ten98/ui` 0.39.0 release (`vendor/ten98-ui-0.39.0.tgz`, SHA-256 `5c934da73a32313483f928131456b7b93b97f5cd597268606fa79f7dadd298b9`, tag `v0.39.0`, source commit `499279ea02b7b3eb4aa5c862b6a7d2c4593339cf`) and the `@ten98/runtime` 0.27.1 release (`vendor/ten98-runtime-0.27.1.tgz`, SHA-256 `5d28206cfd1278e5490c3872b20eb5dd630883f0ef67bd5ba7986a2d848c06f0`, tag `v0.27.1`, source commit `146508640a864a49ed5597e1656ee1aed9b956ff`). Both packages are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+The current manifest pins the immutable `@ten98/ui` 0.39.0 release (`vendor/ten98-ui-0.39.0.tgz`, SHA-256 `5c934da73a32313483f928131456b7b93b97f5cd597268606fa79f7dadd298b9`, tag `v0.39.0`, source commit `499279ea02b7b3eb4aa5c862b6a7d2c4593339cf`) and the `@ten98/runtime` 0.28.1 release (`vendor/ten98-runtime-0.28.1.tgz`, SHA-256 `ff39e4a6e9921c9fdc89829aaa8714c562581f6c47bdc428bcc73c12d133d29f`, tag `v0.28.1`, source commit `5efcafa0794d27e59df3e0116b179dd0352ca8a7`). Both packages are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
 
 Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
 
@@ -1409,4 +1409,35 @@ The immutable local candidate `vendor/ten98-ui-0.34.2.tgz`, SHA-256 `6c074ba4bb2
 
 ## Shopify crawler-access mechanism
 
-Discover imports signature parsing, exact-origin header selection and Ed25519 verification from `@ten98/runtime` 0.27.1. The canonical package adapts the Shopify wire format and signature base from `every-app/open-seo@89e5a00717cdf049b7c2b4e29646edb3a7d4995b` (`src/shared/crawler-access.ts` and `src/server/features/audit/services/shopifySignature.ts`), MIT, copyright 2026 Ben Senescu. Its bundled `THIRD_PARTY_NOTICES.md` preserves the complete upstream notice and describes the stricter expiry, parsing and origin boundaries. Discover owns credential storage, native authorization, request recovery and crawl transport. No upstream implementation is copied into application source.
+Discover imports signature parsing, exact-origin header selection and Ed25519 verification from `@ten98/runtime` 0.28.1. The canonical package adapts the Shopify wire format and signature base from `every-app/open-seo@89e5a00717cdf049b7c2b4e29646edb3a7d4995b` (`src/shared/crawler-access.ts` and `src/server/features/audit/services/shopifySignature.ts`), MIT, copyright 2026 Ben Senescu. Its bundled `THIRD_PARTY_NOTICES.md` preserves the complete upstream notice and describes the stricter expiry, parsing and origin boundaries. Discover owns credential storage, native authorization, request recovery and crawl transport. No upstream implementation is copied into application source.
+
+## CSS tokenizer dependency (2026-11-15)
+
+The `@ten98/runtime` 0.28.1 architecture declaration requires `ten98-discover` to declare direct dependency `@csstools/css-tokenizer@4.0.2` (MIT) for the saved-report style sanitizer. This change pins it in `package.json` and `pnpm-lock.yaml` (integrity `sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==`) without importing it. The package has no runtime dependencies and requires Node 20.19.0 or later. The installed package license file was inspected and is byte-identical to `packages/css-tokenizer/LICENSE.md` at the npm `gitHead` commit `4cad0552728a803976c121586307742477d84171` of [csstools/postcss-plugins](https://github.com/csstools/postcss-plugins/tree/4cad0552728a803976c121586307742477d84171/packages/css-tokenizer). The inspected registry metadata carried no npm provenance attestation; none is claimed. No upstream source or assets are copied.
+
+### @csstools/css-tokenizer 4.0.2 — MIT
+
+Primary package record: [@csstools/css-tokenizer 4.0.2](https://registry.npmjs.org/@csstools/css-tokenizer/4.0.2).
+
+```text
+The MIT License (MIT)
+
+Copyright 2022 Romain Menke, Antonio Laguna <antonio@laguna.es>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
