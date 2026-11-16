@@ -32,10 +32,11 @@ for (const file of files) {
     if (fragment) assert.ok(anchors(path).has(fragment), `${file}: broken heading link ${target}`);
   }
 }
-// Frozen V1 requirement identity/provenance, not a live Docmost content or implementation-status check.
+// Frozen original V1 requirement identity/provenance; the canonical wiki applies later owner decisions.
+// This is not a live wiki-content or implementation-status check.
 const wiki = 'https://github.com/Ten98-IO-Company/ten98-discover/wiki';
 const baseline = {
-  url: 'https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5',
+  url: `${wiki}/Requirement-Register`,
   sourceCommit: 'dcd1b3de5f7e0600c6b459e6b20f08b072106097',
   sourceSha256: '5c46f2c52bea7cb2ab2f99e17727751864e157667a452dc6d0d1cb1b79f2197c',
   ids: 'P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22 P23 P24 P25 P26 P27 P28 P29 P30 P31 P32 P33 P34 P35 P36 P37 P38 P39 P40 P41 P42 P43 P44 P45 P46 P47 P48 P49 P50 P51 P52 P53 P54 P55 P56 P57 P58 P59 P60 P61 P62 P63 P64 P65 P66 P67 P68 P69 P70 P71 P72 P73 P74 P75 P76 P77 P78 P79 P80 P81'.split(' '),
@@ -92,4 +93,4 @@ const profile = readFileSync(resolve(root, 'agents/kimi-text-only.md'), 'utf8');
 assert.match(profile, /^tools: \[\]$/m);
 assert.match(profile, /^subagents: \[\]$/m);
 assert.ok(existsSync(resolve(root, 'LICENSE')));
-console.log(`Plan checks passed: ${files.length} Markdown files, 81 frozen V1 requirement IDs / pinned Docmost reference, register map over ${inventory.operations.size} operations, ${inventory.routes.size} cookie routes, ${inventory.mcpTools.size} MCP tools and ${inventory.migrations.size} migrations, ${wikiCitations} wiki citations with no deleted docs/ path cited, local files/heading links, code fences, no-tool Kimi profile (wiki and Docmost content not checked).`);
+console.log(`Plan checks passed: ${files.length} Markdown files, 81 frozen V1 requirement IDs / canonical wiki register, register map over ${inventory.operations.size} operations, ${inventory.routes.size} cookie routes, ${inventory.mcpTools.size} MCP tools and ${inventory.migrations.size} migrations, ${wikiCitations} wiki citations with no deleted docs/ path cited, local files/heading links, code fences, no-tool Kimi profile (remote wiki content not checked).`);
