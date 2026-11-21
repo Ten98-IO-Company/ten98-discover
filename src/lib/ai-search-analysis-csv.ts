@@ -1,6 +1,11 @@
+import {csvCell as runtimeCsvCell} from '@ten98/runtime/browser';
 import {aiQueryReportSchema,type AiQueryRow,type AiQueryTotals} from './ai-search-analysis.ts';
 const ceiling=8*1024*1024;
-const csvCell=(value:string)=>{const safe=/^\s*[=+\-@\t\r\n]/u.test(value)?"'"+value:value;return /[",\r\n]/.test(safe)?'"'+safe.replaceAll('"','""')+'"':safe;};
+// The runtime csvCell, quoting only cells that need it (layout pinned by tests/ai-search-analysis-csv.test.ts); a leading whitespace run holding a tab, CR or LF is neutralized too.
+const csvCell=(value:string)=>{
+ const cell=runtimeCsvCell(/^\s*[\t\r\n]/u.test(value)?`'${value}`:value),text=cell.slice(1,-1);
+ return /[",\r\n]/.test(text)?cell:text;
+};
 /** Human-readable table sections contain every returned observation, never answer bodies. */
 export function aiSearchAnalysisCsv(value:unknown):string{
  const report=aiQueryReportSchema.parse(value),lines:string[]=[],encoder=new TextEncoder();let bytes=0;

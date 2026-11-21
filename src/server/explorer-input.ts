@@ -1,6 +1,7 @@
 import {analyticsFieldLimit} from '../lib/analytics-dimensions.ts';
 import { toUSVString } from 'node:util';
 import {z} from 'zod';
+import {csvCell as runtimeCsvCell} from '@ten98/runtime';
 import { normalizeProperties } from './analytics-input.ts';
 import { analyticsRange } from './analytics.ts';
 import { InputError } from './validation.ts';
@@ -116,9 +117,7 @@ const propertyStamp=z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6
 const propertyReportCursorSchema=z.object({version:z.literal(1),scope:z.string().regex(/^[a-f0-9]{64}$/),policy:z.string().regex(/^[a-f0-9]{64}$/),before:propertyStamp,last:z.object({at:propertyStamp,id:z.uuid()}).strict()}).strict();
 export type PropertyReportCursor=z.infer<typeof propertyReportCursorSchema>;
 
-// Quoting alone does not stop spreadsheets from executing a leading formula.
+// The runtime csvCell quotes the cell and neutralizes leading formulas; Discover exports print a missing cell as Unavailable.
 export function csvCell(value: unknown): string {
-  let cell = value === null || value === undefined ? 'Unavailable' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-  if (/^[\s\uFEFF]*[=+@-]/u.test(cell) || /^[\t\r\n]/.test(cell)) cell = `'${cell}`;
-  return `"${cell.replaceAll('"','""')}"`;
+  return runtimeCsvCell(value, { missing: 'Unavailable' });
 }

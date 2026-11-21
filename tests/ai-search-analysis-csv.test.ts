@@ -22,3 +22,7 @@ test('CSV retains the applied requested market and each capture identity without
  const csv=aiSearchAnalysisCsv(value);assert.ok(csv.includes('filters,market.locationCode,number,2840'));assert.ok(csv.includes('filters,market.countryCode,string,US'));assert.ok(csv.includes('filters,market.languageCode,string,en'));assert.ok(csv.includes('Requested location code,Requested country code,Requested language code'));assert.ok(csv.includes(',2840,US,en\r\n'));
  value.captures[0].requestedMarket=null;assert.throws(()=>aiSearchAnalysisCsv(value));
 });
+test('CSV neutralizes whitespace that precedes a tab or line break and quotes only the cells that need it',()=>{
+ const value=report();value.brand.aliases=[' \tspaced','  \nbroken','plain'];const csv=aiSearchAnalysisCsv(value);
+ assert.ok(csv.includes("brand,aliases[0],string,' \tspaced\r\n"));assert.ok(csv.includes('brand,aliases[1],string,"\'  \nbroken"\r\n'));assert.ok(csv.includes('brand,aliases[2],string,plain\r\n'));
+});
