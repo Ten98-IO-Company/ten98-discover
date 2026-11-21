@@ -256,8 +256,6 @@ export async function handleReports(request:Request,userId:string):Promise<Respo
     }
   } else if (request.method==='POST') {
     if (request.headers.get('origin')!==getConfig().appUrl) throw new FoundationError(403,'This action must originate from the application.');
-    // Membership first, so a non-member gets the same answer whatever the body; each write still checks its own capability.
-    await projectRole(projectId,userId);
     const body=await readJson(request,6_400_000);
     if (!action && !shareId) return json(await saveReport(projectId,userId,body,reportId,templates));
     if (reportId && action==='delete' && !shareId) return json(await deleteReport(projectId,userId,reportId,body,templates));

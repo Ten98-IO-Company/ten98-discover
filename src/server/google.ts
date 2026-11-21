@@ -49,6 +49,11 @@ export async function googleProjectTransaction<T>(projectId: string, userId: str
   finally { client.release(); }
 }
 
+/** googleProjectTransaction's owner refusal on its own, so a write can settle it before reading its input. */
+export async function requireGoogleOwner(projectId: string, userId: string) {
+  await googleProjectTransaction(projectId, userId, true, async () => undefined);
+}
+
 export async function googleConnection(client: PoolClient, projectId: string, connectionId: string): Promise<GoogleConnection> {
   googleInput(z.uuid(), connectionId);
   const result = await client.query<GoogleConnection>('SELECT * FROM google_connection WHERE id=$1 AND project_id=$2 FOR UPDATE', [connectionId, projectId]);

@@ -89,7 +89,7 @@ async function retainHistoricalAnalytics(workspaceId: string, cookie: string) {
   assert.equal(saved.body.revision, current.body.revision + 1);
 }
 
-async function createIdentity(workspaceId: string, role: 'owner' | 'viewer') {
+async function createIdentity(workspaceId: string, role: 'owner' | 'admin' | 'editor' | 'viewer') {
   const id = randomUUID();
   const email = `${id}@integration.test`;
   const password = randomBytes(24).toString('base64url');
@@ -269,7 +269,7 @@ try {
   const outsiderWorkspace = randomUUID();
   await pool.query('INSERT INTO workspace(id,name) VALUES($1,$2)', [outsiderWorkspace, 'Access order workspace']);
   const outsider = await createIdentity(outsiderWorkspace, 'owner');
-  await runAccessOrderChecks({ baseUrl: base.href, appUrl: config.appUrl, memberCookie: ownerCookie, outsiderCookie: outsider.cookie, outsiderId: outsider.id, workspaceId: workspaceA, projectId: projectA.id });
+  await runAccessOrderChecks({ baseUrl: base.href, appUrl: config.appUrl, memberCookie: ownerCookie, outsiderCookie: outsider.cookie, outsiderId: outsider.id, outsiderWorkspaceId: outsiderWorkspace, workspaceId: workspaceA, projectId: projectA.id, createIdentity });
 
   stage = 'documented GET operations without paywalls';
   // Free, fully featured: every GET the served OpenAPI document lists must answer a viewer

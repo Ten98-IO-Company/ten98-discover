@@ -1,11 +1,10 @@
 import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
-import { disconnectGoogle, getGoogleApp, googleCallback, googleSignedIn, listGoogleProperties, saveGoogleApp, selectGoogleProperty, startGoogleConnect } from './google.ts';
+import { disconnectGoogle, getGoogleApp, googleCallback, googleSignedIn, listGoogleProperties, requireGoogleOwner, saveGoogleApp, selectGoogleProperty, startGoogleConnect } from './google.ts';
 import { enqueueGoogleImport, listGoogleConnections, readGoogleImport } from './google-jobs.ts';
 import { readJson } from './validation.ts';
 import { inspectGoogleUrls } from './google-inspection.ts';
-import { requireWorkspaceFactor } from './teams.ts';
 
 function json(value: unknown, status = 200, additional?: HeadersInit) { return Response.json(value, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...additional } }); }
 async function limit(key: string, maximum: number) {
@@ -25,12 +24,15 @@ export async function handleGoogle(request: Request, bearer?: { userId: string; 
   if (path === '/api/google/callback' && request.method === 'GET') return googleCallback(request);
   if (!['GET', 'POST'].includes(request.method)) return json({ error: 'Method not allowed.' }, 405);
   if (request.method === 'POST' && request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+  // api.ts has already settled the workspace's two-factor requirement and membership for every /api/projects/<id>/google route.
   const session = bearer ? null : await googleSignedIn(request), userId = bearer?.userId ?? session!.user.id;
-  await requireWorkspaceFactor(path, userId);
   await limit(`google:${request.method === 'GET' ? 'read' : 'write'}:${userId}`, request.method === 'GET' ? 120 : 30);
   if (path === '/api/google/app') return json(request.method === 'GET' ? await getGoogleApp(userId) : await saveGoogleApp(userId, () => readJson(request)));
   if (!project) return json({ error: 'Not found.' }, 404);
   const [, projectId, operation = ''] = project;
+  // Every Google write is the website owner's. Settle that before the query or body is read, so other members get the same refusal
+  // whatever they send; the owner keeps the field errors.
+  if (request.method === 'POST') await requireGoogleOwner(projectId, userId);
   if (operation === '' && request.method === 'GET') { strictQuery([]); return json(await listGoogleConnections(projectId, userId, bearer?.token)); }
   if (operation === 'connect' && request.method === 'POST') {
     const { cookie, ...body } = await startGoogleConnect(projectId, session!, await readJson(request));

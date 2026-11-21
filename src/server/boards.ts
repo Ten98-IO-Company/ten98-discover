@@ -48,13 +48,20 @@ export function parseBoardPreview(raw:unknown):BoardPreviewInput{
 }
 function bounded<T>(result:T):T{if(Buffer.byteLength(JSON.stringify(result))>boardLimits.responseBytes)throw new FoundationError(503,'The board result is too large. Narrow the dates or filters.');return result;}
 async function withBoardWorkspace<T>(workspaceId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,wid:string,uid:string,role:BoardRole)=>Promise<T>):Promise<T>{
- const wid=parse(uuid,workspaceId),uid=parse(uuid,userId),client=await getDatabase().pool.connect();
+ const wid=parse(uuid,workspaceId),uid=parse(uuid,userId);
+ const access=async(db:Pick<PoolClient,'query'>)=>{
+  const role=(await db.query<{role:BoardRole}>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[wid,uid])).rows[0]?.role;
+  if(!role||write&&!['owner','admin','editor'].includes(role))throw missing();
+  return role;
+ };
+ // Access first, so a caller without it never takes the workspace lock; it is checked again under the lock below.
+ await access(getDatabase().pool);
+ const client=await getDatabase().pool.connect();
  try{
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
   // ponytail: workspace serialization reuses current membership writers; split only after measured contention.
   await client.query(`SELECT id FROM workspace WHERE id=$1 FOR ${write?'UPDATE':'SHARE'}`,[wid]);
-  const role=(await client.query<{role:BoardRole}>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[wid,uid])).rows[0]?.role;
-  if(!role||write&&!['owner','admin','editor'].includes(role))throw missing();
+  const role=await access(client);
   const result=bounded(await work(client,wid,uid,role));await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'Boards are busy. Retry the same request ID for an uncertain save.');throw error;}finally{client.release();}
 }

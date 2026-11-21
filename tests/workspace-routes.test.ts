@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {expandPattern, inventoryPaths, invalidQuery, queryNames, routePatterns, sharedControllerRoutes, workspaceRoutes} from './helpers/workspace-routes.ts';
+import {expandPattern, inventoryPaths, invalidQuery, queryNames, routePatterns, sharedControllerRoutes, sweepExceptions, workspaceRoutes} from './helpers/workspace-routes.ts';
 import {journeysQuery} from '../src/server/journeys.ts';
 import {annotationQuery} from '../src/server/annotation-input.ts';
 import {readPerformanceQuery} from '../src/lib/web-performance.ts';
@@ -9,7 +9,21 @@ test('every workspace and website route pattern in the server expands into concr
   const patterns = routePatterns();
   assert.ok(patterns.length >= 70, `found ${patterns.length} route patterns`);
   assert.ok(new Set(patterns.map(pattern => pattern.file)).size >= 4, 'delegated route handlers are read as well as api.ts');
-  for (const pattern of patterns) assert.ok(expandPattern(pattern.source).length > 0, `${pattern.file}: ${pattern.source}`);
+  for (const pattern of patterns) assert.ok(expandPattern(pattern.source, pattern.tails).length > 0, `${pattern.file}: ${pattern.source}`);
+});
+
+test('catch-all and delegated routes expand into the sub-routes their handlers match', () => {
+  const google = routePatterns().find(pattern => pattern.file === 'google-api.ts');
+  assert.deepEqual(google?.tails, ['', 'connect', 'connections/{uuid}/disconnect', 'connections/{uuid}/imports', 'connections/{uuid}/inspect',
+    'connections/{uuid}/properties', 'connections/{uuid}/select', 'imports/{uuid}'], 'read from the tail matchers in google-api.ts');
+  const routes = new Set(workspaceRoutes());
+  for (const route of ['/api/projects/{uuid}/google', '/api/projects/{uuid}/google/connect', '/api/projects/{uuid}/google/connections/{uuid}/inspect',
+    '/api/projects/{uuid}/google/connections/{uuid}/disconnect', '/api/projects/{uuid}/google/imports/{uuid}',
+    '/api/projects/{uuid}/reports/{uuid}/shares/{uuid}/revoke', '/api/projects/{uuid}/report-templates/{uuid}/delete',
+    '/api/workspaces/{uuid}/tracked-assets/{uuid}/shares/{uuid}/revoke']) assert.ok(routes.has(route), route);
+  for (const route of routes) assert.doesNotMatch(route, /\/\/|\.\*|\(/, route);
+  // A catch-all with no sub-routes would otherwise sweep only its prefix.
+  assert.throws(() => expandPattern('^/api/projects/([0-9a-f-]{36})/google(?:/(.*))?$'), /Unsupported route pattern/);
 });
 
 test('the route table includes the routes that now check access before reading input', () => {
@@ -43,13 +57,19 @@ test('the sweep query carries an unknown name and every declared name with a val
   assert.throws(() => readPerformanceQuery(new URLSearchParams({metric: '~'})));
 });
 
-test('shared controller routes name current team routes only', () => {
+test('shared controller routes name current team routes only, and sweep exceptions give a reason', () => {
   const routes = new Set(workspaceRoutes());
   for (const entry of sharedControllerRoutes) {
     const [method, route] = entry.split(' ');
     assert.equal(method, 'POST', entry);
-    assert.match(route, /^\/api\/workspaces\/\{uuid\}\/(invitations|members\/\{uuid\}\/role|rename|two-factor)$/, entry);
+    assert.match(route, /^\/api\/workspaces\/\{uuid\}\/(invitations|members\/\{uuid\}\/(role|remove)|rename|two-factor|invitations\/\{uuid\}\/(revoke|resend|new-link))$/, entry);
     assert.ok(routes.has(route), `${entry} is no longer a route; remove it from sharedControllerRoutes`);
+  }
+  for (const [entry, reason] of sweepExceptions) {
+    const [method, route] = entry.split(' ');
+    assert.match(method, /^(GET|POST|HEAD|DELETE)$/, entry);
+    assert.ok(routes.has(route), `${entry} is no longer a route; remove it from sweepExceptions`);
+    assert.ok(reason.trim().length > 20, `${entry} needs a reason`);
   }
 });
 
