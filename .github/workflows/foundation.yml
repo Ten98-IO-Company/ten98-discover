@@ -479,6 +479,16 @@ jobs:
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
           TEN98_UTM_BROWSER: '1'
         run: timeout 120s node tests/utm-report-browser.mjs
+      - name: Verify saved-report styles request nothing
+        if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
+        shell: bash
+        env:
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+          TEN98_REPORT_STYLE_BROWSER: '1'
+          REPORT_STYLE_BROWSERS: chromium,webkit
+        run: |
+          pnpm exec playwright install --with-deps webkit
+          timeout 300s node tests/report-style-browser.mjs
       - name: Verify reopened domain polling
         if: ${{ !cancelled() && steps.browser-tooling.outcome == 'success' }}
         shell: bash

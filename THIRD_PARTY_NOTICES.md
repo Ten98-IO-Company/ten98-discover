@@ -530,6 +530,35 @@ THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRE
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## Report style tokenizer dependency (2026-11-15)
+
+Saved-report CSS is read by direct dependency [`@csstools/css-tokenizer@4.0.2`](https://registry.npmjs.org/@csstools/css-tokenizer/4.0.2) (MIT), a tokenizer that follows the CSS Syntax Level 3 specification and has no runtime dependencies. It was published on 2026-09-25 from upstream commit [`4cad0552728a803976c121586307742477d84171`](https://github.com/csstools/postcss-plugins/tree/4cad0552728a803976c121586307742477d84171/packages/css-tokenizer), the npm gitHead. Its exact integrity is pinned in `pnpm-lock.yaml`. The installed package license file was inspected. No npm provenance attestation is claimed. No upstream source is copied; `src/server/report-style.ts` imports the package and applies ten98-discover's own allow-list to its tokens.
+
+### @csstools/css-tokenizer 4.0.2 — MIT license
+
+```text
+The MIT License (MIT)
+
+Copyright 2022 Romain Menke, Antonio Laguna <antonio@laguna.es>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ## Sitemap XML parser dependencies (2026-10-13)
 
 The original sitemap adapter uses saxes 6.0.0 (ISC) and its sole runtime dependency xmlchars 2.2.0 (MIT), pinned in pnpm-lock.yaml. These licenses permit use in this MIT application while their notices remain intact. No upstream parser code was copied into the adapter. No XML builder or external entity resolver is installed.

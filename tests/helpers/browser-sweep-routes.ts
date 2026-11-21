@@ -110,6 +110,7 @@ export const browserSuiteRoutes: SuiteRoute[] = [
   component('tests/replay-heatmaps-classic-browser.mjs', ['TEN98_REPLAY_HEATMAPS_CLASSIC']),
   component('tests/heatmap-control-layout-browser.ts', ['TEN98_HEATMAP_CONTROL_LAYOUT']),
   component('tests/report-navigation-browser.mjs', ['TEN98_REPORT_NAVIGATION_BROWSER'], 'optional TEN98_REPORT_NAV_*_SQL snapshots not supplied'),
+  component('tests/report-style-browser.mjs', ['TEN98_REPORT_STYLE_BROWSER'], 'REPORT_STYLE_BROWSERS=chromium,webkit adds WebKit, as foundation CI does'),
   component('tests/research-flow-browser.mjs'),
   component('tests/revenue-empty-browser.mjs', ['TEN98_REVENUE_EMPTY_BROWSER']),
   component('tests/saved-filters-browser.mjs', ['TEN98_SAVED_FILTERS_BROWSER']),
